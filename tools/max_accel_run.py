@@ -8,7 +8,7 @@ max_accel_run — 最大加速度实测执行器（方案：docs/max-accel-explo
 子命令：
   calib          引导两点标定（人工推车到两端，各按回车确认）
   smoke          冒烟段：ACC_MAX 5000、50 mm/s 一次往返
-  matrix         实验矩阵：4 速度点 × 6 加速度档 × 3 段往返（可参数化）
+  matrix         实验矩阵：4 速度点 × 6 加速度档 × 3 段往返（可参数化，首次异常即停止）
   step-response  VEL 阶跃响应记录（τ / 实际加速度测量，回填 sim2real-spec）
 
 用法示例：
@@ -28,8 +28,9 @@ max_accel_run — 最大加速度实测执行器（方案：docs/max-accel-explo
   |往返净偏移| > 300 µm（12 步）                → FAIL
   |净偏移| ≤ 100 µm                            → PASS
   100–300 µm                                   → MARGIN
-  组合判定：3 段中 FAIL ≥ 2 或 MARGIN ≥ 2 → 不可行，PASS ≥ 2 → 可行，
-  其余（PASS 1 + FAIL 1 + MARGIN 1 等）→ 存疑按不可行处理（保守侧）。
+  不完整、超时、缺失/陈旧状态 → FAIL 并中止；不会自动 RESET/ENABLE。
+  只有计划的全部段都 PASS，才报告该档完整通过主机检查。
+  净偏移不能单独证明无丢步，也不能据此确定机械最大加速度。
 """
 
 import argparse
@@ -68,7 +69,7 @@ LEG_PROFILE = {
 
 def classify_offset(offset_um, faulted):
     """单段判定：FAULT 优先；净偏移按 100/300 µm 三分。"""
-    if faulted:
+    if faulted or offset_um is None:
         return "FAIL"
     a = abs(offset_um)
     if a > OFFSET_FAIL_UM:
@@ -79,20 +80,18 @@ def classify_offset(offset_um, faulted):
 
 
 def combine_verdicts(verdicts):
-    """组合判定：多数 FAIL 或多数 MARGIN → 不可行；多数 PASS → 可行；
-    三段各占一种 → 存疑，按不可行处理（保守侧）。返回 (ok, label)。"""
-    n = len(verdicts)
-    if verdicts.count("FAIL") * 2 > n or verdicts.count("MARGIN") * 2 > n:
-        return False, "不可行"
-    if verdicts.count("PASS") * 2 > n:
+    """只有全部已完成段均 PASS 才可行；调用者还须核对计划段数。"""
+    if verdicts and all(v == "PASS" for v in verdicts):
         return True, "可行"
-    return False, "存疑（按不可行）"
+    return False, "不可行或未完成"
 
 
 def reached(vx_mm_s, target_v):
     """加速到达判据：固件速度估计带噪声（σ≤5）与 ≤10 ms 群延迟，
     容差取 max(2σ, 目标的 5%)。"""
-    return abs(vx_mm_s - target_v) <= max(2 * VX_NOISE_SIGMA, target_v * 0.05)
+    if target_v != 0 and vx_mm_s * target_v <= 0:
+        return False
+    return abs(vx_mm_s - target_v) <= max(2 * VX_NOISE_SIGMA, abs(target_v) * 0.05)
 
 
 def settled_run(vx_samples, run=SETTLE_RUN):
@@ -105,7 +104,7 @@ def settled_run(vx_samples, run=SETTLE_RUN):
 
 def leg_times(v, acc, hold_s):
     """超时预算：斜坡时间 v/acc（s，均为 mm 单位制）加裕量。"""
-    ramp = v / float(acc)
+    ramp = abs(v) / float(acc)
     return ramp + 0.5, ramp + 1.0   # (到达超时, 停稳超时)
 
 
@@ -132,7 +131,8 @@ class TestRig(Rig):
     """Rig 之上加：带时间戳状态采样、FAULT 事件、原始行日志。"""
 
     def __init__(self, port, baud=460800, log_path=None):
-        super().__init__(port, baud)
+        super().__init__(port, baud, timeout=0.01)
+        self.ser.write_timeout = 0.2
         self.samples = deque(maxlen=600000)   # (t, x_um, theta_urad, vx, vth)
         self.fault_events = []                # [(t, reason)]
         self._t0 = time.monotonic()
@@ -163,176 +163,181 @@ class TestRig(Rig):
         return x, vx
 
     def close(self):
-        if self._log:
-            self._log.flush()
-            self._log.close()
-        super().close()
+        try:
+            if self._log:
+                self._log.flush()
+                self._log.close()
+        finally:
+            super().close()
 
 
 # ---- 会话操作 ----
 
-def ensure_ready(rig, timeout=5.0):
-    m = rig.query()
-    if m and m[0] == "READY":
+class ExperimentAborted(RuntimeError):
+    """当前试验没有完整证据或发生异常，禁止自动恢复运动。"""
+
+
+# 这是主机接收新鲜度限制，不是固件采样延迟保证。
+STATE_MAX_AGE_S = 0.1
+
+
+def checked_state(rig):
+    if rig.last_mode != ("READY", "NONE"):
+        raise ExperimentAborted("mode=%s" % (rig.last_mode,))
+    if not rig.samples:
+        raise ExperimentAborted("missing-state")
+    sample = rig.samples[-1]
+    if time.monotonic() - sample[0] > STATE_MAX_AGE_S:
+        raise ExperimentAborted("stale-state")
+    return sample
+
+
+def request_stop(rig):
+    """仅尝试请求斜坡停；发送成功不等于实际停稳，失败交由看门狗兜底。"""
+    try:
+        rig.send_line("VEL 0")
         return True
-    print("当前模式 %s，非 READY——先完成标定与 ENABLE（calib 子命令）" % (m,))
+    except (OSError, RuntimeError) as exc:
+        print("停止命令未能发送：%s；请使用独立停机手段。" % exc, file=sys.stderr)
+        return False
+
+
+def ensure_ready(rig, timeout=5.0):
+    # 禁止用前一次查询缓存的 READY 作为本次授权依据。
+    rig.last_mode = None
+    m = rig.query()
+    if m == ("READY", "NONE"):
+        checked_state(rig)
+        return True
+    print("当前模式 %s，非 READY；完成手动标定并单独确认 ENABLE 后再试验。" % (m,))
     return False
 
 
 def set_config(rig, name, value):
+    rig.last_reply = None
     rig.send_line("CONFIG %s %d" % (name, value))
     rig.pump(0.5)
     r = rig.last_reply
-    if r and r[0] == "OK" and r[1] == name:
+    if r == ("OK", name, value):
         return True
     print("CONFIG %s %d 未确认（%s）" % (name, value, r))
     return False
 
 
-def recover_from_fault(rig):
-    """FAULT → RESET → ENABLE（RAM 标定保留，protocol.md 操作流程第 8 步）。"""
-    rig.send_line("RESET")
-    m = rig.wait_mode("DISABLED", 3.0)
-    if m is None:
-        print("RESET 未回到 DISABLED（当前 %s）" % (rig.last_mode,))
-        return False
-    rig.send_line("ENABLE")
-    m = rig.wait_mode("READY", 5.0)
-    if m is None:
-        print("恢复失败：ENABLE 超时（当前 %s）" % (rig.last_mode,))
-        return False
-    return True
-
-
 def move_to_center(rig, band_um=2000, v_slow=100, timeout_s=20.0):
-    """以低速把小车移回原点附近（标定原点 = 两标中点），给下一组合干净起点。"""
+    """人工已确认行程后回中；失败只停机，不 RESET/ENABLE。"""
     t_end = time.monotonic() + timeout_s
-    while time.monotonic() < t_end:
-        st = rig.last_state_tuple()
-        if st is None:
-            rig.pump(0.05)
-            continue
-        x, vx = st
-        if abs(x) <= band_um and abs(vx) <= VX_SETTLED:
-            rig.send_line("VEL 0")
-            rig.pump(0.2)
-            return True
-        v = -v_slow if x > 0 else v_slow
-        rig.send_line("VEL %d" % v)
-        rig.pump(FEED_PERIOD_S)
-        if rig.last_mode and rig.last_mode[0] == "FAULT":
-            print("回中途中 FAULT（%s）" % (rig.last_mode[1],))
-            return recover_from_fault(rig)
-    print("回中超时（当前位置 %s）" % (rig.last_state_tuple() and rig.last_state_tuple()[0],))
-    return False
+    try:
+        while time.monotonic() < t_end:
+            _, x, _, vx, _ = checked_state(rig)
+            if abs(x) <= band_um:
+                stopped = wait_until_settled(rig, min(1.0, t_end - time.monotonic()))
+                if abs(stopped[1]) <= band_um:
+                    return True
+                continue
+            rig.send_line("VEL %d" % (-v_slow if x > 0 else v_slow))
+            rig.pump(FEED_PERIOD_S)
+        raise ExperimentAborted("center-timeout")
+    finally:
+        if not request_stop(rig) and sys.exc_info()[0] is None:
+            raise ExperimentAborted("stop-send-failed")
 
 
 # ---- 段执行 ----
 
-def run_leg(rig, v, hold_s, acc):
-    """单程：加速到 ±v → 巡航 hold_s → VEL 0 停稳。
-    返回 (x_start_um, x_end_um, faulted, settled, note)。"""
-    n_fault0 = len(rig.fault_events)
-    st = rig.last_state_tuple()
-    x_start = st[0] if st else None
-    note = ""
-    settled = False
-
-    # 加速 + 巡航：每拍喂狗；到达判定带超时兜底（vx 估计异常时不无限等待）
-    reach_to, _ = leg_times(v, acc, hold_s)
-    t_reach_deadline = time.monotonic() + reach_to
-    reached_flag = False
-    t_hold_end = None
-    while True:
-        rig.send_line("VEL %d" % v)
-        rig.pump(FEED_PERIOD_S)
-        if len(rig.fault_events) > n_fault0:
-            return x_start, None, True, False, "FAULT: %s" % rig.fault_events[-1][1]
-        st = rig.last_state_tuple()
-        if st is None:
-            continue
-        _, vx = st
-        if not reached_flag:
-            if reached(vx, abs(v)):
-                reached_flag = True
-                t_hold_end = time.monotonic() + hold_s
-            elif time.monotonic() > t_reach_deadline:
-                reached_flag = True
-                t_hold_end = time.monotonic() + hold_s
-                note = "reach-timeout"
-        elif time.monotonic() >= t_hold_end:
-            break
-
-    # 减速停稳
-    _, stop_to = leg_times(v, acc, hold_s)
-    t_stop_deadline = time.monotonic() + stop_to
+def wait_until_settled(rig, timeout_s):
+    """发送零速，等待不同接收帧构成的连续停稳证据。"""
+    deadline = time.monotonic() + timeout_s
     vx_run = deque(maxlen=SETTLE_RUN)
-    while time.monotonic() < t_stop_deadline:
+    last_stamp = checked_state(rig)[0]
+    while time.monotonic() < deadline:
         rig.send_line("VEL 0")
         rig.pump(FEED_PERIOD_S)
-        if len(rig.fault_events) > n_fault0:
-            return x_start, None, True, False, "FAULT: %s" % rig.fault_events[-1][1]
-        st = rig.last_state_tuple()
-        if st is None:
+        sample = checked_state(rig)
+        if sample[0] <= last_stamp:
             continue
-        vx_run.append(st[1])
+        last_stamp = sample[0]
+        vx_run.append(sample[3])
         if settled_run(vx_run):
-            settled = True
-            break
-    else:
-        note = (note + ";" if note else "") + "settle-timeout"
+            return sample
+    raise ExperimentAborted("settle-timeout")
 
-    st = rig.last_state_tuple()
-    x_end = st[0] if st else None
-    return x_start, x_end, False, settled, note
+
+def run_leg(rig, v, hold_s, acc):
+    """单程完整到速、巡航、停稳才返回；异常抛出且请求停机。"""
+    reach_to, stop_to = leg_times(v, acc, hold_s)
+    try:
+        sample = checked_state(rig)
+        x_start = sample[1]
+        if abs(sample[3]) > VX_SETTLED:
+            raise ExperimentAborted("not-at-rest")
+        deadline = time.monotonic() + reach_to
+        hold_end = None
+        while True:
+            checked_state(rig)
+            if hold_end is None and time.monotonic() >= deadline:
+                raise ExperimentAborted("reach-timeout")
+            if hold_end is not None and time.monotonic() >= hold_end:
+                break
+            rig.send_line("VEL %d" % v)
+            rig.pump(FEED_PERIOD_S)
+            sample = checked_state(rig)
+            if hold_end is None and reached(sample[3], v):
+                hold_end = time.monotonic() + hold_s
+
+        sample = wait_until_settled(rig, stop_to)
+        return x_start, sample[1], False, True, ""
+    finally:
+        if not request_stop(rig) and sys.exc_info()[0] is None:
+            raise ExperimentAborted("stop-send-failed")
 
 
 def run_segment(rig, v, acc):
-    """一个试探段 = 对称往返两程。返回 dict（CSV 行）。"""
-    hold = hold_time(v)
+    """两程完整才判定净偏移；任何异常或不完整段中止本组合。"""
     legs = []
-    for direction in (+1, -1):
-        r = run_leg(rig, direction * v, hold, acc)
-        legs.append(r)
-        if r[2]:   # FAULT，段终止
-            break
-    x0, x1 = legs[0][0], legs[-1][1]
-    faulted = any(l[2] for l in legs)
-    offset = (x1 - x0) if (x0 is not None and x1 is not None) else None
-    verdict = classify_offset(offset if offset is not None else 0, faulted)
-    notes = ";".join(l[4] for l in legs if l[4])
+    note = ""
+    fault_count = len(rig.fault_events)
+    try:
+        for direction in (+1, -1):
+            r = run_leg(rig, direction * v, hold_time(v), acc)
+            legs.append(r)
+            if r[2] or not r[3] or r[0] is None or r[1] is None:
+                raise ExperimentAborted(r[4] or "incomplete-leg")
+    except ExperimentAborted as exc:
+        note = str(exc)
+        request_stop(rig)
+    faulted = len(rig.fault_events) > fault_count or any(l[2] for l in legs)
+    complete = len(legs) == 2 and not note
+    offset = legs[-1][1] - legs[0][0] if complete else None
     return {
         "v_mm_s": v, "acc_mm_s2": acc, "offset_um": offset,
-        "verdict": verdict, "faulted": faulted, "notes": notes,
+        "verdict": classify_offset(offset, faulted), "faulted": faulted,
+        "aborted": not complete, "notes": note,
     }
 
 
 # ---- 子命令 ----
 
 def cmd_calib(rig, args):
-    input("把小车推到最左端，停稳后按回车发 MARK LEFT …")
-    rig.send_line("MARK LEFT")
-    rig.pump(1.0)
-    r = rig.last_reply
-    if not (r and r[0] == "OK"):
-        print("MARK LEFT 被拒：%s" % (r,))
+    rig.last_mode = None
+    if rig.query() != ("DISABLED", "NONE"):
+        print("标定需要 DISABLED；不会自动清故障或关闭使能。")
         return 1
-    left = r[2]
-    input("把小车推到最右端，停稳后按回车发 MARK RIGHT …")
-    rig.send_line("MARK RIGHT")
-    rig.pump(1.0)
-    r = rig.last_reply
-    if not (r and r[0] == "OK"):
-        print("MARK RIGHT 被拒：%s" % (r,))
-        return 1
-    print("标定行程 L = %d µm（%.1f mm），回执已入 raw.log" % (abs(r[2] - left),
-                                                          abs(r[2] - left) / 1000.0))
-    rig.send_line("ENABLE")
-    m = rig.wait_mode("READY", 5.0)
-    if m is None:
-        print("ENABLE 超时（%s）" % (rig.last_mode,))
-        return 1
-    print("READY。可运行 matrix / step-response / smoke。")
+    for command, reply, prompt in (
+        ("MARK LEFT", "MARK_LEFT", "手推至左标定点，停稳后按回车 …"),
+        ("MARK RIGHT", "MARK_RIGHT", "手推至右标定点，停稳后按回车 …"),
+    ):
+        input(prompt)
+        rig.last_reply = None
+        rig.send_line(command)
+        rig.pump(1.0)
+        r = rig.last_reply
+        if not (r and r[0] == "OK" and r[1] == reply):
+            print("%s 未确认：%s" % (command, r))
+            return 1
+    # MARK_RIGHT 返回的就是 L，不是右端的累计编码器读数。
+    print("标定行程 L = %d µm（%.1f mm）；请用尺量核对。" % (r[2], r[2] / 1000.0))
+    print("保持 DISABLED。核对行程与独立停机条件后，另行决定是否 ENABLE。")
     return 0
 
 
@@ -351,75 +356,59 @@ def cmd_matrix(rig, args):
     if not ensure_ready(rig):
         return 1
     rows = []
-    consecutive_all_fail = 0
-    aborted = False
-    for v in args.speeds:
-        if not move_to_center(rig):
-            aborted = True
-            break
-        for acc in args.accs:
-            if not set_config(rig, "ACC_MAX", acc):
-                aborted = True
-                break
-            verdicts = []
-            for rep in range(args.reps):
-                seg = run_segment(rig, v, acc)
-                seg.update(seq=rep + 1)
-                rows.append(seg)
-                print("v=%-3d acc=%-5d 段%d：%-6s 偏移=%-7s %s" %
-                      (v, acc, rep + 1, seg["verdict"],
-                       seg["offset_um"] if seg["offset_um"] is not None else "—",
-                       seg["notes"] or ""))
-                verdicts.append(seg["verdict"])
-                if seg["faulted"]:
-                    if not recover_from_fault(rig):
-                        aborted = True
-                        break
-                    if not move_to_center(rig):
-                        aborted = True
-                        break
-            if aborted:
-                break
-            ok, label = combine_verdicts(verdicts)
-            print("  组合 v=%d acc=%d → %s" % (v, acc, label))
-            if all(x == "FAIL" for x in verdicts):
-                consecutive_all_fail += 1
-                if consecutive_all_fail >= 2:
-                    print("连续 2 个组合全部失败，按方案安全规则自动中止矩阵。")
-                    aborted = True
-            else:
-                consecutive_all_fail = 0
-        if aborted:
-            break
-    write_segments_csv(os.path.join(args.outdir, "segments.csv"), rows)
-    write_summary(os.path.join(args.outdir, "summary.txt"), rows, args, aborted)
+    aborted = True
+    try:
+        for v in args.speeds:
+            move_to_center(rig)
+            for acc in args.accs:
+                if not set_config(rig, "ACC_MAX", acc):
+                    raise ExperimentAborted("config-unconfirmed")
+                for rep in range(args.reps):
+                    seg = run_segment(rig, v, acc)
+                    seg.update(seq=rep + 1)
+                    rows.append(seg)
+                    print("v=%d acc=%d 段%d：%s 偏移=%s %s" %
+                          (v, acc, rep + 1, seg["verdict"], seg["offset_um"], seg["notes"]))
+                    if seg["verdict"] != "PASS" or seg["aborted"]:
+                        raise ExperimentAborted("segment-not-pass")
+        aborted = False
+    except ExperimentAborted as exc:
+        print("矩阵中止：%s；不会自动恢复或继续下一档。" % exc)
+    finally:
+        stop_failed = not request_stop(rig)
+        aborted = aborted or stop_failed
+        write_segments_csv(os.path.join(args.outdir, "segments.csv"), rows)
+        write_summary(os.path.join(args.outdir, "summary.txt"), rows, args, aborted)
+        if stop_failed and sys.exc_info()[0] is None:
+            raise ExperimentAborted("stop-send-failed")
     print("结果已写入 %s" % args.outdir)
-    if aborted:
-        print("矩阵提前中止（数据保留已跑部分）。")
-    return 0
+    return 1 if aborted else 0
 
 
 def cmd_step_response(rig, args):
-    """0 → v → 0 阶跃，记录 vx(t)（τ 与实际加速度分析依据）。"""
+    """记录每一帧主机接收时间；不把接收时间当作设备采样时钟。"""
     if not ensure_ready(rig):
         return 1
     if not set_config(rig, "ACC_MAX", 5000):
         return 1
-    v = args.step_v
     path = os.path.join(args.outdir, "step-response.csv")
-    with open(path, "w", newline="", encoding="ascii") as f:
-        w = csv.writer(f)
-        w.writerow(["t_s", "x_um", "vx_mm_s"])
-        for phase_vel, dur in ((0, 0.5), (v, 3.0), (0, 3.0)):
-            t_end = time.monotonic() + dur
-            while time.monotonic() < t_end:
-                rig.send_line("VEL %d" % phase_vel)
-                rig.pump(FEED_PERIOD_S)
-                st = rig.last_state_tuple()
-                if st:
-                    w.writerow(["%.3f" % rig.now(), st[0], st[1]])
-    print("阶跃记录已写入 %s（分析回填 sim2real-spec a_max/τ）" % path)
-    return 0
+    cursor = len(rig.samples)
+    try:
+        # 起步前先证明停稳；结束停稳检查与往返试验复用同一契约。
+        wait_until_settled(rig, 1.0)
+        run_leg(rig, args.step_v, 3.0, 5000)
+        print("阶跃接收记录写入 %s；需评估串口缓冲和时钟误差后再辨识。" % path)
+        return 0
+    finally:
+        stop_failed = not request_stop(rig)
+        # 整段有界，远小于 samples 容量；异常时也保留已收到的每一帧。
+        with open(path, "w", newline="", encoding="ascii") as f:
+            w = csv.writer(f)
+            w.writerow(["host_rx_t_s", "x_um", "vx_mm_s"])
+            for t, x, _, vx, _ in list(rig.samples)[cursor:]:
+                w.writerow(["%.6f" % (t - rig._t0), x, vx])
+        if stop_failed and sys.exc_info()[0] is None:
+            raise ExperimentAborted("stop-send-failed")
 
 
 # ---- 输出 ----
@@ -440,7 +429,7 @@ def write_summary(path, rows, args, aborted):
     for r in rows:
         combos.setdefault((r["v_mm_s"], r["acc_mm_s2"]), []).append(r["verdict"])
     with open(path, "w", encoding="utf-8") as f:
-        f.write("最大加速度实测结果（VM 20V、800/400 mA、细分 8）\n")
+        f.write("速度×加速度试验记录（电气与机械条件须另行记录）\n")
         f.write("日期：%s  中止：%s\n\n" % (time.strftime("%Y-%m-%d %H:%M"),
                                         "是" if aborted else "否"))
         f.write("v\\acc    " + "".join("%-8d" % a for a in args.accs) + "\n")
@@ -451,20 +440,18 @@ def write_summary(path, rows, args, aborted):
                 if not vs:
                     cells.append("%-8s" % "—")
                     continue
-                ok, _ = combine_verdicts(vs)
+                ok = len(vs) == args.reps and combine_verdicts(vs)[0]
                 cells.append("%-8s" % ("可行" if ok else "不可行"))
             f.write("%-8d" % v + "".join(cells) + "\n")
-        f.write("\n每速度点最高可行加速度：\n")
+        f.write("\n每速度点完整通过主机检查的最高已测加速度（不是机械极限）：\n")
         for v in args.speeds:
             best = None
             for a in args.accs:
                 vs = combos.get((v, a))
-                if vs and combine_verdicts(vs)[0]:
+                if vs and len(vs) == args.reps and combine_verdicts(vs)[0]:
                     best = a
-            if best == args.accs[-1]:
-                f.write("  %d mm/s：≥ %d mm/s²（软件墙，本矩阵未探到边界）\n" % (v, best))
-            elif best is None:
-                f.write("  %d mm/s：本矩阵内无可行档\n" % v)
+            if best is None:
+                f.write("  %d mm/s：没有完整全过档位\n" % v)
             else:
                 f.write("  %d mm/s：%d mm/s²\n" % (v, best))
 
@@ -485,6 +472,15 @@ def main():
     p.add_argument("--step-v", type=int, default=50)
 
     args = ap.parse_args()
+    if args.cmd == "matrix":
+        for name in ("speeds", "accs"):
+            values = getattr(args, name)
+            if any(v <= 0 for v in values) or values != sorted(set(values)):
+                ap.error("%s 必须为严格递增的正整数列表" % name)
+        if args.reps <= 0:
+            ap.error("reps 必须大于 0")
+    if args.cmd == "step-response" and args.step_v <= 0:
+        ap.error("step-v 必须大于 0")
     outdir = args.out or os.path.join(
         "results", "maxaccel-" + time.strftime("%Y%m%d-%H%M%S"))
     os.makedirs(outdir, exist_ok=True)
@@ -493,13 +489,21 @@ def main():
     table = {"calib": cmd_calib, "smoke": cmd_smoke,
              "matrix": cmd_matrix, "step-response": cmd_step_response}
     args.outdir = outdir
+    rc = 1
     try:
         rc = table[args.cmd](rig, args)
     except KeyboardInterrupt:
         print("\n用户中断；已跑数据保留在 %s" % outdir)
         rc = 130
+    except (ExperimentAborted, OSError) as exc:
+        print("试验中止：%s" % exc, file=sys.stderr)
+        rc = 1
     finally:
-        rig.close()
+        try:
+            if args.cmd != "calib" and not request_stop(rig) and rc == 0:
+                rc = 1
+        finally:
+            rig.close()
     sys.exit(rc)
 
 
