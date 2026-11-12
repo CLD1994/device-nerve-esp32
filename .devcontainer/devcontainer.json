@@ -1,6 +1,6 @@
 {
-  "name": "PD-STEP",
-  "image": "hexchip/devcontainer:esp_idf_v6.1-claude_code-codex",
+  "name": "device-nerve-esp32",
+  "image": "cld1994/devcontainer:esp_idf_v6.1-claude-codex",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -19,23 +19,10 @@
       }
     }
   },
-  "features": {
-    "ghcr.io/devcontainers/features/common-utils:2": {
-      "configureZshAsDefaultShell": false,
-      "username": "${localEnv:USER}",
-      "userUid": "1000",
-      "userGid": "1000"
-    }
-  },
-  "containerUser": "${localEnv:USER}",
+
   "mounts": [
     "source=/dev,target=/dev,type=bind",
-    "source=/mnt/wslg,target=/mnt/wslg,type=bind",
-    "source=devcontainer-shared-data,target=/opt/devcontainer/shared-data,type=volume",
-    "source=PD-STEP-command_history-${devcontainerId},target=/opt/devcontainer/commandhistory,type=volume",
-    "source=PD-STEP-claude_config-${devcontainerId},target=/opt/devcontainer/.claude,type=volume",
-    "source=PD-STEP-codex_config-${devcontainerId},target=/opt/devcontainer/.codex,type=volume",
-    "source=PD-STEP-extensions,target=/opt/devcontainer/vscode-extensions,type=volume"
+    "source=/mnt/wslg,target=/mnt/wslg,type=bind"
   ],
   "containerEnv": {
     "PULSE_SERVER": "${localEnv:PULSE_SERVER}"
@@ -43,6 +30,5 @@
   "runArgs": [
     "--privileged",
     "--group-add", "dialout"
-  ],
-  "postCreateCommand": "bash .devcontainer/post_create.sh"
+  ]
 }
