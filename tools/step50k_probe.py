@@ -105,6 +105,8 @@ def execute(link,args):
     stop_timeout=TARGET_SPEED_MM_S/min(args.normal_decel,args.watchdog_decel)+args.watchdog_ms/1000+.5
     failure=None
     last_nonzero_attempt=None
+    reached=None
+    motion_end_reason=None
     try:
         stop_bounded(link,stop_timeout)
         desired=dict(VEL_MAX=int(TARGET_SPEED_MM_S),ACC_MAX=int(TARGET_ACCEL_MM_S2),
@@ -134,17 +136,25 @@ def execute(link,args):
             now=link.clock()
             if deadline is None:
                 if now>=first_deadline: raise Abort('起步等待新状态超时')
-            elif now>=deadline or now-last_send>=.05:
-                raise Abort('运动时窗或续发截止已过，禁止继续非零命令')
+            elif now-last_send>=.05:
+                raise Abort('50ms续发截止已过，禁止继续非零命令')
+            return deadline is not None and now>=deadline
         while True:
-            deadlines(); link.poll(); deadlines()
+            if deadlines():
+                motion_end_reason='window_elapsed'; break
+            link.poll()
+            if deadlines():
+                motion_end_reason='window_elapsed'; break
             now=link.clock(); state=link.fresh()
             if link.guard_failure: raise Abort(link.guard_failure)
-            if last_send is not None and state[2]>=TARGET_SPEED_MM_S:
+            if last_send is not None and state[2]>=TARGET_SPEED_MM_S*.98:
                 if reached is None: reached=now
-            if reached is not None and now-reached>=args.hold_s: break
+            if reached is not None and now-reached>=args.hold_s:
+                motion_end_reason='approx_target_hold_completed'; break
             if now>=next_send and link.states!=previous:
-                deadlines(); previous=link.states
+                if deadlines():
+                    motion_end_reason='window_elapsed'; break
+                previous=link.states
                 last_send=link.clock()
                 if deadline is None: deadline=last_send+args.window_s
                 next_send=last_send+.025
@@ -171,6 +181,11 @@ def execute(link,args):
             stop_error=exc
         log_errors=[]
         for direction,value in (
+                ('motion_end',dict(reason=motion_end_reason or 'aborted',
+                    approx_target_reached=reached is not None,
+                    threshold_mm_s=TARGET_SPEED_MM_S*.98,
+                    target_mm_s=TARGET_SPEED_MM_S,
+                    exact_speed_verified=False)),
                 ('inflight_horizon',horizon),
                 ('stop_unconfirmed',str(stop_error)) if stop_error is not None else
                 ('stop','received_state_stable_after_declared_inflight_horizon')):
@@ -205,6 +220,10 @@ def main(argv=None):
             link=Link(port)
             try:
                 result=execute(link,args)
+                if args.command=='run':
+                    end=next(e['value'] for e in reversed(link.events) if e['direction']=='motion_end')
+                    print('运动结束原因:',end['reason'],'；近似到速:',end['approx_target_reached'],
+                          '（报告速度≥1225，不代表精准1250或实际加速度）')
                 print(json.dumps(result,ensure_ascii=False,indent=2,allow_nan=False))
                 print('计划完成，未运动。' if args.command=='plan' else '收到状态满足检查；未自动DISABLE，未证明实际加速度。')
                 return 0

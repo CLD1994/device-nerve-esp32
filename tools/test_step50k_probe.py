@@ -98,8 +98,30 @@ class ProbeTests(unittest.TestCase):
                 data=super().read(n)
                 return data.replace(b' 1250 0\n',b' 1000 0\n')
         f=Slow()
-        with self.assertRaisesRegex(Abort,'截止'):self.run_probe(f)
+        _,l=self.run_probe(f)
+        end=next(e['value'] for e in l.events if e['direction']=='motion_end')
+        self.assertEqual(end['reason'],'window_elapsed')
+        self.assertFalse(end['approx_target_reached'])
         self.assertEqual(f.v,0);self.assertLess(f.t,3)
+    def test_approximate_target_uses_two_percent_lower_bound(self):
+        for speed in (1225,1233):
+            class Near(Bench):
+                def read(self,n):
+                    return super().read(n).replace(b' 1250 0\n',(' %d 0\n'%speed).encode())
+            f,l=self.run_probe(Near())
+            end=next(e['value'] for e in l.events if e['direction']=='motion_end')
+            self.assertEqual(end['reason'],'approx_target_hold_completed')
+            self.assertTrue(end['approx_target_reached'])
+            self.assertEqual(end['threshold_mm_s'],1225)
+            self.assertEqual(f.v,0)
+    def test_below_approximate_threshold_is_not_target_completion(self):
+        class Near(Bench):
+            def read(self,n):
+                return super().read(n).replace(b' 1250 0\n',b' 1224 0\n')
+        _,l=self.run_probe(Near())
+        end=next(e['value'] for e in l.events if e['direction']=='motion_end')
+        self.assertEqual(end['reason'],'window_elapsed')
+        self.assertFalse(end['approx_target_reached'])
     def test_late_read_cannot_resume_motion(self):
         class Delayed(Bench):
             seen=False
@@ -107,7 +129,7 @@ class ProbeTests(unittest.TestCase):
                 if self.v and not self.seen:self.seen=True;self.t+=.051
                 return super().read(n)
         f=Delayed()
-        with self.assertRaises(Abort):self.run_probe(f)
+        with self.assertRaisesRegex(Abort,'50ms续发截止'):self.run_probe(f)
         self.assertEqual(f.writes.count('VEL 1250'),1)
     def test_missing_permission_rejects_writes(self):
         f=Bench()
