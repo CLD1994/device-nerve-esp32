@@ -24,6 +24,8 @@
 #include "poleang.h"
 #include "cartaxis.h"
 #include "cartproto.h"
+#include "cartcal.h"
+#include "settings.h"
 
 static const char *TAG = "cartfsm";
 
@@ -40,10 +42,40 @@ static volatile long s_last_cmd_v = 0;     /* 最近有效目标（软限位持�
 static volatile bool s_fault_settling = false;  /* FAULT 斜坡停机进行中 */
 static bool s_started = false;
 
-/* ---- 手动两点标定状态（RAM，断电回 CAL_NONE） ---- */
+/* ---- 本次定位状态与已提交的装置标定 ---- */
 static calib_state_t s_calib = CAL_NONE;
-static long s_e_left_um = 0;   /* 左标 E（µm） */
+static int64_t s_e_left_um = 0;   /* 左标 E（µm） */
 static long s_calib_l_um = 0;  /* 标定行程 L（CAL_DONE 后有效） */
+
+static cartcal_record_t s_saved;
+static cartpos_reference_t s_left_ref;
+static esp_err_t s_storage_status = ESP_OK;
+
+static bool saved_track_valid(void)
+{
+    return cm_calib_valid(s_saved.length_um) &&
+           s_saved.mm_per_rev == settings_units_per_rev();
+}
+
+/* 仅 comm_task 修改标定状态；监督任务只停机，不能与标定命令竞争写状态。 */
+static void check_reference(void)
+{
+    if (s_calib == CAL_DONE &&
+        (!saved_track_valid() || !cartpos_reference_is_valid())) {
+        s_calib = saved_track_valid() ? CAL_PENDING : CAL_NONE;
+    }
+}
+
+static bool save_record(const cartcal_record_t *record)
+{
+    s_storage_status = cartcal_save(record);
+    if (s_storage_status != ESP_OK) {
+        ESP_LOGE(TAG, "标定保存失败: %d", (int)s_storage_status);
+        return false;
+    }
+    s_saved = *record;
+    return true;
+}
 
 /* 流程测试注入钩子（CONFIG_CARTFSM_TEST_HOOKS）：0 无、1 AS5600、2 MT6835 */
 #ifdef CONFIG_CARTFSM_TEST_HOOKS
@@ -214,43 +246,102 @@ static void exec_query(void)
 
 static void exec_mark_left(void)
 {
+    cartpos_reference_t ref;
     if (s_mode != CM_DISABLED) {
-        cartproto_send_err("MARK_LEFT");   /* 规格 §2 回执原则 */
+        cartproto_send_err("MARK_LEFT");
         return;
     }
-    long e = (long)cartpos_position_um();
+    /* 先提交失效记录：ACK 后即使掉电也不能复用上一段行程。 */
+    cartcal_record_t record = s_saved;
+    record.length_um = 0;
+    record.mm_per_rev = settings_units_per_rev();
+    if (!save_record(&record)) {
+        s_calib = saved_track_valid() ? CAL_PENDING : CAL_NONE;
+        cartproto_send_err("CAL_STORAGE");
+        return;
+    }
+    s_calib = CAL_NONE;
+    s_calib_l_um = 0;
+    /* Flash提交可能暂停采样；在它完成之后观察稳定窗口，不能把该暂停
+     * 误当成左右标记之间的位移丢失。保存失效但读数失败时需重试LEFT。 */
+    if (!cartpos_capture_reference(&ref)) {
+        cartproto_send_err("MARK_LEFT");
+        return;
+    }
+    s_left_ref = ref;
+    s_e_left_um = ref.raw_um;
 #ifdef CONFIG_CARTFSM_TEST_HOOKS
-    e = consume_test_bias(e);
+    s_e_left_um = consume_test_bias((long)s_e_left_um);
 #endif
-    s_e_left_um = e;           /* 重复标记即覆盖重开（规格 §2） */
+    s_calib_l_um = 0;
     s_calib = CAL_LEFT;
-    cartproto_send_ok("MARK_LEFT", e);
+    cartproto_send_ok("MARK_LEFT", (long)cartpos_position_um());
 }
 
 static void exec_mark_right(void)
 {
-    if (s_mode != CM_DISABLED) {
+    cartpos_reference_t ref;
+    if (s_mode != CM_DISABLED || s_calib != CAL_LEFT ||
+        s_saved.mm_per_rev != settings_units_per_rev() ||
+        !cartpos_capture_reference(&ref)) {
         cartproto_send_err("MARK_RIGHT");
         return;
     }
-    long e = (long)cartpos_position_um();
-#ifdef CONFIG_CARTFSM_TEST_HOOKS
-    e = consume_test_bias(e);
-#endif
-    long l = e - s_e_left_um;
-    if (s_calib != CAL_LEFT || !cm_calib_valid(l)) {
-        cartproto_send_err("MARK_RIGHT");  /* 状态保持（规格 §2） */
+    if (ref.scale_revision != s_left_ref.scale_revision ||
+        ref.failure_seq != s_left_ref.failure_seq ||
+        ref.continuity_seq != s_left_ref.continuity_seq) {
+        cartproto_send_err("CAL_REFERENCE"); /* 左右点之间丢失连续位置，必须重标 LEFT */
         return;
     }
-    s_calib_l_um = l;
+    int64_t right = ref.raw_um;
+#ifdef CONFIG_CARTFSM_TEST_HOOKS
+    right = consume_test_bias((long)right);
+#endif
+    uint64_t length = (uint64_t)right - (uint64_t)s_e_left_um;
+    if (right < s_e_left_um || length > INT32_MAX || !cm_calib_valid((long)length)) {
+        cartproto_send_err("MARK_RIGHT");
+        return;
+    }
+    cartcal_record_t record = s_saved;
+    record.length_um = (int32_t)length;
+    if (!save_record(&record)) {
+        cartproto_send_err("CAL_STORAGE"); /* 留在 LEFT，允许同位置重试 */
+        return;
+    }
+    s_calib_l_um = record.length_um;
+    s_calib = CAL_PENDING;
+    /* 按写入前的右端快照定基，NVS耗时内真实位移不能被吞掉。 */
+    if (!cartpos_apply_reference(&ref, length / 2)) {
+        cartproto_send_err("CAL_REFERENCE"); /* 已保存，但必须重新确认左端 */
+        return;
+    }
+    cartaxis_set_position_um((long)cartpos_position_um());
     s_calib = CAL_DONE;
-    /* E/C 同帧重定基：两标中点为 x=0（引擎停止时整定）。
-     * set_origin 的契约是「当前物理位置此后读 v」——此刻小车
-     * 在右端，传 +L/2 即得「右端=+L/2、中点=0、左端=−L/2」；
-     * C 同步到 E 的新读数，保持 E−C=0 */
-    cartpos_set_origin_mm((float)l / 2.0f / 1000.0f);
-    cartaxis_set_position_um(l / 2);
-    cartproto_send_ok("MARK_RIGHT", l);
+    cartproto_send_ok("MARK_RIGHT", record.length_um);
+}
+
+static void exec_confirm_left(void)
+{
+    cartpos_reference_t ref;
+    if (s_mode != CM_DISABLED || s_calib == CAL_LEFT || !saved_track_valid() ||
+        !cartpos_capture_reference(&ref) ||
+        !cartpos_apply_reference(&ref, -(int64_t)s_saved.length_um / 2)) {
+        cartproto_send_err("CONFIRM_LEFT");
+        return;
+    }
+    s_calib_l_um = s_saved.length_um;
+    cartaxis_set_position_um((long)cartpos_position_um());
+    s_calib = CAL_DONE;
+    cartproto_send_ok("CONFIRM_LEFT", -s_calib_l_um / 2);
+}
+
+static void exec_calib_query(void)
+{
+    check_reference();
+    cartproto_send_ok("CAL_STATE", s_calib);
+    cartproto_send_ok("CAL_LENGTH_UM", saved_track_valid() ? s_saved.length_um : 0);
+    cartproto_send_ok("CAL_SAVED", saved_track_valid());
+    cartproto_send_ok("CAL_STORAGE", s_storage_status);
 }
 
 static void exec_enable(void)
@@ -258,6 +349,7 @@ static void exec_enable(void)
     if (s_mode != CM_DISABLED) {
         return;   /* READY/FAULT 忽略（规格 §5 矩阵） */
     }
+    check_reference();
     if (s_calib != CAL_DONE) {
         cartproto_send_err("ENABLE");
         return;
@@ -295,6 +387,7 @@ static void exec_reset(void)
 
     cartaxis_stop();               /* 斜坡未完也立即急停 */
     cartaxis_enable(false);
+    check_reference();
     params_apply_engine();       /* 恢复 ACC_MAX 档等 */
     push_mode(CM_DISABLED, CR_NONE);
 }
@@ -319,16 +412,25 @@ static void exec_vel(int32_t v_mm_s)
 
 static void exec_config_set(const cart_req_t *req)
 {
-    if (!cm_config_set_allowed(s_mode)) {
-        cartproto_send_err(req->name);   /* FAULT 拒绝 */
+    int idx = fw_params_find(req->name);
+    bool pole = idx == FP_POLE_ZERO_URAD || idx == FP_POLE_INV;
+    if (!cm_config_set_allowed(s_mode) || !fw_params_valid(idx, req->value) ||
+        ((pole || idx == FP_X_INV) && s_mode != CM_DISABLED)) {
+        cartproto_send_err(req->name);
         return;
     }
-    if (fw_params_set(req->name, req->value)) {
-        params_apply_one(req->name);
-        cartproto_send_ok(req->name, req->value);   /* 回显归一化值 */
-    } else {
-        cartproto_send_err(req->name);
+    if (pole) {
+        cartcal_record_t record = s_saved;
+        if (idx == FP_POLE_ZERO_URAD) record.pole_zero_urad = req->value;
+        else record.pole_inv = req->value;
+        if (!save_record(&record)) {
+            cartproto_send_err("CAL_STORAGE");
+            return;
+        }
     }
+    fw_params_set(req->name, req->value);
+    params_apply_one(req->name);
+    cartproto_send_ok(req->name, req->value);
 }
 
 static void exec_config_dump(void)
@@ -342,6 +444,8 @@ static void exec_cmd(const cart_req_t *req)
 {
     switch (req->cmd) {
     case CART_CMD_QUERY:       exec_query(); break;
+    case CART_CMD_CONFIRM_LEFT: exec_confirm_left(); break;
+    case CART_CMD_CALIB_QUERY: exec_calib_query(); break;
     case CART_CMD_MARK_LEFT:   exec_mark_left(); break;
     case CART_CMD_MARK_RIGHT:  exec_mark_right(); break;
     case CART_CMD_ENABLE:      exec_enable(); break;
@@ -380,7 +484,7 @@ static void fsm_task(void *arg)
 #endif
 
         if (mode == CM_READY) {
-            if (!a5600_ok) {
+            if (!a5600_ok || !cartpos_reference_is_valid() || !saved_track_valid()) {
                 enter_fault(CR_AS5600);
             } else if (!m6835_ok) {
                 enter_fault(CR_MT6835);
@@ -477,6 +581,22 @@ esp_err_t cartfsm_start(void)
      * motor_tmc2209_init) 完成初始化——本文件全部 EN 调用点
      * （exec_enable/exec_reset/settling）同此前提，忽略安全。 */
     cartaxis_enable(false);
+    s_saved = (cartcal_record_t){
+        .mm_per_rev = settings_units_per_rev(),
+        .pole_zero_urad = fw_params()->pole_zero_urad,
+        .pole_inv = fw_params()->pole_inv,
+    };
+    cartcal_record_t loaded;
+    s_storage_status = cartcal_load(&loaded);
+    if (s_storage_status == ESP_OK) {
+        s_saved = loaded;
+        fw_params_set("POLE_ZERO_URAD", loaded.pole_zero_urad);
+        fw_params_set("POLE_INV", loaded.pole_inv);
+    } else {
+        ESP_LOGW(TAG, "未恢复标定记录: %d；需要两点标定", (int)s_storage_status);
+    }
+    s_calib = saved_track_valid() ? CAL_PENDING : CAL_NONE;
+    s_calib_l_um = saved_track_valid() ? s_saved.length_um : 0;
     params_apply_engine();
 
     cartproto_register_exec(exec_cmd);

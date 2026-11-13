@@ -66,6 +66,8 @@ typedef enum {
     CART_CMD_RESET,
     CART_CMD_QUERY,
     CART_CMD_CONFIG_SET,     /* CONFIG <NAME> <value> */
+    CART_CMD_CONFIRM_LEFT,   /* CONFIRM LEFT */
+    CART_CMD_CALIB_QUERY,    /* CALIB? */
     CART_CMD_CONFIG_DUMP,    /* CONFIG? */
 } cart_cmd_t;
 

@@ -22,6 +22,21 @@ extern "C" {
 
 typedef struct magnetic_encoder_s *magnetic_encoder_handle_t;
 
+/** 连续采样允许的最大成功样本间隔，微秒。 */
+#define MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US 20000
+
+/** 同一临界区内取得的采样快照；时间单位为启动后的单调微秒。 */
+typedef struct {
+    int64_t position_counts;
+    int64_t sampled_at_us;       /* 最近成功样本的时间，仅 valid 时有意义 */
+    uint64_t sample_seq;         /* 每次成功递增 */
+    uint64_t continuity_seq;     /* 成功样本间隔超过连续性上限时递增 */
+    uint64_t failure_seq;        /* 每次失败递增，包括首读失败 */
+    bool valid;                 /* 已有至少一个成功样本，不等价于新鲜 */
+    bool last_attempt_ok;       /* 最近一次读帧是否成功 */
+    bool ok;                    /* 原 is_ok 连续失败阈值状态 */
+} magnetic_encoder_sample_t;
+
 /** 操作表：实现填写类别函数指针；必须作为实例结构的首成员。 */
 struct magnetic_encoder_s {
     int32_t (*counts_per_rev)(magnetic_encoder_handle_t enc);
@@ -29,7 +44,19 @@ struct magnetic_encoder_s {
     int64_t  (*position_counts)(magnetic_encoder_handle_t enc);
     int32_t  (*velocity_counts_per_s)(magnetic_encoder_handle_t enc);
     bool     (*is_ok)(magnetic_encoder_handle_t enc);
+    bool     (*get_sample)(magnetic_encoder_handle_t enc, magnetic_encoder_sample_t *out);
 };
+
+/**
+ * 原子取得位置、成功时间和采样状态。返回 false 表示参数或实现不支持，
+ * 此时不修改 out；返回 true 不保证 valid、last_attempt_ok 或数据新鲜。
+ */
+static inline bool magnetic_encoder_get_sample(magnetic_encoder_handle_t enc,
+                                                magnetic_encoder_sample_t *out)
+{
+    return enc != 0 && out != 0 && enc->get_sample != 0
+        && enc->get_sample(enc, out);
+}
 
 /** 每转原始计数（分辨率）：AS5600 为 4096，MT6835 为 2097152。 */
 static inline int32_t magnetic_encoder_counts_per_rev(magnetic_encoder_handle_t enc)

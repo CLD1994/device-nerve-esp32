@@ -33,6 +33,7 @@ class Rig:
         self.last_state = None     # 首帧合法 STATE 到来前尚无遥测
         self.last_mode = None      # (mode, reason)
         self.last_reply = None     # (kind, name, value)
+        self.replies = {}          # 本次请求的命名 OK 回执
         self.state_count = 0
         self.unknown_count = 0
         # 跨 pump 调用持久的接收缓冲：未凑齐的半行必须留到下次继续，
@@ -98,6 +99,7 @@ class Rig:
             if len(parts) == 3:
                 try:
                     self.last_reply = ("OK", parts[1], int(parts[2]))
+                    self.replies[parts[1]] = int(parts[2])
                     print("[OK] %s = %d" % (parts[1], int(parts[2])))
                     return
                 except ValueError:
@@ -162,6 +164,30 @@ def cmd_mark_left(rig, args):
 
 def cmd_mark_right(rig, args):
     return cmd_mark(rig, args, "MARK RIGHT")
+
+
+def cmd_confirm_left(rig, args):
+    rig.last_reply = None
+    rig.send_line("CONFIRM LEFT")
+    rig.pump(1.0)
+    r = rig.last_reply
+    if r and r[:2] == ("OK", "CONFIRM_LEFT"):
+        print("左参考已确认，仍保持 DISABLED；当前位置 %d µm" % r[2])
+        return 0
+    print("左参考未确认：%s" % (r or "无回执（检查固件是否支持）",))
+    return 1
+
+
+def cmd_calib_status(rig, args):
+    rig.last_reply = None
+    rig.replies.clear()
+    rig.send_line("CALIB?")
+    rig.pump(1.0)
+    expected = {"CAL_STATE", "CAL_LENGTH_UM", "CAL_SAVED", "CAL_STORAGE"}
+    if not expected.issubset(rig.replies):
+        print("标定状态回执不完整，请重试；不能据此判断可使能。")
+        return 1
+    return 0
 
 
 def cmd_enable(rig, args):
@@ -276,6 +302,8 @@ def main():
     sub.add_parser("query")
     sub.add_parser("mark-left")
     sub.add_parser("mark-right")
+    sub.add_parser("confirm-left")
+    sub.add_parser("calib-status")
     p = sub.add_parser("enable"); p.add_argument("--timeout", type=float, default=5.0)
     p = sub.add_parser("vel"); p.add_argument("v", type=int)
     p.add_argument("--hold", type=float, default=1.0)
@@ -290,6 +318,7 @@ def main():
     rig = Rig(args.port, args.baud)
     try:
         table = {
+            "confirm-left": cmd_confirm_left, "calib-status": cmd_calib_status,
             "query": cmd_query, "mark-left": cmd_mark_left,
             "mark-right": cmd_mark_right, "enable": cmd_enable, "vel": cmd_vel,
             "config": cmd_config, "dump": cmd_dump, "state": cmd_state,

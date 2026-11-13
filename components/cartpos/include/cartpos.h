@@ -28,6 +28,35 @@ float cartpos_velocity_mm_s(void);
 /** 连续 ≥10 次读取失败为 false；一次成功即恢复 true。 */
 bool cartpos_is_ok(void);
 
+/** 捕获的原始位置及其采样/比例版本；仅由 capture 填充，不持久化。 */
+typedef struct {
+    int64_t raw_um;
+    uint64_t scale_revision;
+    uint64_t failure_seq;
+    uint64_t continuity_seq;
+} cartpos_reference_t;
+
+/**
+ * DISABLED 下捕获稳定参考点，不产生运动、不修改原点。
+ * 在任务上下文每 5 ms 检查：最近成功样本不超过 20 ms，最近读帧成功，
+ * 成功序列持续推进、无读失败/长采样空窗，至少 100 ms 内位移范围≤100 µm。
+ * 调用方不得持有自旋锁。失败不修改 out；调用方负责保证全程 DISABLED。
+ */
+bool cartpos_capture_reference(cartpos_reference_t *out);
+
+/**
+ * 按捕获时的位置定义 target_um，而非按调用时的位置重新采样定基。
+ * 比例变更、采样连续性丢失或整数溢出时返回 false，原点不变。
+ * 成功建立运行期参考有效性；调用方负责保证 DISABLED。
+ */
+bool cartpos_apply_reference(const cartpos_reference_t *ref, int64_t target_um);
+
+/**
+ * 检查当前参考采样连续性；失效后锁存为 false，直到下一次成功 apply。
+ * 无参考、无成功样本、不新鲜、读失败、长采样空窗或比例变更均无效。
+ */
+bool cartpos_reference_is_valid(void);
+
 /** 声明当前位置为 new_pos_mm（纯偏移建立，不产生运动）。 */
 void cartpos_set_origin_mm(float new_pos_mm);
 

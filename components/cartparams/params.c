@@ -56,7 +56,7 @@ bool fw_params_set(const char *name, long value)
     }
     for (int i = 0; i < ENTRY_COUNT; i++) {
         if (strcmp(s_entries[i].name, name) == 0) {
-            if (value < s_entries[i].min || value > s_entries[i].max) {
+            if (!fw_params_valid(i, value)) {
                 return false;
             }
             *s_entries[i].field = value;
@@ -98,4 +98,14 @@ long fw_params_value(int idx)
         return 0;
     }
     return *s_entries[idx].field;
+}
+
+bool fw_params_valid(int idx, long value)
+{
+    return idx >= 0 && idx < ENTRY_COUNT && value >= s_entries[idx].min && value <= s_entries[idx].max;
+}
+
+bool fw_calib_length_valid(long l)
+{
+    return l >= 100000L && l <= 1000000L;
 }

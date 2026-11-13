@@ -18,8 +18,8 @@
 extern "C" {
 #endif
 
-/** 标定状态（RAM，断电回 CAL_NONE，RESET 不清除）。 */
-typedef enum { CAL_NONE, CAL_LEFT, CAL_DONE } calib_state_t;
+/** 标定状态：重启有保存行程时为 CAL_PENDING，须显式确认左参考。 */
+typedef enum { CAL_NONE, CAL_LEFT, CAL_DONE, CAL_PENDING } calib_state_t;
 
 /**
  * @brief 启动模式机：按注册表默认值配置引擎、注册 cartproto exec、
