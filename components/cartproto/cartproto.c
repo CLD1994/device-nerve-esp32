@@ -31,7 +31,7 @@ static const char *TAG = "cartproto";
 /* ---- 配置常量 ---- */
 #define UART_PORT_NUM           UART_NUM_0   /* 协议通道（rev2 从 UART1 迁移，console 已切原生 USB） */
 #define UART_RX_BUF_SIZE        1024   /* RX 环形缓冲大小 */
-#define UART_TX_BUF_SIZE        512    /* TX 环形缓冲大小 */
+#define UART_TX_BUF_SIZE        0    /* TX 环形缓冲大小 */
 #define UART_QUEUE_SIZE         10     /* 事件队列深度 */
 
 #define LINE_BUF_SIZE           128    /* 行缓冲大小（含 NUL） */
