@@ -16,7 +16,7 @@ int main(void)
     assert(v.counts_per_s == 100000 && v.span_us == 32000);
     /* 超过总跨度1us即无效；不清位置历史，滑窗自然恢复。 */
     v = magnetic_encoder_vel_push_at(&w, 3400, 34001, 20000);
-    assert(!v.valid && v.span_us == 32001 && w.fill == 17);
+    assert(!v.valid && v.span_us == 32001);
     for (int i = 1; i <= 16; ++i)
         v = magnetic_encoder_vel_push_at(&w, 3400+i*100, 34001+i*1000, 20000);
     assert(v.valid && v.span_us == 16000 && v.counts_per_s == 100000);
@@ -50,9 +50,12 @@ int main(void)
         v = magnetic_encoder_vel_push_at(&w, i*20, i*20000, 20000);
     assert(!v.valid && v.span_us == 320000);
     assert(!magnetic_encoder_vel_push_at(&w, 341, 340001, 20000).valid);
-    assert(w.fill == 1);
     assert(!magnetic_encoder_vel_push_at(&w, 300, 300000, 20000).valid);
-    assert(w.fill == 1);
+    for (int i = 1; i <= 16; ++i) {
+        v = magnetic_encoder_vel_push_at(&w, 300+i, 300000+i*1000, 20000);
+        assert(v.valid == (i == 16));
+    }
+    assert(v.counts_per_s == 1000 && v.span_us == 16000);
     /* 两实例独立；无效时间清空，负速度与静止均能明确有效。 */
     magnetic_encoder_vel_win_t other;
     magnetic_encoder_vel_win_reset(&w);
@@ -65,7 +68,11 @@ int main(void)
     }
     assert(v.valid && v.counts_per_s == 0);
     assert(!magnetic_encoder_vel_push_at(&w, 100, -1, 20000).valid);
-    assert(w.fill == 0);
+    for (int i = 0; i < 17; ++i) {
+        v = magnetic_encoder_vel_push_at(&w, 100, 20000+i*1000, 20000);
+        assert(v.valid == (i == 16));
+    }
+    assert(v.counts_per_s == 0);
     assert(!magnetic_encoder_vel_push_at(&w, 100, 20000, 0).valid);
     assert(!magnetic_encoder_vel_push_at(NULL, 100, 20000, 20000).valid);
     /* 恒加速度：速度为两个采样时刻之间的平均值。 */

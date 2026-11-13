@@ -21,6 +21,7 @@
 #include "cartaxis.h"
 #include "magnetic_encoder_mt6835.h"
 #include "cartpos.h"
+#include "params.h"
 #include "poleang.h"
 #include "telemetry.h"
 #include "cartproto.h"
@@ -69,7 +70,7 @@ void app_main(void)
         .task_name     = "me_cart",
     };
     ESP_ERROR_CHECK(magnetic_encoder_mt6835_init(&ccfg, &s_enc_cart));
-    cartpos_init(s_enc_cart);
+    cartpos_init(s_enc_cart, fw_params_max_value(FP_VEL_MAX));
     magnetic_encoder_mt6835_config_t pcfg = {
         .host          = bsp_get_pole_enc_spi_host(),
         .clock_speed_hz = CONFIG_BSP_POLE_ENC_SPI_HZ,

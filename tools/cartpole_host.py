@@ -30,9 +30,18 @@ from velocity_validity import VelocityValidity
 
 
 class Rig:
-    def __init__(self, port, baud=460800, timeout=0.2):
-        self.ser = serial.Serial(port, baud, timeout=timeout, write_timeout=.02)
-        self.velocity_validity = VelocityValidity()
+    def __init__(self, port, baud=460800, timeout=0.2, *,
+                 serial_factory=None, clock=None, output=None):
+        """创建会话。可注入兼容 pyserial 的工厂、单调秒时钟和消息输出函数。
+
+        会话负责关闭工厂返回的串口。工厂接收 port、baud、timeout 和
+        write_timeout；时钟必须单调递增，读取等待时间也应计入时钟。
+        """
+        self._clock = clock if clock is not None else time.monotonic
+        self._output = output if output is not None else print
+        factory = serial_factory if serial_factory is not None else serial.Serial
+        self.ser = factory(port, baud, timeout=timeout, write_timeout=.02)
+        self.velocity_validity = VelocityValidity(self._clock)
         self.state_received_at = None
         self.last_state = None     # 首帧合法 STATE 到来前尚无遥测
         self.last_mode = None      # (mode, reason)
@@ -46,8 +55,8 @@ class Rig:
         self._rx_buf = b""
         # 丢弃到首个 \n 的残余（mid-stream 半行/开串口毛刺不是链路
         # 质量问题，不计入 UNKNOWN），保留 \n 之后已开始的行
-        t0 = time.time()
-        while time.time() - t0 < 0.5:
+        t0 = self._clock()
+        while self._clock() - t0 < 0.5:
             chunk = self.ser.read(256)
             if chunk:
                 self._rx_buf += chunk
@@ -58,10 +67,15 @@ class Rig:
     def close(self):
         self.ser.close()
 
+    def state_is_fresh(self, max_age=0.1):
+        """最近接收的状态仍在接收时效内；不等同于设备采样时间。"""
+        return (self.last_state is not None and self.state_received_at is not None
+                and 0 <= self._clock() - self.state_received_at <= max_age)
+
     def send_line(self, line):
         self.velocity_validity.command(line)
         if line.startswith("VEL ") and line.split()[1:] != ["0"]:
-            if self.state_received_at is None or time.monotonic() - self.state_received_at > .1:
+            if not self.state_is_fresh():
                 self.velocity_validity.failed = True
                 raise RuntimeError("没有最近收到的状态；禁止非零速度")
         data = (line + "\n").encode("ascii")
@@ -71,8 +85,8 @@ class Rig:
 
     def pump(self, duration):
         """读串口 duration 秒，解析 STATE/MODE/OK/ERR，统计 UNKNOWN。"""
-        t0 = time.time()
-        while time.time() - t0 < duration:
+        t0 = self._clock()
+        while self._clock() - t0 < duration:
             chunk = self.ser.read(256)
             if not chunk:
                 continue
@@ -94,7 +108,7 @@ class Rig:
             self.state_received_at = None
             # 交由运动门禁中止；在零速请求前不得阻塞于stdout。
         else:
-            print("[UNKNOWN] %r" % line)
+            self._output("[UNKNOWN] %r" % line)
 
     def _dispatch(self, line):
         if line.split()[:1] == ["VEL_VALID"]:
@@ -110,7 +124,7 @@ class Rig:
                     self.state_count += 1
                     if self.velocity_validity.received_at is None or self.velocity_validity.ready():
                         self.last_state = parts[1:]
-                        self.state_received_at = time.monotonic()
+                        self.state_received_at = self._clock()
                     return
                 except ValueError:
                     pass
@@ -119,7 +133,7 @@ class Rig:
             parts = line.split()
             if len(parts) == 3:
                 self.last_mode = (parts[1], parts[2])
-                print("[MODE] %s %s" % self.last_mode)
+                self._output("[MODE] %s %s" % self.last_mode)
             else:
                 self._unknown(line)
         elif line.startswith("OK "):
@@ -128,14 +142,14 @@ class Rig:
                 try:
                     self.last_reply = ("OK", parts[1], int(parts[2]))
                     self.replies[parts[1]] = int(parts[2])
-                    print("[OK] %s = %d" % (parts[1], int(parts[2])))
+                    self._output("[OK] %s = %d" % (parts[1], int(parts[2])))
                     return
                 except ValueError:
                     pass
             self._unknown(line)
         elif line.startswith("ERR "):
             self.last_reply = ("ERR", line[4:], None)
-            print("[ERR] %s" % line[4:])
+            self._output("[ERR] %s" % line[4:])
         else:
             self._unknown(line)
 
@@ -145,8 +159,8 @@ class Rig:
         return self.last_mode
 
     def wait_mode(self, want, timeout):
-        t0 = time.time()
-        while time.time() - t0 < timeout:
+        t0 = self._clock()
+        while self._clock() - t0 < timeout:
             self.pump(0.1)
             if self.last_mode and self.last_mode[0] == want:
                 return self.last_mode
@@ -279,8 +293,7 @@ def cmd_state(rig, args):
     xs, ths = [], []
     while time.time() - t0 < args.secs:
         rig.pump(0.2)
-        if (rig.last_state and rig.state_received_at is not None
-                and time.monotonic() - rig.state_received_at <= .1):
+        if rig.last_state and rig.state_is_fresh():
             x, th = int(rig.last_state[0]), int(rig.last_state[1])
             xs.append(x)
             ths.append(th)

@@ -20,8 +20,8 @@ int main(void) {
     assert(telemetry_format_measurement(buf,sizeof(buf),&gate,102004,true,true,1,2,3,4)>0);
     assert(telemetry_format_measurement(buf,sizeof(buf),&gate,202004,true,true,1,2,3,4)>0);
     assert(strcmp(buf,"VEL_VALID 1 1\nSTATE 1 2 3 4\n")==0);
-    telemetry_validity_t old=gate;
     assert(telemetry_format_measurement(buf,1,&gate,102004,true,true,1,2,3,4)<0);
-    assert(memcmp(&old,&gate,sizeof(gate))==0);
+    assert(telemetry_format_measurement(buf,sizeof(buf),&gate,202005,true,true,1,2,3,4)>0);
+    assert(strcmp(buf,"STATE 1 2 3 4\n")==0); /* 失败的组帧没有提交心跳状态。 */
     puts("telemetry validity passed");
 }

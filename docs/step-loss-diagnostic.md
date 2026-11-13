@@ -2,9 +2,9 @@
 
 ## 记录时刻与保障边界
 
-监督任务仍使用原来的 `cm_step_loss(E, C, threshold)`，即位置差绝对值
+监督任务使用 `cm_step_loss(E, C, threshold)`，即位置差绝对值
 严格大于阈值才进入STEP_LOSS。此功能不放宽阈值，也不调整运动参数。
-模式机接受故障后，先按原流程提交斜坡停车，再复制一条固定大小RAM记录。
+模式机接受故障后，先提交斜坡停车，再复制一条固定大小RAM记录。
 实时路径不格式化、不发送串口、不分配内存、不写NVS；没有故障前环形历史。
 同一FAULT期间不会反复覆盖首次记录；RESET保留记录，下一次被接受的
 STEP_LOSS替换它。后续POWER等故障不覆盖此记录；它不是当前MODE原因的别名。重启、烧录或断电后记录丢失，不能追溯此前故障。
@@ -14,7 +14,7 @@ C读取发生在之后，记录读取前后时间包络，**不声称E/C同时�
 C是固件软件STEP累计位置，不是外部逻辑分析仪测到的实际脉冲或机械位置。
 MODE FAULT输出在故障停车完成后发生，不能用它的主机接收时间代替触发时间。
 
-诊断元数据不可取得时仍使用原位置读取执行原故障判断，并记录
+诊断元数据不可取得时使用标量位置读取执行相同阈值判断，并记录
 `META_AVAILABLE=0`。时钟顺序异常同样不屏蔽故障，只在读出时报告
 `TIME_ORDER_OK=0`。元数据缺失时编码器附加字段的零值不是有效测量。
 增加一次同快照读取与设备时间采集仍有执行成本，需要真机验证，不能
@@ -48,7 +48,7 @@ SL1 <event_id> END 1
 
 STATE、VEL_VALID等常规行可在应答之间出现，专用工具只忽略完整合法的
 这些背景行；拒绝不同event_id拼接、重复字段、未知字段、缺失字段和超时。
-旧工具未实现SL1解析，不应在查询期间同时读取串口。
+未实现SL1解析的工具，不应在查询期间同时读取串口。
 
 ## 字段语义
 
@@ -76,12 +76,12 @@ STATE、VEL_VALID等常规行可在应答之间出现，专用工具只忽略完
 覆盖完整应答、事件混合、字段重复/缺失、未知行和拒绝应答。测试不操作设备。
 
 ```bash
-cc -std=gnu17 -Wall -Wextra -Werror -fsanitize=undefined \
-  -Ihost_tests/power_stubs -Ihost_tests/encoder_reference_stubs -Ihost_tests/stub \
-  $(find components -type d -name include -printf '-I%p ') -Icomponents/cartfsm \
-  host_tests/cartfsm_step_loss_diag_test.c components/cartfsm/cartfsm_core.c \
-  components/cartparams/params.c components/cartproto/cartproto_parse.c -lm \
-  -o /tmp/cartfsm_step_loss_diag_test
-/tmp/cartfsm_step_loss_diag_test
+bash host_tests/test_cartfsm_step_loss.sh
+bash host_tests/test_cartfsm_calibration.sh
+bash host_tests/test_measurement_validity.sh
 python -m unittest discover -s tools -p test_step_loss_capture.py
 ```
+
+模式机测试链接独立编译的生产模块，通过命令注册入口、公开状态查询和
+任务注册入口驱动行为。共享测试夹具提供存储、时钟、轴和传感器替身，
+不包含生产实现文件，也不读取或修改模式机内部变量。

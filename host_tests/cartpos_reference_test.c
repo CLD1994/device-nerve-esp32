@@ -4,7 +4,6 @@
 #include <limits.h>
 #include "cartpos.h"
 #include "settings.h"
-#include "params.h"
 #include "freertos/task.h"
 
 typedef enum {
@@ -28,7 +27,6 @@ void vTaskDelay(TickType_t ticks)
 {
     now += scenario == OBSERVER_GAP ? 21000 : 1000 * ticks;
 }
-long fw_params_max_value(int idx) { return idx == FP_VEL_MAX ? 2000 : 0; }
 static bool configure_gap(magnetic_encoder_handle_t h, int64_t gap)
 { (void)h; assert(gap == 5000 || gap == 5125); return true; }
 static int32_t cpr(magnetic_encoder_handle_t h) { (void)h; return 40000; }
@@ -95,7 +93,7 @@ static void select_scenario(scenario_t value)
 
 int main(void)
 {
-    cartpos_init(&encoder);
+    cartpos_init(&encoder, 2000);
     cartpos_reference_t ref = { .raw_um = 123 };
     assert(!cartpos_reference_is_valid());
 

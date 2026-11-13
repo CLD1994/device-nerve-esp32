@@ -1,10 +1,9 @@
 /*
  * magnetic_encoder_skeleton — 采样骨架（类别组件内部）
  *
- * 收编自两实现的原各自副本：1 kHz 采样任务（CPU1、优先级 3，
- * 阻塞总线事务不扰 CPU0 的 STEP ISR）、失败计数（≥10 次 NOT OK，
- * 纯函数见 magnetic_encoder_core.c）、16 样本速度窗、s_lock 内
- * 原子发布。实例全部状态进 magnetic_encoder_inst_t（arg=实例）。
+ * 1 kHz 任务（CPU1、优先级3）调用单次采样服务。服务通过注入的读帧
+ * 回调访问总线，并用单调时钟记录完成时间。失败计数、速度窗和快照
+ * 均属于实例状态；公开快照读取与发布共用实例锁。
  *
  * 层内约束：不 include settings.h；不调用 bsp；总线交互只经
  * impl->read_frame 回调。
@@ -33,7 +32,7 @@
 static bool publish_sample(magnetic_encoder_inst_t *inst,
                            uint32_t raw, uint8_t status)
 {
-    int64_t now_us = esp_timer_get_time();
+    int64_t now_us = inst->now_us(inst->clock_ctx);
     portENTER_CRITICAL(&inst->lock);
     bool recovered = magnetic_encoder_fail_step(&inst->fail, true);
 
@@ -95,6 +94,28 @@ static void fail_desc_of(const magnetic_encoder_inst_t *inst,
     snprintf(buf, len, "读取失败");
 }
 
+bool magnetic_encoder_sampler_sample_once(magnetic_encoder_inst_t *inst)
+{
+    uint32_t raw = 0;
+    uint8_t status = 0;
+    if (inst->impl->read_frame(inst->impl_ctx, &raw, &status)) {
+        if (publish_sample(inst, raw, status)) {
+            ESP_LOGI(inst->name, "读取在连续 %d 次失败后恢复",
+                     MAGNETIC_ENCODER_FAIL_LIMIT);
+        }
+        if (inst->impl->on_sample != NULL)
+            inst->impl->on_sample(inst->impl_ctx, status);
+        return true;
+    }
+    if (fail_step_locked(inst, false)) {
+        char desc[96];
+        fail_desc_of(inst, desc, sizeof(desc));
+        ESP_LOGE(inst->name, "连续 %d 次读取失败——编码器标记 NOT OK（%s）",
+                 MAGNETIC_ENCODER_FAIL_LIMIT, desc);
+    }
+    return false;
+}
+
 /* ================================================================
  * 采样任务（1 kHz，CPU1）
  * ================================================================ */
@@ -111,27 +132,7 @@ static void skeleton_task(void *arg)
     }
 
     while (1) {
-        uint32_t raw = 0;
-        uint8_t status = 0;
-
-        if (inst->impl->read_frame(inst->impl_ctx, &raw, &status)) {
-            if (publish_sample(inst, raw, status)) {
-                ESP_LOGI(inst->name, "读取在连续 %d 次失败后恢复",
-                         MAGNETIC_ENCODER_FAIL_LIMIT);
-            }
-
-            if (inst->impl->on_sample != NULL) {
-                inst->impl->on_sample(inst->impl_ctx, status);
-            }
-        } else {
-            if (fail_step_locked(inst, false)) {
-                char desc[96];
-                fail_desc_of(inst, desc, sizeof(desc));
-                ESP_LOGE(inst->name,
-                         "连续 %d 次读取失败——编码器标记 NOT OK（%s）",
-                         MAGNETIC_ENCODER_FAIL_LIMIT, desc);
-            }
-        }
+        magnetic_encoder_sampler_sample_once(inst);
 
         if (wdt_ok) {
             esp_task_wdt_reset();
@@ -213,7 +214,7 @@ bool magnetic_encoder_inst_get_sample(magnetic_encoder_handle_t enc,
     magnetic_encoder_inst_t *inst = (magnetic_encoder_inst_t *)enc;
     portENTER_CRITICAL(&inst->lock);
     /* 在快照锁内读时间，不能用获取锁之前的 now 判断更新后的样本。 */
-    int64_t now_us = esp_timer_get_time();
+    int64_t now_us = inst->now_us(inst->clock_ctx);
     bool fresh = inst->has_sample && inst->sampled_at_us >= 0
         && now_us >= inst->sampled_at_us
         && now_us - inst->sampled_at_us <= inst->continuous_gap_us;
@@ -241,12 +242,11 @@ bool magnetic_encoder_inst_get_sample(magnetic_encoder_handle_t enc,
  * 生命周期
  * ================================================================ */
 
-esp_err_t magnetic_encoder_skeleton_start(magnetic_encoder_inst_t *inst,
-                                          const magnetic_encoder_impl_t *impl,
-                                          void *impl_ctx,
-                                          const char *name)
+esp_err_t magnetic_encoder_sampler_init(magnetic_encoder_inst_t *inst,
+    const magnetic_encoder_impl_t *impl, void *impl_ctx, const char *name,
+    int64_t (*clock)(void *ctx), void *clock_ctx)
 {
-    if (inst == NULL || impl == NULL || name == NULL
+    if (inst == NULL || impl == NULL || name == NULL || clock == NULL
         || impl->read_frame == NULL || impl->counts_per_rev == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -267,6 +267,8 @@ esp_err_t magnetic_encoder_skeleton_start(magnetic_encoder_inst_t *inst,
     inst->impl     = impl;
     inst->impl_ctx = impl_ctx;
     inst->name     = name;
+    inst->now_us = clock;
+    inst->clock_ctx = clock_ctx;
 
     magnetic_encoder_tracker_reset(&inst->tracker);
     magnetic_encoder_vel_win_reset(&inst->vel);
@@ -286,6 +288,22 @@ esp_err_t magnetic_encoder_skeleton_start(magnetic_encoder_inst_t *inst,
         fail_desc_of(inst, desc, sizeof(desc));
         ESP_LOGW(name, "首读失败（%s）——采样任务将继续重试", desc);
     }
+
+    return ESP_OK;
+}
+
+static int64_t monotonic_clock(void *ctx)
+{
+    (void)ctx;
+    return esp_timer_get_time();
+}
+
+esp_err_t magnetic_encoder_skeleton_start(magnetic_encoder_inst_t *inst,
+    const magnetic_encoder_impl_t *impl, void *impl_ctx, const char *name)
+{
+    esp_err_t result = magnetic_encoder_sampler_init(inst, impl, impl_ctx, name,
+                                                    monotonic_clock, NULL);
+    if (result != ESP_OK) return result;
 
     BaseType_t ok = xTaskCreatePinnedToCore(skeleton_task, name,
                                             ME_SKELETON_TASK_STACK, inst,

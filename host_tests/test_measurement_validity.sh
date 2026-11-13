@@ -14,3 +14,10 @@ gcc -std=c11 -Wall -Wextra -Werror \
 gcc -std=c11 -Wall -Wextra -Werror -Ihost_tests/stub -Icomponents/telemetry/include \
   host_tests/telemetry_validity_test.c components/telemetry/telemetry_format.c -o "$tmp/telemetry"
 "$tmp/telemetry"
+
+gcc -std=gnu17 -Wall -Wextra -Werror \
+  -Ihost_tests/encoder_reference_stubs -Ihost_tests/stub \
+  -Icomponents/cartpos/include -Icomponents/magnetic_encoder/include \
+  -Icomponents/settings/include host_tests/cartpos_reference_test.c \
+  components/cartpos/cartpos.c -lm -o "$tmp/reference"
+"$tmp/reference"

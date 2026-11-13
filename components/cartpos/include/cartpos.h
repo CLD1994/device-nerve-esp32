@@ -16,8 +16,11 @@
 extern "C" {
 #endif
 
-/** 绑定编码器实例并订阅每转行程（比例随变更刷新）。 */
-void cartpos_init(magnetic_encoder_handle_t enc);
+/** 绑定编码器实例并订阅每转行程。
+ * max_velocity_mm_s 是装配层允许的最高线速度，不是当前目标速度。
+ * 它用于计算累计位置不发生圈数歧义的采样时间预算；非正或非有限值使测量不可用。
+ */
+void cartpos_init(magnetic_encoder_handle_t enc, double max_velocity_mm_s);
 
 /** 连续位置（多圈、带符号、含回零原点偏移），µm 整数；首样本前为 0。 */
 int64_t cartpos_position_um(void);
@@ -33,8 +36,15 @@ typedef struct {
 } cartpos_supervision_t;
 bool cartpos_get_supervision(cartpos_supervision_t *out);
 
-typedef struct { int32_t x_um; int32_t vx_mm_s; } cartpos_measurement_t;
-/** 同一编码器快照的位置和有效速度；无效或越界返回false且不修改out。 */
+typedef struct {
+    int32_t x_um;
+    int32_t vx_mm_s;
+    int64_t sampled_at_us;  /* 同一成功样本的单调微秒时间 */
+    uint64_t sample_seq;
+    int64_t velocity_span_us;
+} cartpos_measurement_t;
+/** 整组测量可用时返回true：样本新鲜、读取及速度有效、比例及位置连续性有效且换算未越界。
+ * 输出值和元数据来自同一快照；任一条件不满足返回false且不修改out。 */
 bool cartpos_get_measurement(cartpos_measurement_t *out);
 /* 连续性序列改变后本接口持续无效，直到重新成功 apply_reference。
  * 速度窗口重新预热不恢复丢失的多圈位置参考。 */
