@@ -1,7 +1,7 @@
 # 硬件参数确认清单 · 新板
 
 > 项目：ESP32-S3 单轴运动控制器（cartpole 小车倒立摆）
-> 硬件改版：2026-10-17；外围接线补充：2026-10-23。
+> 硬件改版：2026-10-17；外围接线补充：2026-10-23；串口分工更新：2026-11-13。
 > 本文件为 BSP 及后续全部任务的硬件事实来源。
 
 ---
@@ -11,7 +11,7 @@
 ### 1.1 供电路径与请求档位
 
 - **单口 USB-C**，供电与数据共用：CC 线接 CH224Q；D+/D−（io20/io19）
-  接 ESP32-S3 原生 USB（USB-Serial/JTAG），用于烧录与日志。
+  接 ESP32-S3 原生 USB（USB-Serial/JTAG），用于烧录；日志可按 §5 配置到 UART1。
 - CH224Q **9 号引脚 CFG1 外接 6.8 kΩ 电阻**。按手册的单电阻接地配置，
   该阻值对应上电默认请求 **9 V**；电阻另一端接地是这一档位判断的前提。
   单电阻配置自动启用 I2C，固件可以运行时修改请求档位。
@@ -92,7 +92,7 @@ EN 按键用于主控复位，BOOT 按键用于下载启动选择；主控 EN �
 | 功能 | GPIO | 备注 |
 |---|---|---|
 | **UART0 TX/RX**（主机协议通道，飞线直连） | **43 / 44** | 协议通道从 UART1（41/42，经 CH343P）整体迁移；CH343P 已随改版移除；3.3V TTL，共地 |
-| **原生 USB D−/D+**（烧录/日志） | **19 / 20** | USB-Serial/JTAG；旧板 19/20 未引出的状态就此解除 |
+| **原生 USB D−/D+**（烧录；默认日志） | **19 / 20** | USB-Serial/JTAG；旧板 19/20 未引出的状态就此解除 |
 | TMC2209 单线 UART TX | 17 | 经板载 1kΩ 接 PDN_UART 节点 |
 | TMC2209 单线 UART RX | 18 | 直连 PDN_UART 节点 |
 | TMC2209 STEP | 5 | |
@@ -107,7 +107,7 @@ EN 按键用于主控复位，BOOT 按键用于下载启动选择；主控 EN �
 | LED | 15 | 心跳/指示，语义待定义 |
 | BOOT | 0 | 10 kΩ 上拉 + 100 nF 滤波，见本节开头说明 |
 | 主控 EN（CHIP_PU） | 非 GPIO | 已引出复位按键；见本节开头说明 |
-| UART1（原协议通道） | 41 / 42 | **不再使用**（随 CH343P 移除而废弃） |
+| UART1 TX/RX（日志控制台） | 41 / 42 | 通过外置 3.3V TTL 串口适配器接入；配置见 §5 |
 
 SPI 分配：两编码器为两条独立 SPI 总线（两组引脚无共享），启用两个不同 SPI 控制器。
 
@@ -130,8 +130,71 @@ AS5600 芯片与 CH340K 均已从板上去除；as5600 源码组件保留在仓�
 | 接口 | 主机 UART 直连 **UART0（GPIO43 TX / GPIO44 RX）** |
 | 电平 | 3.3V TTL |
 | 共地 | 需与主控板共地 |
-| 波特率 | 460800（沿用协议联调值） |
-| 烧录/日志 | 与协议通道分离：原生 USB（io19/20），插电脑即用 |
+| 波特率 | 当前真机配置为 1000000，8N1；主机须显式指定相同波特率 |
+| 烧录 | 原生 USB（io19/20），与协议和 UART1 日志通道分离 |
+
+### 5.1 UART0 控制协议
+
+2026-11-13 真机以 1000000 波特率收到了 MODE、参数和 STATE 应答。
+主机脚本默认值仍为 460800，连接上述真机时不要省略 `--baud`：
+
+```bash
+python tools/cartpole_host.py --port <控制串口> --baud 1000000 query
+```
+
+控制串口、日志串口、原生 USB 烧录串口是不同用途，不要根据
+`ttyACM0` 等枚举编号固定判断；按接线及 `/dev/serial/by-id/` 识别设备。
+
+### 5.2 UART1 日志（GPIO41 / GPIO42）
+
+2026-11-13 用户确认真机已成功切换日志输出。以下流程以日志波特率 115200 为例，接线如下：
+
+- GPIO41（ESP32-S3 TX）接串口适配器 RX，双方 GND 共地。
+- GPIO42（ESP32-S3 RX）接适配器 TX，仅接收日志时可不接这一根。
+- 使用 **3.3V TTL** 适配器，不可接 RS-232 电平；主板独立供电时不要随意连接适配器 VCC。
+- GPIO41/42 也有外部 JTAG 引脚功能，使用 UART1 时不能同时占用它们做外部 JTAG。
+
+在项目根目录运行 `idf.py menuconfig`，ESP-IDF **v6.1** 的路径为：
+
+```text
+Component config → ESP-STDIO
+  Channel for console output → Custom UART
+  UART peripheral to use for console output (0-1) → UART1
+  UART TX on GPIO<num> → 41
+  UART RX on GPIO<num> → 42
+  UART console baud rate → 115200
+```
+
+保存后对应的主要配置为：
+
+```text
+CONFIG_ESP_CONSOLE_UART_CUSTOM=y
+CONFIG_ESP_CONSOLE_UART_CUSTOM_NUM_1=y
+CONFIG_ESP_CONSOLE_UART_NUM=1
+CONFIG_ESP_CONSOLE_UART_TX_GPIO=41
+CONFIG_ESP_CONSOLE_UART_RX_GPIO=42
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
+```
+
+让 menuconfig 切换互斥的控制台选项，不要同时保留 USB 和自定义 UART 为主控制台。
+**仓库 `sdkconfig.defaults` 目前仍以 USB-Serial/JTAG 为默认日志通道**；
+上述配置是选择 UART1 的步骤，本次文档更新不改变固件默认值。
+已有 `sdkconfig` 时，修改 `sdkconfig.defaults` 不会直接覆盖已有选择。
+
+重新构建并完整烧录（包含 bootloader），再单独监听日志口：
+
+```bash
+idf.py build
+idf.py -p <烧录串口> flash
+python -m serial.tools.miniterm <日志串口> 115200
+```
+
+日志口的 115200 与控制协议的 1000000 相互独立。
+不要把 UART0 改成日志控制台，也不要占用 TMC2209 的 UART2（GPIO17/18）。
+该设置用于可配置的 bootloader/应用控制台，**不能保证最早的 ROM 启动日志也转到 GPIO41/42**；
+ROM 输出受芯片自身配置限制，不能用 UART1 缺少 ROM 日志判断烧录失败。
+
+### 5.3 原生 USB 烧录收尾
 
 烧录收尾复位（2026-10-18 上板确认）：芯片已处于下载模式时（如手动按 BOOT 进入），
 USB-Serial/JTAG 的 `--after hard-reset` 只触发 CPU 核复位、不重新采样 GPIO0 strapping，
@@ -159,7 +222,8 @@ USB-Serial/JTAG 的 `--after hard-reset` 只触发 CPU 核复位、不重新采�
 
 - [ ] 双 MT6835 SPI 首读关卡（板载小车位 / 外接摆角各一）
 - [x] 原生 USB 烧录与日志通路（io19/20）（2026-10-18 烧录与日志验证；手动下载模式烧录收尾注意事项见 §5）
-- [ ] UART0 协议通道 @460800（上位机飞线 43/44）
+- [x] UART0 协议通道 @1000000（上位机飞线 43/44；2026-11-13 MODE、参数、STATE 应答验证）。
+- [x] UART1 日志 GPIO41/42（2026-11-13 用户确认成功；配置流程见 §5.2）。
 - [x] 支持 PD 的电源接入后，核对 6.8 kΩ 单电阻默认请求为 9 V；测试固件空闲时请求 20 V 与恢复 9 V，PD 状态和 GPIO4 VBUS 回读稳定（2026-10-26，实测 20 V 档 VBUS=20 V、3.3 V=3.32 V；详见[空载测量记录](reviews/2026-10-26-current-measurement.md)）。
 - [ ] CH224Q I2C 连续读取与 400 kHz 上升时间检查（板上仅使用芯片内置上拉）。
 - [ ] 固件中的板级接线注释与 I2C 扫描诊断文案按本清单同步。
@@ -178,3 +242,5 @@ USB-Serial/JTAG 的 `--after hard-reset` 只触发 CPU 核复位、不重新采�
 - Analog Devices / Trinamic《TMC2209 Datasheet》Rev.1.09：
   [厂商 PDF](https://www.analog.com/media/en/technical-documentation/data-sheets/TMC2209_datasheet_rev1.09.pdf)。
   §2 定义引脚，§5.1 定义 GCONF，§8–10 说明电流采样与 VREF 调流方式。
+
+- Espressif ESP-IDF v6.1 [ESP-STDIO Kconfig](https://github.com/espressif/esp-idf/blob/v6.1/components/esp_stdio/Kconfig)：控制台 UART、引脚和波特率配置项。
