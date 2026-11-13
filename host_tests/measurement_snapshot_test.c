@@ -47,6 +47,10 @@ int main(void) {
     assert(!poleang_get_measurement(&pole)); assert(pole.theta_urad==-1570796);
     sample.velocity_valid=true; available=false;
     assert(!cartpos_get_measurement(&cart)); assert(!poleang_get_measurement(&pole));
+    cartpos_supervision_t retained=supervision;
+    assert(!cartpos_get_supervision(&supervision));
+    assert(supervision.position_um==retained.position_um && supervision.sample.sample_seq==retained.sample.sample_seq);
+    assert(!cartpos_get_supervision(NULL));
     available=true; sample.last_attempt_ok=false;
     assert(!cartpos_get_measurement(&cart)); assert(!poleang_get_measurement(&pole));
     sample.last_attempt_ok=true; upr=0; callback(SET_MM_PER_REV,0);
