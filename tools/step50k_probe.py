@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""单次正向1250 mm/s、9000 mm/s²探针；未知预算拒绝run，绝不自动ENABLE。"""
+"""单次正向1250 mm/s、可选加速度探针；未知预算拒绝run，绝不自动ENABLE。"""
 import argparse
 import json
 from pathlib import Path
 from low_speed_probe import Link, Abort, preflight
-from step50k_plan import calculate, TARGET_SPEED_MM_S, TARGET_ACCEL_MM_S2, TRAVEL_MM, SOFT_MARGIN_MM
+from step50k_plan import calculate, TARGET_SPEED_MM_S, TRAVEL_MM, SOFT_MARGIN_MM
 
 
 def budget_for(link, args, cal, cfg):
     if cal['CAL_LENGTH_UM'] != round(TRAVEL_MM * 1000) or cfg['X_MARGIN_UM'] != round(SOFT_MARGIN_MM * 1000):
         raise Abort('实机行程/软边界与预算器不一致，拒绝沿用预算')
-    return calculate(hold_s=args.hold_s, normal_decel=args.normal_decel,
+    return calculate(acceleration=args.acceleration, hold_s=args.hold_s, normal_decel=args.normal_decel,
                      watchdog_decel=args.watchdog_decel, watchdog_ms=args.watchdog_ms,
                      inflight_ms=args.inflight_ms, margin_mm=args.margin_mm,
                      window_s=args.window_s,
@@ -37,7 +37,7 @@ def validate_run(args, budget):
     for name in ('normal_decel_evidence','watchdog_decel_evidence','inflight_evidence'):
         if not isinstance(getattr(args,name),str) or not getattr(args,name).strip():
             raise Abort('缺少证据说明: ' + name)
-    if args.margin_mm <= 0 or args.normal_decel > TARGET_ACCEL_MM_S2:
+    if args.margin_mm <= 0 or args.normal_decel > args.acceleration:
         raise Abort('额外余量必须为正，正常制动能力不能高于将设置的ACC_MAX')
     if not budget['conditional_fault_budget_fits'] or not budget['conditional_normal_budget_fits']:
         raise Abort('条件停止距离预算超出前方可用行程')
@@ -99,7 +99,7 @@ def execute(link,args):
         inflight_evidence=args.inflight_evidence,parameters=budget['inputs']))
     if args.command=='plan': return budget
     validate_run(args,budget)
-    print("条件预算不是物理停车保证；晚到VEL可再次喂狗。现场须核实20V、安装、净空及独立断电。")
+    print("条件预算不是物理停车保证；ACC_MAX也改变正常VEL0减速度，WDT_DEC保持独立。晚到VEL可再次喂狗。现场须核实20V、安装、净空及独立断电。")
     link.fresh()  # 必须READY；不自动使能。
     link.velocity_validity.active=True
     stop_timeout=TARGET_SPEED_MM_S/min(args.normal_decel,args.watchdog_decel)+args.watchdog_ms/1000+.5
@@ -109,7 +109,7 @@ def execute(link,args):
     motion_end_reason=None
     try:
         stop_bounded(link,stop_timeout)
-        desired=dict(VEL_MAX=int(TARGET_SPEED_MM_S),ACC_MAX=int(TARGET_ACCEL_MM_S2),
+        desired=dict(VEL_MAX=int(TARGET_SPEED_MM_S),ACC_MAX=args.acceleration,
                      WDT_MS=args.watchdog_ms,WDT_DEC=args.watchdog_decel)
         for name,value in desired.items():
             if link.query('CONFIG %s %d'%(name,value),[name])[name] != value:
@@ -206,6 +206,7 @@ def execute(link,args):
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('command',choices=['plan','run'])
+    p.add_argument('--acceleration',type=int,default=9000,help='请求加速度mm/s²，100..30000；同时改变正常VEL0减速度，非物理极限')
     p.add_argument('--port',required=True);p.add_argument('--baud',type=int,default=460800)
     p.add_argument('--out',required=True)
     for key in ('hold-s','margin-mm','normal-decel','inflight-ms','window-s'):

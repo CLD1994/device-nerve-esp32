@@ -13,7 +13,7 @@ class Bench(Rig):
         return n
 
 def options(**kw):
-    d=dict(command='run',hold_s=0.,margin_mm=50.,normal_decel=9000,watchdog_decel=5000,
+    d=dict(command='run',acceleration=9000,hold_s=0.,margin_mm=50.,normal_decel=9000,watchdog_decel=5000,
            watchdog_ms=100,inflight_ms=20.,window_s=.3,
            normal_decel_evidence='现场记录编号A',watchdog_decel_evidence='现场记录编号B',
            inflight_evidence='延迟预算记录C',confirm_motion=True,confirm_clearance=True)
@@ -23,6 +23,36 @@ class ProbeTests(unittest.TestCase):
     def run_probe(self,f=None,a=None):
         f=f or Bench(); link=Link(f,f.clock,f.sleep)
         execute(link,a or options());return f,link
+    def test_selected_acceleration_ack_and_budget(self):
+        f,l=self.run_probe(a=options(acceleration=30000))
+        self.assertIn('CONFIG ACC_MAX 30000',f.writes)
+        self.assertEqual(f.cfg['ACC_MAX'],30000)
+        self.assertEqual(f.cfg['WDT_DEC'],5000)
+        b=next(e['value'] for e in l.events if e['direction']=='plan')
+        self.assertAlmostEqual(b['ramp_s'],1250/30000)
+        self.assertEqual(b['inputs']['acceleration'],30000)
+    def test_selected_acceleration_ack_mismatch_refuses_motion(self):
+        class Wrong(Bench):
+            def write(self,data):
+                n=super().write(data)
+                if data.startswith(b'CONFIG ACC_MAX 30000'):
+                    self.rx=self.rx.replace(b'OK ACC_MAX 30000',b'OK ACC_MAX 9000')
+                return n
+        f=Wrong()
+        with self.assertRaisesRegex(Abort,'配置回执不匹配'):
+            self.run_probe(f,options(acceleration=30000))
+        self.assertNotIn('VEL 1250',f.writes)
+    def test_invalid_acceleration_rejects_writes(self):
+        for value in (99,30001,9000.5):
+            f=Bench()
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                self.run_probe(f,options(acceleration=value))
+            self.assertFalse(any(c.startswith(('CONFIG ','VEL ')) for c in f.writes))
+    def test_normal_decel_above_selected_acceleration_rejected(self):
+        f=Bench()
+        with self.assertRaises(Abort):self.run_probe(f,options(acceleration=5000))
+        self.assertNotIn('VEL 1250',f.writes)
+
     def test_plan_only_queries(self):
         f,l=self.run_probe(a=options(command='plan',hold_s=None,watchdog_decel=None))
         self.assertEqual(f.writes,['QUERY','CALIB?','CONFIG?'])

@@ -2,6 +2,17 @@ import unittest
 from step50k_plan import calculate
 
 class BudgetTests(unittest.TestCase):
+    def test_selected_acceleration_and_bounds(self):
+        b=calculate(acceleration=30000)
+        self.assertEqual(b['inputs']['acceleration'],30000)
+        self.assertAlmostEqual(b['ramp_s'],1250/30000)
+        self.assertAlmostEqual(b['ramp_mm'],1250**2/60000)
+        self.assertEqual(b['target_step_hz'],50000)
+        self.assertEqual(calculate(acceleration=100)['target_accel_mm_s2'],100)
+        for value in (99,30001,9000.5,float('nan'),True,None):
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                calculate(acceleration=value)
+
     def test_fixed_target(self):
         b=calculate()
         self.assertEqual(b['target_step_hz'],50000)
