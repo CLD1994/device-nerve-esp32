@@ -30,6 +30,7 @@ import serial
 class Rig:
     def __init__(self, port, baud=460800, timeout=0.2):
         self.ser = serial.Serial(port, baud, timeout=timeout)
+        self.last_state = None     # 首帧合法 STATE 到来前尚无遥测
         self.last_mode = None      # (mode, reason)
         self.last_reply = None     # (kind, name, value)
         self.state_count = 0
