@@ -28,6 +28,8 @@ float cartpos_velocity_mm_s(void);
 typedef struct { int32_t x_um; int32_t vx_mm_s; } cartpos_measurement_t;
 /** 同一编码器快照的位置和有效速度；无效或越界返回false且不修改out。 */
 bool cartpos_get_measurement(cartpos_measurement_t *out);
+/* 连续性序列改变后本接口持续无效，直到重新成功 apply_reference。
+ * 速度窗口重新预热不恢复丢失的多圈位置参考。 */
 
 /** 连续 ≥10 次读取失败为 false；一次成功即恢复 true。 */
 bool cartpos_is_ok(void);
@@ -42,7 +44,7 @@ typedef struct {
 
 /**
  * DISABLED 下捕获稳定参考点，不产生运动、不修改原点。
- * 在任务上下文每 5 ms 检查：最近成功样本不超过 20 ms，最近读帧成功，
+ * 在任务上下文每 5 ms 检查：最近成功样本不超过按最高允许速度计算的连续性预算，最近读帧成功，
  * 成功序列持续推进、无读失败/长采样空窗，至少 100 ms 内位移范围≤100 µm。
  * 调用方不得持有自旋锁。失败不修改 out；调用方负责保证全程 DISABLED。
  */

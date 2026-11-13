@@ -134,7 +134,8 @@ static void params_apply_engine(void)
 static void clamp_and_commit_velocity(long v_mm_s)
 {
     xSemaphoreTake(s_output_lock, portMAX_DELAY);
-    if (s_mode != CM_READY || !cartpower_ready()) {
+    if (s_mode != CM_READY || !cartpower_ready()
+        || (v_mm_s != 0 && (!cartpos_reference_is_valid() || !saved_track_valid()))) {
         xSemaphoreGive(s_output_lock);
         return;
     }
@@ -413,6 +414,12 @@ static void exec_enable(void)
         return;
     }
     cartaxis_set_position_um((long)cartpos_position_um());
+    if (!cartpos_reference_is_valid() || !saved_track_valid()) {
+        check_reference();
+        xSemaphoreGive(s_output_lock);
+        cartproto_send_err("ENABLE");
+        return;
+    }
     cartaxis_enable(true);
     /* 覆盖检查与开启间缓存失效的窗口；下个监督拍仍持续检查。 */
     if (!cartpower_ready()) {

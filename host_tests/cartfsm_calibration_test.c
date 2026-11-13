@@ -18,6 +18,8 @@ bool cartpower_ready(void) { return true; }
 static cartcal_record_t disk;
 static esp_err_t load_error, save_error;
 static bool healthy, referenced, apply_ok, enabled;
+static unsigned vel_writes;
+static long last_velocity;
 static int64_t raw, offset, command_pos, during_save_move;
 static float scale;
 static cartpos_reference_t sample_ref;
@@ -36,7 +38,7 @@ bool poleang_is_ok(void) { return true; }
 esp_err_t cartaxis_enable(bool on) { enabled=on; return ESP_OK; }
 void cartaxis_set_position_um(long x) { command_pos=x; }
 int64_t cartaxis_cmd_position_um(void) { return command_pos; }
-void cartaxis_set_vel_mm_s(long v) { (void)v; }
+void cartaxis_set_vel_mm_s(long v) { last_velocity=v; vel_writes++; }
 void cartaxis_halt(void) { }
 void cartaxis_stop(void) { }
 bool cartaxis_try_stop_at_rest(void) { return true; }
@@ -68,6 +70,18 @@ int main(void) {
     healthy=true;raw=100000;cmd(CART_CMD_CONFIRM_LEFT);assert(s_calib==CAL_DONE && !enabled && cartpos_position_um()==-426718 && command_pos==-426718);
     raw+=5000;cmd(CART_CMD_ENABLE);assert(enabled && command_pos==cartpos_position_um());
     cmd(CART_CMD_CONFIRM_LEFT);assert(!strcmp(reply,"ERR CONFIRM_LEFT"));
+    unsigned writes = vel_writes;
+    referenced=false;
+    exec_vel(100);
+    assert(vel_writes == writes); /* 等待监督拍前也不能提交非零速度。 */
+    exec_vel(0);
+    assert(vel_writes == writes+1 && last_velocity == 0);
+    assert(s_mode == CM_READY && !referenced); /* 零速不恢复标定或清故障。 */
+    s_mode = CM_FAULT;
+    exec_vel(0);
+    assert(s_mode == CM_FAULT && vel_writes == writes+1); /* 故障停机仍归故障路径。 */
+    s_mode = CM_READY;
+    referenced=true;
     s_mode=CM_FAULT;cmd(CART_CMD_RESET);assert(s_mode==CM_DISABLED && s_calib==CAL_DONE && !enabled);
     s_mode=CM_FAULT;referenced=false;cmd(CART_CMD_RESET);assert(s_calib==CAL_PENDING);
     boot();cmd(CART_CMD_CONFIRM_LEFT);referenced=false;cmd(CART_CMD_ENABLE);assert(!enabled && s_calib==CAL_PENDING);

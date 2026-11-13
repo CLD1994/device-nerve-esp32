@@ -4,6 +4,7 @@
 #include <limits.h>
 #include "cartpos.h"
 #include "settings.h"
+#include "params.h"
 #include "freertos/task.h"
 
 typedef enum {
@@ -15,6 +16,7 @@ static int64_t now = 1000000;
 static uint64_t seq, failure_count, gap_count;
 static scenario_t scenario;
 static int calls;
+static bool rebase_during_sample;
 static int64_t current_position = 5000;
 static float upr = 40;
 static settings_change_cb_t callback;
@@ -26,6 +28,9 @@ void vTaskDelay(TickType_t ticks)
 {
     now += scenario == OBSERVER_GAP ? 21000 : 1000 * ticks;
 }
+long fw_params_max_value(int idx) { return idx == FP_VEL_MAX ? 2000 : 0; }
+static bool configure_gap(magnetic_encoder_handle_t h, int64_t gap)
+{ (void)h; assert(gap == 5000 || gap == 5125); return true; }
 static int32_t cpr(magnetic_encoder_handle_t h) { (void)h; return 40000; }
 static int64_t pos(magnetic_encoder_handle_t h) { (void)h; return current_position; }
 static int32_t vel(magnetic_encoder_handle_t h) { (void)h; return 0; }
@@ -35,7 +40,7 @@ static bool sample(magnetic_encoder_handle_t h, magnetic_encoder_sample_t *s)
     (void)h;
     ++calls;
     *s = (magnetic_encoder_sample_t){
-        .valid = true, .ok = true, .last_attempt_ok = true,
+        .continuous_gap_us = 5000, .valid = true, .velocity_valid=true, .ok = true, .last_attempt_ok = true,
         .sample_seq = ++seq, .sampled_at_us = now,
         .failure_seq = failure_count, .continuity_seq = gap_count,
         .position_counts = current_position,
@@ -59,15 +64,22 @@ static bool sample(magnetic_encoder_handle_t h, magnetic_encoder_sample_t *s)
         }
         break;
     case RANGE_BOUNDARY: if (calls > 2) s->position_counts += 100; break;
-    case AGE_BOUNDARY: s->sampled_at_us = now - 20000; break;
+    case AGE_BOUNDARY: s->sampled_at_us = now - 5000; break;
     case FUTURE_SAMPLE: s->sampled_at_us = now + 1; break;
     case UNHEALTHY: s->ok = false; break;
     default: break;
     }
+    if (rebase_during_sample) {
+        rebase_during_sample = false;
+        gap_count++;
+        cartpos_reference_t newer;
+        assert(cartpos_capture_reference(&newer));
+        assert(cartpos_apply_reference(&newer, 0));
+    }
     return true;
 }
 static struct magnetic_encoder_s encoder = {
-    .counts_per_rev = cpr, .position_counts = pos,
+    .set_continuous_gap_us = configure_gap, .counts_per_rev = cpr, .position_counts = pos,
     .velocity_counts_per_s = vel, .is_ok = ok, .get_sample = sample,
 };
 static void set_scale(float value)
@@ -160,6 +172,25 @@ int main(void)
     assert(!cartpos_apply_reference(&ref, 0));
     assert(!cartpos_capture_reference(NULL));
     assert(!cartpos_apply_reference(NULL, 0));
+    /* 稳定的新速度不能自动修复跨空窗后的绝对位置；必须重新定位。 */
+    select_scenario(GOOD); set_scale(40);
+    assert(cartpos_capture_reference(&ref));
+    assert(cartpos_apply_reference(&ref, 0));
+    cartpos_measurement_t m;
+    assert(cartpos_get_measurement(&m));
+    gap_count++;
+    assert(!cartpos_get_measurement(&m));
+    assert(!cartpos_reference_is_valid());
+    assert(!cartpos_get_measurement(&m));
+    assert(cartpos_capture_reference(&ref));
+    assert(cartpos_apply_reference(&ref, -426662));
+    assert(cartpos_get_measurement(&m) && m.x_um == -426662);
+    assert(cartpos_reference_is_valid());
+    /* 旧测量快照不能撤销刚刚成功提交的新参考。 */
+    rebase_during_sample = true;
+    assert(!cartpos_get_measurement(&m));
+    assert(cartpos_get_measurement(&m));
+    assert(cartpos_reference_is_valid());
     puts("reference checks passed");
     return 0;
 }

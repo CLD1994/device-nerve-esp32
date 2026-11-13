@@ -56,7 +56,7 @@ int main(void)
     assert(magnetic_encoder_get_sample(enc, &s));
     assert(s.ok && s.last_attempt_ok && s.failure_seq == 11);
     assert(s.continuity_seq == 1);
-    assert(s.sampled_at_us == 30000 && s.position_counts == 4);
+    assert(s.sampled_at_us == 30000 && s.position_counts == 2);
 
     assert(!magnetic_encoder_get_sample(NULL, &s));
     assert(!magnetic_encoder_get_sample(enc, NULL));
@@ -108,19 +108,40 @@ int main(void)
     assert(!s.velocity_valid && s.continuity_seq == continuity + 1);
     /* 每点及时但整个窗口过长：位置连续性保留，速度明确无效。 */
     continuity = s.continuity_seq;
+    int64_t before_window = s.position_counts;
     for (int i = 1; i <= 16; ++i) {
         now += 20000;
         publish_sample(&inst, 120 + i*2, 0);
     }
     assert(magnetic_encoder_get_sample(enc, &s));
     assert(!s.velocity_valid && s.velocity_span_us == 320000);
-    assert(s.continuity_seq == continuity && s.position_counts == 142);
+    assert(s.continuity_seq == continuity && s.position_counts == before_window + 32);
     for (int i = 1; i <= 16; ++i) {
         now += 1000;
         publish_sample(&inst, 152 + i*2, 0);
     }
     assert(magnetic_encoder_get_sample(enc, &s));
     assert(s.velocity_valid && s.velocity_span_us == 16000 && s.velocity_counts_per_s == 2000);
+    /* 40 mm/rev、1250 mm/s 下 17 ms 位移 21.25 mm，已超过半圈。
+     * 5 ms 工程预算必须在 unwrap 之前拒绝跨空窗位移。 */
+    assert(magnetic_encoder_set_continuous_gap_us(enc, 5000));
+    int64_t previous = inst.pos_counts;
+    uint64_t old_seq = inst.continuity_seq;
+    uint32_t start_raw = inst.last_raw;
+    now += 17000;
+    publish_sample(&inst, (start_raw + 2176) % 4096, 0);
+    assert(magnetic_encoder_get_sample(enc, &s));
+    assert(s.position_counts == previous && s.continuity_seq == old_seq+1);
+    assert(!s.velocity_valid && s.continuous_gap_us == 5000);
+    for (int i = 1; i <= 16; i++) {
+        now += 1000;
+        publish_sample(&inst, (start_raw+2176+i*128)%4096, 0);
+    }
+    assert(magnetic_encoder_get_sample(enc, &s));
+    assert(s.velocity_valid && s.velocity_counts_per_s == 128000);
+    assert(s.continuity_seq == old_seq+1); /* 恢复不能抹去丢圈历史。 */
+    now += 5001;
+    assert(magnetic_encoder_get_sample(enc, &s) && !s.velocity_valid);
     puts("sample snapshot checks passed");
     return 0;
 }
