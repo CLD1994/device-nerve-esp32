@@ -9,6 +9,9 @@
 #include "poleang.h"
 #include "freertos/task.h"
 int power_test_lock_depth;
+static unsigned tmc_reads;
+static bool tmc_read_ok=true;
+bool tmc2209_read_reg(uint8_t reg,uint32_t *out) { assert(power_test_lock_depth==1);tmc_reads++;*out=reg;return tmc_read_ok; }
 static bool require_lock;
 static bool power, enabled, fail_at_enable;
 static int stops, velocity;
@@ -33,6 +36,7 @@ void cartaxis_set_vel_mm_s(long x) { assert(power_test_lock_depth==1);velocity=x
 void cartaxis_halt(void) { assert(power_test_lock_depth==1);velocity=0; }
 void cartaxis_stop(void) { assert(power_test_lock_depth==1);velocity=0;stops++; }
 bool cartaxis_try_stop_at_rest(void) { assert(power_test_lock_depth==1);if(velocity!=0)return false;velocity=0;stops++;return true; }
+bool cartaxis_peek_at_rest(void) { return true; }
 bool cartaxis_at_rest(void) { return velocity==0; }
 void cartaxis_set_accel_mm_s2(long x) { (void)x; }
 void cartaxis_set_decel_mm_s2(long x) { (void)x; }

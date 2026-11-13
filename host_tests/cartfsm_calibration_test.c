@@ -14,6 +14,9 @@ TickType_t xTaskGetTickCount(void) { return 0; }
 void vTaskDelayUntil(TickType_t*p,TickType_t t) { (void)p;(void)t; }
 
 int power_test_lock_depth;
+static unsigned tmc_reads;
+static bool tmc_read_ok=true;
+bool tmc2209_read_reg(uint8_t reg,uint32_t *out) { assert(power_test_lock_depth==1);tmc_reads++;*out=reg;return tmc_read_ok; }
 bool cartpower_ready(void) { return true; }
 static cartcal_record_t disk;
 static esp_err_t load_error, save_error;
@@ -42,6 +45,7 @@ void cartaxis_set_vel_mm_s(long v) { last_velocity=v; vel_writes++; }
 void cartaxis_halt(void) { }
 void cartaxis_stop(void) { }
 bool cartaxis_try_stop_at_rest(void) { return true; }
+bool cartaxis_peek_at_rest(void) { return true; }
 bool cartaxis_at_rest(void) { return true; }
 void cartaxis_set_accel_mm_s2(long x) { (void)x; }
 void cartaxis_set_decel_mm_s2(long x) { (void)x; }

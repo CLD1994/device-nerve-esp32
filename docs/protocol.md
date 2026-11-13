@@ -234,3 +234,9 @@ READY或仍减速时回`ERR STEPLOSS_BUSY`，无记录回`ERR STEPLOSS_NONE`。
 应答采用`SL1 <event_id> <field> <integer>`逐字段输出并以`END 1`结束。
 记录是设备固定RAM中的触发拍，不是MODE输出时的状态，不改变原故障判断。
 字段、工具、生命周期及非同步限制见[STEP_LOSS诊断](step-loss-diagnostic.md)。
+
+### 实验 TMC 只读核查
+
+`TMC?` 仅在 `DISABLED` 且软件 STEP 引擎静止时允许，其他状态返回 `ERR TMC_BUSY`。
+返回 `TMC1 NAME VALID RAW BEGIN_US END_US` 五行及 `TMC1 END`，不改变配置或使能。
+字段、静止读数限制及 Windows 使用方式见 [TMC 只读诊断](tmc-readonly.md)。
