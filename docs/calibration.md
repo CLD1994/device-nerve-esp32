@@ -2,32 +2,124 @@
 
 本功能保存装置参数，不保存断电时的小车位置，也不自动回零。小车编码器的单圈绝对角无法区分断电后的整圈位移。每次启动保持 `DISABLED`；即使存在完整记录，也必须手动建立本次位置参考，才能另行 `ENABLE`。
 
-## 首次标定
+## 操作前准备与首次升级
 
-保持电机禁用，将小车停稳于可重复到达的左标记，执行 `mark-left`；再手推到右标记，停稳后执行 `mark-right`。两个标记之间的**小车同一点位移**是行程，不是两挡块间空距。
+下列命令在 **Windows PowerShell 的项目根目录**执行，以控制口 `COM11`、`460800` 波特率为例。替换为设备实际控制串口和固件波特率；不要使用日志口。关闭其他占用该串口的软件。固件可在开发容器中编译、烧录，但 Windows 中的仓库和 `tools/cartpole_host.py` 也必须更新到支持 `confirm-left`、`calib-status` 的同一版本。
+
+**旧固件的标定只在 RAM，刷机重启不会自动迁入 NVS。** 升级前可执行 `dump` 留存已确认的摆角参数；第一次刷入本功能仍要完成一次两点标定，并重新下发摆角参数。正常升级不要执行 `erase-flash`；擦除 NVS 会删除保存记录。固件不内置某台设备的历史标定值。
+
+全程先保持电机禁用，摆杆自然下垂，确认磁铁、传动和接线已正确安装。标记两端时使用可重复到达的固定位置，不要强推或撞击挡块。
 
 ```powershell
-python tools/cartpole_host.py --port COM11 --baud 460800 mark-left
-python tools/cartpole_host.py --port COM11 --baud 460800 mark-right
+python tools/cartpole_host.py --port COM11 --baud 460800 query
 python tools/cartpole_host.py --port COM11 --baud 460800 calib-status
 ```
 
-`MARK LEFT` 成功前先保存行程失效记录。此后掉电也不能恢复旧行程；必须完成右点或重新从左点开始。`MARK RIGHT` 保存行程和机械比例后，建立以中点为零的位置参考，并同步步进指令位置；不使能电机。当前行程合法范围仍为 100～1000 mm。超出该范围不能用恢复命令绕过。
+`query` 应收到 `[MODE] DISABLED NONE`。没有对应回执、出现串口数据异常或不是 DISABLED 时，先停止本流程，不进行标记或使能。首次没有记录时，状态为 `CAL_STATE=0`、`CAL_SAVED=0`、`CAL_LENGTH_UM=0`；`CAL_STORAGE` 可以是记录不存在的非零错误码，这表示尚无可恢复记录，不是保存成功。
 
-`CONFIG POLE_ZERO_URAD` 与 `CONFIG POLE_INV` 在 `DISABLED` 下保存成功后才应用。它们可以在轨道标定之前或之后配置，重启后恢复；其他运行参数仍按原逻辑使用。零偏默认值不代表摆角已做物理校准。
+## 首次保存
 
-## 同一装置重启
+### 1. 保存已测得的摆角配置
 
-1. 确认传动、编码器磁铁、每转距离与左标记没有改变。
-2. 手推至**首次两点标定使用的同一左标记**，停稳。
-3. 执行下列命令。成功只建立位置，不发送运动指令。
+只有编码器、磁铁和摆杆安装未变化时，才可沿用此前实测的零偏和方向。以下 PowerShell 输入的是本装置已经验证的值，不是通用默认值：
+
+```powershell
+$PoleZero = [int](Read-Host '输入已验证的 POLE_ZERO_URAD（微弧度）')
+$PoleInv = [int](Read-Host '输入已验证的 POLE_INV（0 或 1）')
+python tools/cartpole_host.py --port COM11 --baud 460800 config POLE_ZERO_URAD $PoleZero
+python tools/cartpole_host.py --port COM11 --baud 460800 config POLE_INV $PoleInv
+python tools/cartpole_host.py --port COM11 --baud 460800 dump
+python tools/cartpole_host.py --port COM11 --baud 460800 state --secs 3
+```
+
+两个 CONFIG 命令都收到对应 `[OK]` 后，参数**已经自动保存到 NVS，不需要额外 save 命令**。用 `dump` 核对数值；下垂时角度应在 ±180° 附近，直立时在 0° 附近，方向按[协议符号约定](protocol.md#符号约定实机验证方法)验证。±180° 两侧切换是角度环绕，不宜取两侧读数的算术平均值。
+
+这两个参数只能在 DISABLED 下设置，保存成功后才生效；它们也可以在轨道两点标定之后配置。其他运行参数仍按原逻辑使用。零偏默认值不代表摆角已做物理校准。
+
+### 2. 标记左端
+
+手推小车到以后每次都能复现的左标记，停稳，再单独执行：
+
+```powershell
+python tools/cartpole_host.py --port COM11 --baud 460800 mark-left
+```
+
+应收到 `[OK] MARK_LEFT = ...`。此命令先保存旧行程失效记录，再捕获左端；成功后状态为 `CAL_STATE=1`，等待右点。此后掉电不能再恢复旧行程。
+
+### 3. 标记右端并保存
+
+保持禁用，手推至右标记，停稳，再执行：
+
+```powershell
+python tools/cartpole_host.py --port COM11 --baud 460800 mark-right
+```
+
+应收到 `[OK] MARK_RIGHT = <行程µm>`。两个标记之间的**小车同一点位移**是行程，不是两挡块间空距。当前合法范围仍为100～1000 mm；不能用恢复命令绕过该范围。
+
+成功回执表示行程和机械比例已经保存，并已建立以中点为零的本次坐标；不需要再执行 save 或 confirm-left，也不会使能电机。右点写失败或参考失败的区别见[存储失败与恢复](#存储失败与恢复)，不要仅凭某个数值继续。
+
+### 4. 核对保存结果
+
+```powershell
+python tools/cartpole_host.py --port COM11 --baud 460800 calib-status
+python tools/cartpole_host.py --port COM11 --baud 460800 query
+```
+
+例如本次实测行程若是853436 µm，应得到：
+
+```text
+[OK] CAL_STATE = 2
+[OK] CAL_LENGTH_UM = 853436
+[OK] CAL_SAVED = 1
+[OK] CAL_STORAGE = 0
+[MODE] DISABLED NONE
+```
+
+示例长度不能直接套用，必须核对本装置实测结果。`calib-status` 要求四项回执齐全；命令返回成功只表示收齐查询结果，**还必须阅读状态和值**，不能把它等同于已标定或可以使能。
+
+## 重启后的恢复与保存验收
+
+首次保存后，先进行一次重启验收；以后同一装置每次启动也按此流程。
+
+### 1. 重启并检查已保存参数
+
+在 DISABLED 下重启设备，不清除 NVS，然后执行：
+
+```powershell
+python tools/cartpole_host.py --port COM11 --baud 460800 query
+python tools/cartpole_host.py --port COM11 --baud 460800 dump
+python tools/cartpole_host.py --port COM11 --baud 460800 calib-status
+```
+
+应仍为 `DISABLED NONE`；`dump` 中两个摆角参数与保存前相同；`CAL_STATE=3`、`CAL_SAVED=1`、`CAL_STORAGE=0`，`CAL_LENGTH_UM` 与保存前相同。状态3表示**装置参数已恢复，本次小车位置尚未确认**，不是故障，此时 ENABLE 会被拒绝。
+
+### 2. 手推到同一个左标记并确认
+
+确认轨道、传动、磁铁、每转距离与左标记没有变化。手推至**首次两点标定使用的同一个左标记**，停稳后执行：
 
 ```powershell
 python tools/cartpole_host.py --port COM11 --baud 460800 confirm-left
 python tools/cartpole_host.py --port COM11 --baud 460800 calib-status
+python tools/cartpole_host.py --port COM11 --baud 460800 query
 ```
 
-左参考的位置为整数 `-L/2` µm（奇数行程按整数除法向零取整）；新位置同步至步进指令计数。成功后仍须独立执行 `enable`。用户必须保证实际停在左标记，软件不能检测挡块或替用户确认物理位置。
+若保存行程为853436 µm，确认回执应是 `[OK] CONFIRM_LEFT = -426718`；随后 `CAL_STATE=2`、`CAL_SAVED=1`、`CAL_STORAGE=0`，模式仍是 `DISABLED NONE`。左参考的位置为整数 `-L/2` µm，奇数行程按整数除法向零取整；编码器位置与步进指令位置同步。
+
+**重启恢复用 `confirm-left`，不要用 `mark-left`。** 前者复用保存行程，后者撤销旧行程并开始新的两点标定，必须继续完成右点。
+
+### 3. 独立决定何时使能
+
+确认成功后，可在禁用状态下缓慢手推到轨道中间，连续位置仍会被跟踪。准备好低速验证和独立停机手段后，才单独执行：
+
+```powershell
+python tools/cartpole_host.py --port COM11 --baud 460800 enable
+```
+
+成功回执为 `[MODE] READY NONE`。确认左点本身不使能、不发送 STEP，也不自动移动。不要将保存验收直接接成高加速度试验；还需单独验证运动方向、限位和制动距离。若位置采样中断，保持禁用并重新确认参考，不以反复 ENABLE 绕过保护。
+
+## 物理条件与安全边界
+
+用户必须保证实际停在左标记，软件不能检测挡块或替用户确认物理位置。断电期间小车可以移动，但启动后仍需回到同一左标记确认，不能使用断电前的当前位置。
 
 采样门禁只验证读取成功、CRC与时间连续性，不是磁铁或机械安装自检。MT6835的磁弱、欠压、过速状态目前仍沿驱动的告警策略处理，不进入本次参考门禁；请人工确认磁铁安装、状态告警及读数随小车运动的对应关系。
 
