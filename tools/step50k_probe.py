@@ -17,12 +17,40 @@ def budget_for(link, args, cal, cfg):
                      start_from_left_mm=link.state[0] / 1000 + TRAVEL_MM / 2)
 
 
+def collision_risk_accepted(args):
+    if not getattr(args,'accept_collision_risk',False): return False
+    expected=dict(acceleration=11000,hold_s=.3,window_s=.5,margin_mm=100,
+                  normal_decel=5000,watchdog_decel=5000,watchdog_ms=100,inflight_ms=50)
+    if any(getattr(args,k)!=v for k,v in expected.items()):
+        raise Abort('碰撞风险例外仅限1250/ACC11000/hold0.3/window0.5及原5000制动、100ms看门狗、50ms在途、100mm余量')
+    return True
+
+
+def risk_report(args,budget):
+    accepted=collision_risk_accepted(args)
+    v=TARGET_SPEED_MM_S
+    full_window=v*(args.window_s+args.inflight_ms/1000)+v*v/(2*args.normal_decel)+args.margin_mm
+    return dict(accepted=accepted,physical_stopping_guarantee=False,
+        relaxed_checks=['conditional_normal_budget','conditional_fault_budget','normal_full_window_budget',
+                        'dynamic_inflight_and_watchdog_reserve'] if accepted else [],
+        conditional_normal_budget_fits=budget['conditional_normal_budget_fits'],
+        conditional_fault_budget_fits=budget['conditional_fault_budget_fits'],
+        normal_full_window_mm=full_window,normal_full_window_fits=full_window<=budget['forward_clearance_mm'],
+        forward_clearance_mm=budget['forward_clearance_mm'],fault_budget_mm=budget['fault_budget_mm'],
+        retained_dynamic_reserve_mm=stop_reserve_mm(args),
+        original_dynamic_reserve_mm=max(v*args.inflight_ms/1000+v*v/(2*args.normal_decel),
+            v*args.inflight_ms/1000+v*args.watchdog_ms/1000+v*v/(2*args.watchdog_decel))+args.margin_mm,
+        warning='不能保证故障或在途命令下在挡块前停车；仅现场人工单次试验，不自动ENABLE；可能提前中止，不能保证保持满0.3s')
+
+
 def stop_reserve_mm(args):
     """在操作者给定在途上界下，两种停车路径取较大者。"""
     v=TARGET_SPEED_MM_S
     inflight=v*args.inflight_ms/1000
     normal=inflight+v*v/(2*args.normal_decel)
     watchdog=inflight+v*args.watchdog_ms/1000+v*v/(2*args.watchdog_decel)
+    if collision_risk_accepted(args):
+        return v*v/(2*args.normal_decel)+args.margin_mm
     return max(normal,watchdog)+args.margin_mm
 
 
@@ -39,11 +67,12 @@ def validate_run(args, budget):
             raise Abort('缺少证据说明: ' + name)
     if args.margin_mm <= 0 or args.normal_decel > args.acceleration:
         raise Abort('额外余量必须为正，正常制动能力不能高于将设置的ACC_MAX')
-    if not budget['conditional_fault_budget_fits'] or not budget['conditional_normal_budget_fits']:
+    accepted=collision_risk_accepted(args)
+    if not accepted and (not budget['conditional_fault_budget_fits'] or not budget['conditional_normal_budget_fits']):
         raise Abort('条件停止距离预算超出前方可用行程')
     # 达速判断迟到时仍可能走满整个窗口，正常停车同样按整个窗口预算。
     normal_window = TARGET_SPEED_MM_S * (args.window_s + args.inflight_ms/1000) + TARGET_SPEED_MM_S**2/(2*args.normal_decel) + args.margin_mm
-    if normal_window > budget['forward_clearance_mm']:
+    if not accepted and normal_window > budget['forward_clearance_mm']:
         raise Abort('绝对非零窗口后的正常停车预算不足')
 
 
@@ -97,6 +126,10 @@ def execute(link,args):
         normal_decel_evidence=args.normal_decel_evidence,
         watchdog_decel_evidence=args.watchdog_decel_evidence,
         inflight_evidence=args.inflight_evidence,parameters=budget['inputs']))
+    if collision_risk_accepted(args):
+        report=risk_report(args,budget)
+        link.record('collision_risk_acceptance',report)
+        print('警告：显式放宽碰撞预算，不保证挡块前停车。',json.dumps(report,ensure_ascii=False))
     if args.command=='plan': return budget
     validate_run(args,budget)
     print("条件预算不是物理停车保证；ACC_MAX也改变正常VEL0减速度，WDT_DEC保持独立。晚到VEL可再次喂狗。现场须核实20V、安装、净空及独立断电。")
@@ -120,6 +153,7 @@ def execute(link,args):
         stop_bounded(link,stop_timeout)
         link.fresh()
         budget=budget_for(link,args,cal,actual); validate_run(args,budget)
+        if collision_risk_accepted(args):link.record('collision_risk_applied',risk_report(args,budget))
         link.record('applied_config',actual)
         start_x=link.state[0]; edge=cal['CAL_LENGTH_UM']/2-cfg['X_MARGIN_UM']
         needed_mm=stop_reserve_mm(args)
@@ -147,9 +181,13 @@ def execute(link,args):
                 motion_end_reason='window_elapsed'; break
             now=link.clock(); state=link.fresh()
             if link.guard_failure: raise Abort(link.guard_failure)
-            if last_send is not None and state[2]>=TARGET_SPEED_MM_S*.98:
-                if reached is None: reached=now
-            if reached is not None and now-reached>=args.hold_s:
+            # 任一新报告低于近似门槛都重置，不能用首次到速后的墙钟冒充持续保持。
+            if last_send is not None and link.batch:
+                if all(s[2]>=TARGET_SPEED_MM_S*.98 for s in link.batch):
+                    if reached is None: reached=now
+                else:
+                    reached=None
+            if link.batch and reached is not None and now-reached>=args.hold_s:
                 motion_end_reason='approx_target_hold_completed'; break
             if now>=next_send and link.states!=previous:
                 if deadlines():
@@ -213,6 +251,7 @@ def main(argv=None):
         p.add_argument('--'+key,type=float)
     for key in ('watchdog-decel','watchdog-ms'):p.add_argument('--'+key,type=int)
     for key in ('normal-decel-evidence','watchdog-decel-evidence','inflight-evidence'):p.add_argument('--'+key)
+    p.add_argument('--accept-collision-risk',action='store_true',help='仅限已约定11000/0.3s/0.5s单次实验：放宽停车预算，可能撞挡块，默认关闭')
     p.add_argument('--confirm-motion',action='store_true');p.add_argument('--confirm-clearance',action='store_true')
     args=p.parse_args(argv)
     import serial

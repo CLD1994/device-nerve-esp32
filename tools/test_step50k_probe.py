@@ -53,6 +53,58 @@ class ProbeTests(unittest.TestCase):
         with self.assertRaises(Abort):self.run_probe(f,options(acceleration=5000))
         self.assertNotIn('VEL 1250',f.writes)
 
+    def test_explicit_collision_risk_scope_and_remaining_reserve(self):
+        from step50k_probe import validate_run,stop_reserve_mm,budget_for
+        f=Bench();l=Link(f,f.clock,f.sleep);l.state=(-326662,0,0,0)
+        a=options(acceleration=11000,hold_s=.3,window_s=.5,margin_mm=100,
+                  normal_decel=5000,inflight_ms=50,accept_collision_risk=True)
+        b=budget_for(l,a,{'CAL_LENGTH_UM':853325},{'X_MARGIN_UM':10000})
+        self.assertFalse(b['conditional_fault_budget_fits'])
+        validate_run(a,b)
+        self.assertEqual(stop_reserve_mm(a),256.25)
+        a.accept_collision_risk=False
+        with self.assertRaises(Abort):validate_run(a,b)
+        for key,value in [('acceleration',12000),('hold_s',.4),('window_s',.6),('margin_mm',99)]:
+            a=options(acceleration=11000,hold_s=.3,window_s=.5,margin_mm=100,
+                      normal_decel=5000,inflight_ms=50,accept_collision_risk=True)
+            setattr(a,key,value)
+            with self.subTest(key=key),self.assertRaises(Abort):validate_run(a,b)
+
+    def test_risk_run_retains_fault_gate_and_logs_relaxations(self):
+        class Fault(Bench):
+            def read(self,n):
+                if self.v:self.rx+=b'MODE FAULT STEP_LOSS\n'
+                return super().read(n)
+        f=Fault();l=Link(f,f.clock,f.sleep)
+        a=options(acceleration=11000,hold_s=.3,window_s=.5,margin_mm=100,
+                  normal_decel=5000,inflight_ms=50,accept_collision_risk=True)
+        with self.assertRaises(Abort):execute(l,a)
+        report=next(e['value'] for e in l.events if e['direction']=='collision_risk_acceptance')
+        self.assertFalse(report['conditional_fault_budget_fits'])
+        self.assertEqual(report['retained_dynamic_reserve_mm'],256.25)
+        self.assertEqual(report['original_dynamic_reserve_mm'],443.75)
+        self.assertEqual(f.writes.count('VEL 1250'),1)
+        self.assertEqual(f.v,0)
+    def test_hold_resets_on_report_below_threshold(self):
+        class Dip(Bench):
+            first=None;dipped=None
+            def write(self,data):
+                if data==b'VEL 1250\n' and self.first is None:self.first=self.t
+                return super().write(data)
+            def read(self,n):
+                data=super().read(n)
+                if self.v and self.first is not None and self.t-self.first>=.05 and self.dipped is None:
+                    self.dipped=self.t
+                    data=data.replace(b' 1250 0\n',b' 1200 0\n')
+                return data
+        f=Dip();a=options(acceleration=11000,hold_s=.3,window_s=.5,margin_mm=100,
+                         normal_decel=5000,inflight_ms=50,accept_collision_risk=True)
+        _,l=self.run_probe(f,a)
+        stop_tx=next(e['t'] for e in l.events if e['direction']=='tx' and e['value']=='VEL 0' and e['t']>f.first)
+        self.assertGreaterEqual(stop_tx-f.dipped,.3)
+        end=next(e['value'] for e in l.events if e['direction']=='motion_end')
+        self.assertEqual(end['reason'],'approx_target_hold_completed')
+
     def test_plan_only_queries(self):
         f,l=self.run_probe(a=options(command='plan',hold_s=None,watchdog_decel=None))
         self.assertEqual(f.writes,['QUERY','CALIB?','CONFIG?'])
