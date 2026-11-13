@@ -64,6 +64,12 @@ bool motor_at_rest(motor_handle_t m)
     return step_engine_vel_now_q16() == 0;
 }
 
+bool motor_try_stop_at_rest(motor_handle_t m)
+{
+    (void)m;
+    return step_engine_try_stop_at_rest();
+}
+
 int32_t motor_position_steps(motor_handle_t m)
 {
     (void)m;

@@ -143,6 +143,11 @@ void cartaxis_stop(void)
     motor_stop(s_m);
 }
 
+bool cartaxis_try_stop_at_rest(void)
+{
+    return motor_try_stop_at_rest(s_m);
+}
+
 bool cartaxis_at_rest(void)
 {
     maybe_apply_pending();

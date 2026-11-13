@@ -117,6 +117,26 @@ class CalibrationCommandTest(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(host.cmd_calib_status(rig, None), 1)
 
+class DisableCommandTest(unittest.TestCase):
+    def test_success_requires_fresh_disabled_response(self):
+        from unittest.mock import Mock
+        rig=Mock(last_mode=('DISABLED','NONE'), last_reply=None)
+        def pump(_): rig.last_mode=('DISABLED','NONE')
+        rig.pump.side_effect=pump
+        self.assertEqual(host.cmd_disable(rig, SimpleNamespace()),0)
+        rig.send_line.assert_called_once_with('DISABLE')
+
+    def test_stale_mode_timeout_busy_and_fault_are_not_success(self):
+        from unittest.mock import Mock
+        for response in (None, ('ERR','BUSY',None), ('FAULT','POWER')):
+            rig=Mock(last_mode=('DISABLED','NONE'),last_reply=None)
+            def pump(_,r=response):
+                if r and r[0]=='ERR': rig.last_reply=r
+                elif r: rig.last_mode=r
+            rig.pump.side_effect=pump
+            self.assertEqual(host.cmd_disable(rig,SimpleNamespace()),1)
+            rig.send_line.assert_called_once_with('DISABLE')
+
 
 if __name__ == "__main__":
     unittest.main()

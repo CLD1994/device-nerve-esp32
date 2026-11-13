@@ -30,6 +30,8 @@ static bool p(const char *line)
 /* ---- 合法集 ---- */
 static void test_legal(void)
 {
+    CHECK(p("DISABLE"), "正常禁用命令");
+    CHECK(!p("DISABLE 1"), "禁用无参数");
     CHECK(p("CONFIRM LEFT") && req.cmd == CART_CMD_CONFIRM_LEFT, "确认左参考");
     CHECK(p("CALIB?") && req.cmd == CART_CMD_CALIB_QUERY, "标定状态");
     CHECK(!p("CONFIRM RIGHT"), "不支持右参考恢复");
