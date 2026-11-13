@@ -85,7 +85,8 @@ bool mt6835_hw_read_raw(mt6835_hw_handle_t h, uint32_t *raw_out, uint8_t *status
         MT6835_REG_ANGLE1,
         0, 0, 0, 0,
     };
-    uint8_t rx[MT6835_HW_FRAME_BYTES] = { 0 };
+    /* DMA 按 4 字节写入接收区；存储向上取整，线上事务仍为 6 字节。 */
+    _Alignas(4) uint8_t rx[(MT6835_HW_FRAME_BYTES + 3) & ~3] = { 0 };
 
     spi_transaction_t t = {
         .cmd = 0,
