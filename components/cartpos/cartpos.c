@@ -259,3 +259,21 @@ bool cartpos_reference_is_valid(void)
     portEXIT_CRITICAL(&s_lock);
     return valid;
 }
+
+
+bool cartpos_get_measurement(cartpos_measurement_t *out)
+{
+    magnetic_encoder_sample_t sample;
+    if (out == NULL || !fresh_sample(&sample) || !sample.velocity_valid) return false;
+    portENTER_CRITICAL(&s_lock);
+    double scale = s_um_per_count;
+    int64_t offset = s_offset_um;
+    bool valid = s_scale_valid;
+    portEXIT_CRITICAL(&s_lock);
+    double x = (double)sample.position_counts * scale - (double)offset;
+    double v = (double)sample.velocity_counts_per_s * scale / 1000.0;
+    if (!valid || !isfinite(x) || !isfinite(v)
+        || x < INT32_MIN || x > INT32_MAX || v < INT32_MIN || v > INT32_MAX) return false;
+    *out = (cartpos_measurement_t){ .x_um = (int32_t)llround(x), .vx_mm_s = (int32_t)llround(v) };
+    return true;
+}

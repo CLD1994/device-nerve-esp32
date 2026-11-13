@@ -73,6 +73,54 @@ int main(void)
     publish_sample(&inst, 18, 0);
     assert(magnetic_encoder_get_sample(enc, &s));
     assert(s.continuity_seq == 2);
+    /* 满窗速度与位置/原始角/状态来自同一发布；随后失效不伪造零速。 */
+    for (int i = 1; i <= 16; ++i) {
+        now += 1000;
+        publish_sample(&inst, 18 + i*2, 3);
+    }
+    assert(magnetic_encoder_get_sample(enc, &s));
+    assert(s.velocity_valid && s.velocity_counts_per_s == 2000);
+    assert(s.velocity_span_us == 16000 && s.raw_counts == 50 && s.status == 3);
+    now += 20001;
+    assert(magnetic_encoder_get_sample(enc, &s));
+    assert(!s.velocity_valid && s.velocity_counts_per_s == 2000);
+    publish_sample(&inst, 52, 0);
+    assert(magnetic_encoder_get_sample(enc, &s) && !s.velocity_valid);
+    for (int i = 1; i <= 16; ++i) {
+        now += 1000;
+        publish_sample(&inst, 52 + i*2, 0);
+    }
+    assert(magnetic_encoder_get_sample(enc, &s) && s.velocity_valid);
+    fail_step_locked(&inst, false);
+    assert(magnetic_encoder_get_sample(enc, &s));
+    assert(!s.velocity_valid && s.ok && s.velocity_counts_per_s == 2000);
+    for (int i = 1; i <= 16; ++i) {
+        now += 1000;
+        publish_sample(&inst, 84 + i*2, 0);
+        assert(magnetic_encoder_get_sample(enc, &s) && !s.velocity_valid);
+    }
+    now += 1000;
+    publish_sample(&inst, 118, 0);
+    assert(magnetic_encoder_get_sample(enc, &s) && s.velocity_valid);
+    uint64_t continuity = s.continuity_seq;
+    publish_sample(&inst, 120, 0); /* 同一个时间戳不能构成有效速度。 */
+    assert(magnetic_encoder_get_sample(enc, &s));
+    assert(!s.velocity_valid && s.continuity_seq == continuity + 1);
+    /* 每点及时但整个窗口过长：位置连续性保留，速度明确无效。 */
+    continuity = s.continuity_seq;
+    for (int i = 1; i <= 16; ++i) {
+        now += 20000;
+        publish_sample(&inst, 120 + i*2, 0);
+    }
+    assert(magnetic_encoder_get_sample(enc, &s));
+    assert(!s.velocity_valid && s.velocity_span_us == 320000);
+    assert(s.continuity_seq == continuity && s.position_counts == 142);
+    for (int i = 1; i <= 16; ++i) {
+        now += 1000;
+        publish_sample(&inst, 152 + i*2, 0);
+    }
+    assert(magnetic_encoder_get_sample(enc, &s));
+    assert(s.velocity_valid && s.velocity_span_us == 16000 && s.velocity_counts_per_s == 2000);
     puts("sample snapshot checks passed");
     return 0;
 }

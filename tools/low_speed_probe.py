@@ -4,6 +4,7 @@ import json
 import math
 from pathlib import Path
 import time
+from velocity_validity import VelocityValidity
 
 
 class Abort(RuntimeError):
@@ -13,6 +14,7 @@ class Abort(RuntimeError):
 class Link:
     def __init__(self, serial, clock=time.monotonic, sleep=time.sleep, log=None):
         self.serial, self.clock, self.sleep, self.log = serial, clock, sleep, log
+        self.velocity_validity = VelocityValidity(clock)
         self.events = []
         self.batch = []
         self.guard = None
@@ -34,6 +36,10 @@ class Link:
 
 
     def send(self, command):
+        try:
+            self.velocity_validity.command(command)
+        except RuntimeError as exc:
+            raise Abort(str(exc)) from exc
         data = (command + '\n').encode('ascii')
         if self.serial.write(data) != len(data):
             raise Abort('串口写入不完整')
@@ -60,7 +66,18 @@ class Link:
                 p = raw.decode('ascii').strip().split()
                 if not p:
                     continue
+                if p[0] == 'VEL_VALID':
+                    if not self.velocity_validity.update(p):
+                        self.state = self.received_at = None
+                        self.batch = []
+                        if self.velocity_validity.failed:
+                            self.guard_failure = '速度窗口失效；试验中止'
+                            raise Abort(self.guard_failure)
+                    continue
                 if p[0] == 'STATE' and len(p) == 5:
+                    if not self.velocity_validity.ready():
+                        self.state = self.received_at = None
+                        continue
                     self.state = tuple(map(int, p[1:]))
                     self.batch.append(self.state)
                     if self.guard:
@@ -101,6 +118,10 @@ class Link:
         return {k: self.replies[k] for k in keys}
 
     def fresh(self):
+        try:
+            self.velocity_validity.require()
+        except RuntimeError as exc:
+            raise Abort(str(exc)) from exc
         if self.state is None or self.clock() - self.received_at > .1:
             raise Abort('没有最近收到的有效状态')
         if self.mode != ('READY', 'NONE'):
@@ -177,6 +198,7 @@ def stopped(link, timeout=1.0):
 def motion(link, args, bound):
     if abs(link.fresh()[2]) > 10:
         raise Abort('起步前速度不在静止范围')
+    link.velocity_validity.active = True
     for name, value in [('VEL_MAX', args.velocity), ('ACC_MAX', args.acceleration),
                         ('WDT_MS', 100), ('WDT_DEC', 100)]:
         reply = link.query('CONFIG %s %d' % (name, value), [name])

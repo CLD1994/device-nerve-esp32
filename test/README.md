@@ -189,3 +189,14 @@ gcc -std=c11 -Wall -Wextra -Werror \
 ```
 
 该测试直接编入生产引擎，以受接口约束的GPTimer/GPIO替身隔离硬件。覆盖精确Q16残速拒绝、零速清目标、自然停稳及挂起回调不再发步；不验证真实双核中断调度或机械停止。FSM命令测试为上述cartfsm-power，含DISABLED幂等、READY运动拒绝/停稳禁用、FAULT保留及后到VEL忽略。仍需ESP-IDF目标构建与独立低速实机验收，不以宿主结果宣称运行时电机安全已验证。
+
+### 实验遥测有效性接缝
+
+```bash
+bash host_tests/test_measurement_validity.sh
+```
+
+解释层测试以编码器快照替身验证同快照换算、无效不覆盖输出、比例非法拒绝；
+遥测纯函数测试验证无效停发 STATE、有效性变化顺序、所有状态的100 ms心跳及短缓冲拒绝。
+这些测试不验证真实 FreeRTOS 调度、串口缓冲时延、磁场质量或物理停稳。
+实验协议见 [速度估计有效性](../docs/protocol.md#实验分支速度估计有效性)。

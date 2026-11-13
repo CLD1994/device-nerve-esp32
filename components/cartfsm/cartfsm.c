@@ -617,7 +617,7 @@ static void fsm_task(void *arg)
         } else if (mode == CM_FAULT && s_fault_settling) {
             settle_fault();
         }
-        /* DISABLED：无监督动作（STATE 流照发） */
+        /* DISABLED：无监督动作；遥测按采样有效性发送STATE/VEL_VALID。 */
 
         if (wdt_ok) {
             esp_task_wdt_reset();

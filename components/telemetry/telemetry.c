@@ -10,6 +10,7 @@
 #include "freertos/task.h"
 #include "telemetry_timing.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_task_wdt.h"
 
 #include "cartpos.h"
@@ -27,7 +28,8 @@ static void telemetry_task(void *arg)
     (void)arg;
 
     TickType_t last_wake = xTaskGetTickCount();
-    char buf[64];
+    char buf[128];
+    telemetry_validity_t gate = {0};
 
     ESP_LOGI(TAG, "STATE 流任务已启动：%d Hz，优先级 %d，CPU%d",
              TELEMETRY_RATE_HZ, TELEMETRY_TASK_PRIO, TELEMETRY_TASK_CORE);
@@ -38,19 +40,15 @@ static void telemetry_task(void *arg)
     }
 
     for (;;) {
-        /* 摆角标定（POLE_ZERO_URAD/POLE_INV）在 poleang 域实现内应用 */
-        int32_t theta = poleang_theta_urad();
-        int32_t vth   = poleang_vth_mrad_s();
-
-        int64_t x_um = cartpos_position_um();
-        int32_t vx = (int32_t)lround(cartpos_velocity_mm_s());
-
-        int n = telemetry_format_state(buf, sizeof(buf),
-                                       (int32_t)x_um, theta, vx, vth);
+        cartpos_measurement_t cart = {0};
+        poleang_measurement_t pole = {0};
+        bool cart_valid = cartpos_get_measurement(&cart);
+        bool pole_valid = poleang_get_measurement(&pole);
+        int n = telemetry_format_measurement(buf, sizeof(buf), &gate, esp_timer_get_time(),
+            cart_valid, pole_valid, cart.x_um, pole.theta_urad, cart.vx_mm_s, pole.vth_mrad_s);
         if (n > 0) {
-            buf[n] = '\n';
-            cartproto_send_raw(buf, n + 1);
-        } else {
+            cartproto_send_raw(buf, n);
+        } else if (n < 0) {
             ESP_LOGE(TAG, "组帧失败（n=%d）——帧被丢弃", n);
         }
 

@@ -21,7 +21,7 @@ class Fake:
         elif cmd.startswith('VEL '): self.v=int(cmd.split()[1])
         return len(data)
     def read(self,n):
-        data=self.rx+('STATE %d 3141592 %d 0\n'%(self.x,self.v)).encode();self.rx=b'';return data
+        data=self.rx+b'VEL_VALID 1 1\n'+('STATE %d 3141592 %d 0\n'%(self.x,self.v)).encode();self.rx=b'';return data
 
 
 def args(command='run', confirm=True):
@@ -108,7 +108,7 @@ class Tests(unittest.TestCase):
             class Drift(Fake):
                 def read(self,n):
                     self.x=self.t*speed*1000
-                    self.rx+=('STATE %d 0 %d 0\n'%(self.x,speed)).encode()
+                    self.rx+=('VEL_VALID 1 1\nSTATE %d 0 %d 0\n'%(self.x,speed)).encode()
                     data=self.rx;self.rx=b'';return data
             f,l=self.setup_link(Drift());l.mode=('READY','NONE')
             with self.assertRaises(Abort):stopped(l)
@@ -119,7 +119,7 @@ class Tests(unittest.TestCase):
     def test_batch_motion_cannot_be_hidden(self):
         class Batch(Fake):
             def read(self,n):
-                return b'\nSTATE 0 0 9 0\nSTATE 0 0 0 0\n'
+                return b'\nVEL_VALID 1 1\nSTATE 0 0 9 0\nSTATE 0 0 0 0\n'
         f,l=self.setup_link(Batch());l.mode=('READY','NONE')
         with self.assertRaises(Abort):stopped(l)
     def test_stop_phase_violation_latches(self):

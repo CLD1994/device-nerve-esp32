@@ -22,8 +22,12 @@ void cartpos_init(magnetic_encoder_handle_t enc);
 /** 连续位置（多圈、带符号、含回零原点偏移），µm 整数；首样本前为 0。 */
 int64_t cartpos_position_um(void);
 
-/** 16 ms 窗平滑速度 mm/s；窗口未满为 0。 */
+/** 缓存速度；不携带有效性，不可用作停稳或安全判断。 */
 float cartpos_velocity_mm_s(void);
+
+typedef struct { int32_t x_um; int32_t vx_mm_s; } cartpos_measurement_t;
+/** 同一编码器快照的位置和有效速度；无效或越界返回false且不修改out。 */
+bool cartpos_get_measurement(cartpos_measurement_t *out);
 
 /** 连续 ≥10 次读取失败为 false；一次成功即恢复 true。 */
 bool cartpos_is_ok(void);

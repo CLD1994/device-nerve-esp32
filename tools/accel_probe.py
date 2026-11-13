@@ -75,6 +75,7 @@ def execute(link, args):
     try:
         # 当前READY允许，但先清除旧目标并在旧参数下确认停稳。
         link.fresh()
+        link.velocity_validity.active = True
         stop(link)
         for name, value in CONFIG.items():
             if link.query('CONFIG %s %d' % (name, value), [name])[name] != value:

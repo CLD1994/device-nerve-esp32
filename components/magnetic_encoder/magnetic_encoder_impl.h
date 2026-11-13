@@ -69,6 +69,8 @@ typedef struct magnetic_encoder_inst_s {
     bool                         last_attempt_ok;
     magnetic_encoder_vel_win_t   vel;       /* 16 ms 速度窗 */
     int32_t                      vel_counts_per_s;
+    int64_t                      velocity_span_us;
+    bool                         velocity_valid;
     uint32_t                     last_raw;  /* 最新单圈绝对角（类别契约与器件自测面） */
     uint8_t                      status;    /* 最新 STATUS（器件自测面） */
     magnetic_encoder_fail_t      fail;      /* 失败计数与健康位 */

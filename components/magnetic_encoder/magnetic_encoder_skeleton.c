@@ -43,11 +43,16 @@ static bool publish_sample(magnetic_encoder_inst_t *inst,
     inst->pos_counts      = pos;
     inst->last_raw        = raw;
     inst->status          = status;
-    inst->vel_counts_per_s = magnetic_encoder_vel_push(&inst->vel, pos);
     if (inst->has_sample &&
-        now_us - inst->sampled_at_us > MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US) {
+        (now_us <= inst->sampled_at_us ||
+         now_us - inst->sampled_at_us > MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US)) {
         inst->continuity_seq++;
     }
+    magnetic_encoder_velocity_t velocity = magnetic_encoder_vel_push_at(
+        &inst->vel, pos, now_us, MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US);
+    inst->velocity_valid = velocity.valid;
+    inst->velocity_span_us = velocity.span_us;
+    if (velocity.valid) inst->vel_counts_per_s = velocity.counts_per_s;
     inst->sampled_at_us = now_us;
     inst->sample_seq++;
     inst->has_sample = true;
@@ -65,6 +70,9 @@ static bool fail_step_locked(magnetic_encoder_inst_t *inst, bool read_ok)
     inst->last_attempt_ok = read_ok;
     if (!read_ok) {
         inst->failure_seq++;
+        magnetic_encoder_vel_win_reset(&inst->vel);
+        inst->velocity_valid = false;
+        inst->velocity_span_us = 0;
     }
     portEXIT_CRITICAL(&inst->lock);
     return event;
@@ -181,7 +189,17 @@ bool magnetic_encoder_inst_get_sample(magnetic_encoder_handle_t enc,
     }
     magnetic_encoder_inst_t *inst = (magnetic_encoder_inst_t *)enc;
     portENTER_CRITICAL(&inst->lock);
+    /* 在快照锁内读时间，不能用获取锁之前的 now 判断更新后的样本。 */
+    int64_t now_us = esp_timer_get_time();
+    bool fresh = inst->has_sample && inst->sampled_at_us >= 0
+        && now_us >= inst->sampled_at_us
+        && now_us - inst->sampled_at_us <= MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US;
     *out = (magnetic_encoder_sample_t){
+        .raw_counts = inst->last_raw,
+        .status = inst->status,
+        .velocity_counts_per_s = inst->vel_counts_per_s,
+        .velocity_span_us = inst->velocity_span_us,
+        .velocity_valid = inst->velocity_valid && fresh && inst->last_attempt_ok,
         .position_counts = inst->pos_counts,
         .sampled_at_us = inst->sampled_at_us,
         .sample_seq = inst->sample_seq,
