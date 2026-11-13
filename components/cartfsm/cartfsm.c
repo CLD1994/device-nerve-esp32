@@ -15,6 +15,10 @@
 
 #include <stddef.h>
 #include <string.h>
+#include <stdio.h>
+#include <inttypes.h>
+#include "esp_timer.h"
+#include "cartfsm_step_loss_diag.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -44,6 +48,10 @@ static volatile cm_reason_t s_reason = CR_NONE;
 static volatile long s_last_cmd_v = 0;     /* 最近有效目标（软限位持续钳制） */
 static volatile bool s_fault_settling = false;  /* FAULT 斜坡停机进行中 */
 static bool s_started = false;
+/* 与模式转换/读出同受s_output_lock保护，RESET不清除证据。 */
+static cartfsm_step_loss_diag_t s_step_loss_diag;
+static uint32_t s_step_loss_event;
+static uint32_t s_run_id;
 /* 串行化使能/VEL与供电急停；锁内不做I2C或NVS。 */
 static SemaphoreHandle_t s_output_lock;
 
@@ -250,13 +258,15 @@ static void enter_power_fault(void)
     if (changed) push_mode(CM_FAULT, CR_POWER);
 }
 
-static void enter_fault(cm_reason_t r)
+static void enter_fault_record(cm_reason_t r, const cartfsm_step_loss_diag_t *candidate)
 {
     xSemaphoreTake(s_output_lock, portMAX_DELAY);
     if (s_mode != CM_READY) {
         xSemaphoreGive(s_output_lock);
         return;
     }
+    int64_t accepted_at = candidate ? esp_timer_get_time() : 0;
+    long target_before_stop = s_last_cmd_v;
     portENTER_CRITICAL(&s_lock);
     s_mode = CM_FAULT;
     s_reason = r;
@@ -267,8 +277,22 @@ static void enter_fault(cm_reason_t r)
     const fw_params_t *p = fw_params();
     cartaxis_set_accel_mm_s2(p->wdt_dec);
     cartaxis_halt();
+    /* 安全停车先提交。固定大小复制，无格式化/串口/NVS或动态分配。 */
+    if (r == CR_STEP_LOSS && candidate) {
+        s_step_loss_diag = *candidate;
+        s_step_loss_diag.valid = true;
+        s_step_loss_diag.event_id = ++s_step_loss_event;
+        s_step_loss_diag.run_at_accept = s_run_id;
+        s_step_loss_diag.t_accept_us = accepted_at;
+        s_step_loss_diag.target_at_accept_mm_s = target_before_stop;
+    }
     xSemaphoreGive(s_output_lock);
     /* ②③（等 vel_now==0 → EN 关 → 推 MODE）由监督任务完成 */
+}
+
+static void enter_fault(cm_reason_t r)
+{
+    enter_fault_record(r, NULL);
 }
 
 /* ---- 命令处理（cartproto exec 回调，CPU0） ----
@@ -430,6 +454,7 @@ static void exec_enable(void)
     }
     portENTER_CRITICAL(&s_lock);
     s_mode = CM_READY;
+    ++s_run_id;
     s_reason = CR_NONE;
     s_last_cmd_v = 0;
     portEXIT_CRITICAL(&s_lock);
@@ -534,10 +559,51 @@ static void exec_config_dump(void)
     }
 }
 
+static void exec_steploss_query(void)
+{
+    cartfsm_step_loss_diag_t d;
+    xSemaphoreTake(s_output_lock, portMAX_DELAY);
+    bool stopped = s_mode == CM_DISABLED || (s_mode == CM_FAULT && !s_fault_settling);
+    if (!stopped) {
+        xSemaphoreGive(s_output_lock);
+        cartproto_send_err("STEPLOSS_BUSY");
+        return;
+    }
+    d = s_step_loss_diag;
+    xSemaphoreGive(s_output_lock);
+    if (!d.valid) { cartproto_send_err("STEPLOSS_NONE"); return; }
+    const magnetic_encoder_sample_t *m = &d.encoder.sample;
+    bool ordered = d.c_begin_us >= 0 && d.c_end_us >= d.c_begin_us
+        && d.t_compare_us >= d.c_end_us && d.t_accept_us >= d.t_compare_us;
+    int64_t age = d.metadata_available && m->sampled_at_us >= 0
+        && d.t_compare_us >= m->sampled_at_us ? d.t_compare_us - m->sampled_at_us : -1;
+    const struct { const char *name; int64_t value; } fields[] = {
+        {"VERSION",1}, {"RUN_COMPARE",d.run_at_compare}, {"RUN_ACCEPT",d.run_at_accept},
+        {"T_COMPARE_US",d.t_compare_us}, {"T_ACCEPT_US",d.t_accept_us},
+        {"C_BEGIN_US",d.c_begin_us}, {"C_END_US",d.c_end_us}, {"TIME_ORDER_OK",ordered},
+        {"E_SENSOR_UM",d.e_sensor_um}, {"E_COMPARED_UM",d.e_compared_um},
+        {"C_UM",d.c_um}, {"ERROR_UM",d.error_um}, {"THRESHOLD_UM",d.threshold_um},
+        {"TARGET_ACCEPT_MM_S",d.target_at_accept_mm_s}, {"META_AVAILABLE",d.metadata_available},
+        {"ENC_V_MM_S",d.encoder.velocity_mm_s}, {"ENC_V_VALID",m->velocity_valid},
+        {"ENC_SPAN_US",m->velocity_span_us}, {"SAMPLE_US",m->sampled_at_us}, {"AGE_US",age},
+        {"SAMPLE_SEQ",(int64_t)m->sample_seq}, {"FAILURE_SEQ",(int64_t)m->failure_seq},
+        {"CONTINUITY_SEQ",(int64_t)m->continuity_seq}, {"GAP_US",m->continuous_gap_us},
+        {"SAMPLE_VALID",m->valid}, {"LAST_READ_OK",m->last_attempt_ok}, {"END",1},
+    };
+    char line[112];
+    for (unsigned i=0;i<sizeof(fields)/sizeof(fields[0]);i++) {
+        int n=snprintf(line,sizeof(line),"SL1 %" PRIu32 " %s %" PRId64 "\n",
+            d.event_id, fields[i].name, fields[i].value);
+        if (n>0 && n<(int)sizeof(line)) cartproto_send_raw(line,n);
+        else { cartproto_send_err("STEPLOSS_FORMAT"); return; }
+    }
+}
+
 static void exec_cmd(const cart_req_t *req)
 {
     switch (req->cmd) {
     case CART_CMD_QUERY:       exec_query(); break;
+    case CART_CMD_STEPLOSS_QUERY: exec_steploss_query(); break;
     case CART_CMD_CONFIRM_LEFT: exec_confirm_left(); break;
     case CART_CMD_CALIB_QUERY: exec_calib_query(); break;
     case CART_CMD_MARK_LEFT:   exec_mark_left(); break;
@@ -570,6 +636,36 @@ static void settle_fault(void)
     }
     xSemaphoreGive(s_output_lock);
     if (completed) push_mode(CM_FAULT, reason);
+}
+
+/* 只保存触发拍。E来自真正用于比较的快照，C是另一次非同步读取。 */
+static bool supervise_step_loss(const fw_params_t *p)
+{
+    uint32_t run;
+    portENTER_CRITICAL(&s_lock);
+    run = s_run_id;
+    portEXIT_CRITICAL(&s_lock);
+    cartpos_supervision_t encoder = {0};
+    bool metadata = cartpos_get_supervision(&encoder);
+    long e_um = metadata ? (long)encoder.position_um : (long)cartpos_position_um();
+    long sensor_e = e_um;
+#ifdef CONFIG_CARTFSM_TEST_HOOKS
+    e_um = consume_test_bias(e_um);
+#endif
+    int64_t c_begin = esp_timer_get_time();
+    long c_um = (long)cartaxis_cmd_position_um();
+    int64_t c_end = esp_timer_get_time();
+    long threshold = p->step_loss_um;
+    if (!cm_step_loss(e_um, c_um, threshold)) return false;
+    cartfsm_step_loss_diag_t candidate = {
+        .metadata_available = metadata, .run_at_compare = run,
+        .encoder = encoder, .e_sensor_um = sensor_e, .e_compared_um = e_um,
+        .c_um = c_um, .error_um = (int64_t)e_um - (int64_t)c_um,
+        .threshold_um = threshold, .c_begin_us = c_begin, .c_end_us = c_end,
+        .t_compare_us = esp_timer_get_time(),
+    };
+    enter_fault_record(CR_STEP_LOSS, &candidate);
+    return true;
 }
 
 /* ---- 监督任务（1 kHz，CPU1） ---- */
@@ -609,13 +705,8 @@ static void fsm_task(void *arg)
                 /* 丢步判定：µm 域 |E−C|（流程自测可注入 E 偏置）。
                  * 运行中堵转由它捕获；回零后抵挡块静止属正常——
                  * C 不前进、D 不增长，无误报 */
-                long e_um = (long)cartpos_position_um();
-#ifdef CONFIG_CARTFSM_TEST_HOOKS
-                e_um = consume_test_bias(e_um);
-#endif
-                long c_um = (long)cartaxis_cmd_position_um();
-                if (cm_step_loss(e_um, c_um, p->step_loss_um)) {
-                    enter_fault(CR_STEP_LOSS);
+                if (supervise_step_loss(p)) {
+                    /* 故障已按原路径提交；证据仅在被接受时锁存。 */
                 } else {
                     /* 软限位持续钳制（运行中收紧立即生效） */
                     supervise_soft_limit(p);
