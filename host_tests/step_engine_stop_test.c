@@ -32,5 +32,20 @@ int main(void) {
     step_engine_vel_target(65536);
     assert(!s_stopped && s_v_q16>0 && starts>start);
     assert(!step_engine_try_stop_at_rest());
+    /* 最高目标频率：启动、正负方向、零和超大输入都走同一公开入口。 */
+    step_engine_stop();
+    step_engine_vel_target(INT64_MAX);
+    assert(s_target_q16 == 50000ULL * 65536 && s_target_dir);
+    assert(s_v_q16 <= 50000ULL * 65536);
+    step_engine_vel_target(INT64_MIN);
+    assert(s_target_q16 == 50000ULL * 65536 && !s_target_dir);
+    step_engine_vel_target(50000LL * 65536);
+    assert(s_target_q16 == 50000ULL * 65536 && s_target_dir);
+    step_engine_vel_target(50000LL * 65536 + 1);
+    assert(s_target_q16 == 50000ULL * 65536);
+    step_engine_vel_target(-49999LL * 65536);
+    assert(s_target_q16 == 49999ULL * 65536 && !s_target_dir);
+    step_engine_vel_target(0);
+    assert(s_target_q16 == 0);
     puts("step_engine_stop: all assertions passed");
 }
