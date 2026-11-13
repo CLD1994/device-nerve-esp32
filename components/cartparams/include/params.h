@@ -58,6 +58,9 @@ const char *fw_params_name(int idx);
  */
 long fw_params_value(int idx);
 
+/** 注册表允许的最大值；索引无效返回 0。 */
+long fw_params_max_value(int idx);
+
 /** 无副作用的范围校验；参数值注册表是唯一范围来源。 */
 bool fw_params_valid(int idx, long value);
 /** 两标记间有效行程（µm）。 */

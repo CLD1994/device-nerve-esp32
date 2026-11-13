@@ -62,6 +62,7 @@ typedef struct magnetic_encoder_inst_s {
     magnetic_encoder_tracker_t   tracker;   /* 多圈累计（首样本种子） */
     int64_t                      pos_counts;
     int64_t                      sampled_at_us;
+    int64_t                      continuous_gap_us;
     uint64_t                     sample_seq;
     uint64_t                     failure_seq;
     uint64_t                     continuity_seq;
@@ -69,6 +70,8 @@ typedef struct magnetic_encoder_inst_s {
     bool                         last_attempt_ok;
     magnetic_encoder_vel_win_t   vel;       /* 16 ms 速度窗 */
     int32_t                      vel_counts_per_s;
+    int64_t                      velocity_span_us;
+    bool                         velocity_valid;
     uint32_t                     last_raw;  /* 最新单圈绝对角（类别契约与器件自测面） */
     uint8_t                      status;    /* 最新 STATUS（器件自测面） */
     magnetic_encoder_fail_t      fail;      /* 失败计数与健康位 */

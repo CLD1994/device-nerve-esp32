@@ -11,6 +11,8 @@
 #include "poleang.h"
 
 #include <math.h>
+#include <stddef.h>
+#include <limits.h>
 
 #include "magnetic_encoder.h"
 #include "params.h"
@@ -59,4 +61,24 @@ int32_t poleang_vth_mrad_s(void)
 bool poleang_is_ok(void)
 {
     return magnetic_encoder_is_ok(s_enc);
+}
+
+
+bool poleang_get_measurement(poleang_measurement_t *out)
+{
+    magnetic_encoder_sample_t sample;
+    if (out == NULL || !magnetic_encoder_get_sample(s_enc, &sample)
+        || !sample.valid || !sample.ok || !sample.last_attempt_ok || !sample.velocity_valid) return false;
+    int32_t cpr = magnetic_encoder_counts_per_rev(s_enc);
+    if (cpr <= 0 || sample.raw_counts >= (uint32_t)cpr) return false;
+    const fw_params_t *p = fw_params();
+    int64_t angle = (int64_t)((uint64_t)sample.raw_counts * POLEANG_2PI_URAD / (uint64_t)cpr)
+                    - p->pole_zero_urad;
+    while (angle > POLEANG_PI_URAD) angle -= POLEANG_2PI_URAD;
+    while (angle < -POLEANG_PI_URAD) angle += POLEANG_2PI_URAD;
+    double v = (double)sample.velocity_counts_per_s * POLEANG_2PI_URAD / cpr / 1000.0;
+    if (p->pole_inv) { angle = -angle; v = -v; }
+    if (!isfinite(v) || v < INT32_MIN || v > INT32_MAX) return false;
+    *out = (poleang_measurement_t){ .theta_urad = (int32_t)angle, .vth_mrad_s = (int32_t)llround(v) };
+    return true;
 }

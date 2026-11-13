@@ -37,17 +37,29 @@ static bool publish_sample(magnetic_encoder_inst_t *inst,
     portENTER_CRITICAL(&inst->lock);
     bool recovered = magnetic_encoder_fail_step(&inst->fail, true);
 
-    /* 多圈累计（首样本种子）+ 速度窗推进，一并原子发布 */
-    int64_t pos = magnetic_encoder_tracker_update(
-        &inst->tracker, raw, inst->impl->counts_per_rev(inst->impl_ctx));
-    inst->pos_counts      = pos;
-    inst->last_raw        = raw;
-    inst->status          = status;
-    inst->vel_counts_per_s = magnetic_encoder_vel_push(&inst->vel, pos);
-    if (inst->has_sample &&
-        now_us - inst->sampled_at_us > MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US) {
+    /* 空窗不能通过最短角差猜测跨过了多少整圈。保留累计基准，但用
+     * 当前 raw 重新播种；连续性序列通知位置解释层必须重新定位。 */
+    bool broken = inst->has_sample && (now_us <= inst->sampled_at_us ||
+        now_us - inst->sampled_at_us > inst->continuous_gap_us);
+    int64_t pos;
+    if (broken) {
         inst->continuity_seq++;
+        int32_t cpr = inst->impl->counts_per_rev(inst->impl_ctx);
+        inst->tracker.last_raw = raw % (uint32_t)(cpr > 0 ? cpr : 1);
+        magnetic_encoder_vel_win_reset(&inst->vel);
+        pos = inst->pos_counts;
+    } else {
+        pos = magnetic_encoder_tracker_update(
+            &inst->tracker, raw, inst->impl->counts_per_rev(inst->impl_ctx));
     }
+    inst->pos_counts = pos;
+    inst->last_raw = raw;
+    inst->status = status;
+    magnetic_encoder_velocity_t velocity = magnetic_encoder_vel_push_at(
+        &inst->vel, pos, now_us, inst->continuous_gap_us);
+    inst->velocity_valid = velocity.valid;
+    inst->velocity_span_us = velocity.span_us;
+    if (velocity.valid) inst->vel_counts_per_s = velocity.counts_per_s;
     inst->sampled_at_us = now_us;
     inst->sample_seq++;
     inst->has_sample = true;
@@ -65,6 +77,9 @@ static bool fail_step_locked(magnetic_encoder_inst_t *inst, bool read_ok)
     inst->last_attempt_ok = read_ok;
     if (!read_ok) {
         inst->failure_seq++;
+        magnetic_encoder_vel_win_reset(&inst->vel);
+        inst->velocity_valid = false;
+        inst->velocity_span_us = 0;
     }
     portEXIT_CRITICAL(&inst->lock);
     return event;
@@ -173,6 +188,22 @@ bool magnetic_encoder_inst_is_ok(magnetic_encoder_handle_t enc)
     return ok;
 }
 
+static bool set_continuous_gap_us(magnetic_encoder_handle_t enc, int64_t gap_us)
+{
+    if (!enc || gap_us <= 0 || gap_us > MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US)
+        return false;
+    magnetic_encoder_inst_t *inst = (magnetic_encoder_inst_t *)enc;
+    portENTER_CRITICAL(&inst->lock);
+    if (gap_us != inst->continuous_gap_us) {
+        inst->continuous_gap_us = gap_us;
+        inst->continuity_seq++;
+        magnetic_encoder_vel_win_reset(&inst->vel);
+        inst->velocity_valid = false;
+    }
+    portEXIT_CRITICAL(&inst->lock);
+    return true;
+}
+
 bool magnetic_encoder_inst_get_sample(magnetic_encoder_handle_t enc,
                                       magnetic_encoder_sample_t *out)
 {
@@ -181,7 +212,18 @@ bool magnetic_encoder_inst_get_sample(magnetic_encoder_handle_t enc,
     }
     magnetic_encoder_inst_t *inst = (magnetic_encoder_inst_t *)enc;
     portENTER_CRITICAL(&inst->lock);
+    /* 在快照锁内读时间，不能用获取锁之前的 now 判断更新后的样本。 */
+    int64_t now_us = esp_timer_get_time();
+    bool fresh = inst->has_sample && inst->sampled_at_us >= 0
+        && now_us >= inst->sampled_at_us
+        && now_us - inst->sampled_at_us <= inst->continuous_gap_us;
     *out = (magnetic_encoder_sample_t){
+        .continuous_gap_us = inst->continuous_gap_us,
+        .raw_counts = inst->last_raw,
+        .status = inst->status,
+        .velocity_counts_per_s = inst->vel_counts_per_s,
+        .velocity_span_us = inst->velocity_span_us,
+        .velocity_valid = inst->velocity_valid && fresh && inst->last_attempt_ok,
         .position_counts = inst->pos_counts,
         .sampled_at_us = inst->sampled_at_us,
         .sample_seq = inst->sample_seq,
@@ -219,7 +261,9 @@ esp_err_t magnetic_encoder_skeleton_start(magnetic_encoder_inst_t *inst,
         .velocity_counts_per_s = magnetic_encoder_inst_velocity_counts_per_s,
         .is_ok                 = magnetic_encoder_inst_is_ok,
         .get_sample            = magnetic_encoder_inst_get_sample,
+        .set_continuous_gap_us = set_continuous_gap_us,
     };
+    inst->continuous_gap_us = MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US;
     inst->impl     = impl;
     inst->impl_ctx = impl_ctx;
     inst->name     = name;

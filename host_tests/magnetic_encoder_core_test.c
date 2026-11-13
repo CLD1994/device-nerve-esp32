@@ -3,8 +3,8 @@
  * 16 ms 速度窗）
  *
  * 失败语义锚定契约：连续 ≥10 次读失败 NOT OK，一次成功恢复；
- * 速度语义锚定契约：17 样本窗位置差 × 62.5（量子 62.5 counts/s），
- * 窗口未满为 0。
+ * 本组速度样例均为严格 1 ms 间隔，保留原数值回归；有效性与
+ * 非等间隔语义由 magnetic_encoder_timed_velocity_test.c 验证。
  *
  * 退出码 = 失败断言数（0 = 全过）。
  */
@@ -25,6 +25,13 @@ static int s_run = 0;
                __func__, __LINE__, #expr, _a, _e); \
     } \
 } while (0)
+
+/* 原有等间隔样例使用显式 1 ms 时钟；生产只调用带时间的接口。 */
+static int32_t magnetic_encoder_vel_push(magnetic_encoder_vel_win_t *w, int64_t pos)
+{
+    int64_t t = w->fill ? w->time_us[w->head] + 1000 : 0;
+    return magnetic_encoder_vel_push_at(w, pos, t, 20000).counts_per_s;
+}
 
 /* ================= 失败计数状态机 ================= */
 

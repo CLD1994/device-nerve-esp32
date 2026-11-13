@@ -26,11 +26,14 @@ import sys
 import time
 
 import serial
+from velocity_validity import VelocityValidity
 
 
 class Rig:
     def __init__(self, port, baud=460800, timeout=0.2):
-        self.ser = serial.Serial(port, baud, timeout=timeout)
+        self.ser = serial.Serial(port, baud, timeout=timeout, write_timeout=.02)
+        self.velocity_validity = VelocityValidity()
+        self.state_received_at = None
         self.last_state = None     # 首帧合法 STATE 到来前尚无遥测
         self.last_mode = None      # (mode, reason)
         self.last_reply = None     # (kind, name, value)
@@ -56,8 +59,15 @@ class Rig:
         self.ser.close()
 
     def send_line(self, line):
-        self.ser.write((line + "\n").encode("ascii"))
-        self.ser.flush()
+        self.velocity_validity.command(line)
+        if line.startswith("VEL ") and line.split()[1:] != ["0"]:
+            if self.state_received_at is None or time.monotonic() - self.state_received_at > .1:
+                self.velocity_validity.failed = True
+                raise RuntimeError("没有最近收到的状态；禁止非零速度")
+        data = (line + "\n").encode("ascii")
+        if self.ser.write(data) != len(data):
+            self.velocity_validity.failed = True
+            raise RuntimeError("串口写入不完整")
 
     def pump(self, duration):
         """读串口 duration 秒，解析 STATE/MODE/OK/ERR，统计 UNKNOWN。"""
@@ -73,28 +83,45 @@ class Rig:
                 if not line:
                     continue
                 self._dispatch(line)
+                if self.velocity_validity.active and self.velocity_validity.failed:
+                    raise RuntimeError("活动会话收到失效或损坏数据；停止运动")
+
+    def _unknown(self, line):
+        self.unknown_count += 1
+        if self.velocity_validity.active:
+            self.velocity_validity.failed = True
+            self.last_state = None
+            self.state_received_at = None
+            # 交由运动门禁中止；在零速请求前不得阻塞于stdout。
+        else:
+            print("[UNKNOWN] %r" % line)
 
     def _dispatch(self, line):
+        if line.split()[:1] == ["VEL_VALID"]:
+            if not self.velocity_validity.update(line.split()):
+                self.last_state = None
+                self.state_received_at = None
+            return
         if line.startswith("STATE "):
             parts = line.split()
             if len(parts) == 5:
                 try:
                     [int(p) for p in parts[1:]]
                     self.state_count += 1
-                    self.last_state = parts[1:]
+                    if self.velocity_validity.received_at is None or self.velocity_validity.ready():
+                        self.last_state = parts[1:]
+                        self.state_received_at = time.monotonic()
                     return
                 except ValueError:
                     pass
-            self.unknown_count += 1
-            print("[UNKNOWN] %r" % line)
+            self._unknown(line)
         elif line.startswith("MODE "):
             parts = line.split()
             if len(parts) == 3:
                 self.last_mode = (parts[1], parts[2])
                 print("[MODE] %s %s" % self.last_mode)
             else:
-                self.unknown_count += 1
-                print("[UNKNOWN] %r" % line)
+                self._unknown(line)
         elif line.startswith("OK "):
             parts = line.split()
             if len(parts) == 3:
@@ -105,14 +132,12 @@ class Rig:
                     return
                 except ValueError:
                     pass
-            self.unknown_count += 1
-            print("[UNKNOWN] %r" % line)
+            self._unknown(line)
         elif line.startswith("ERR "):
             self.last_reply = ("ERR", line[4:], None)
             print("[ERR] %s" % line[4:])
         else:
-            self.unknown_count += 1
-            print("[UNKNOWN] %r" % line)
+            self._unknown(line)
 
     def query(self):
         self.send_line("QUERY")
@@ -202,6 +227,7 @@ def cmd_calib_status(rig, args):
 
 
 def cmd_enable(rig, args):
+    rig.query()  # 等待固件的有效性心跳；未知时不使能。
     rig.send_line("ENABLE")
     m = rig.wait_mode("READY", args.timeout)
     if m is None:
@@ -253,7 +279,8 @@ def cmd_state(rig, args):
     xs, ths = [], []
     while time.time() - t0 < args.secs:
         rig.pump(0.2)
-        if rig.last_state:
+        if (rig.last_state and rig.state_received_at is not None
+                and time.monotonic() - rig.state_received_at <= .1):
             x, th = int(rig.last_state[0]), int(rig.last_state[1])
             xs.append(x)
             ths.append(th)
@@ -352,6 +379,17 @@ def main():
             "reset": cmd_reset, "disable": cmd_disable,
         }
         rc = table[args.cmd](rig, args)
+    except (RuntimeError, OSError, KeyboardInterrupt) as exc:
+        stop_error = None
+        if rig.velocity_validity.active:
+            try:
+                rig.send_line("VEL 0")
+            except (OSError, RuntimeError) as error:
+                stop_error = error
+        print("命令中止：%s" % exc)
+        if stop_error is not None:
+            print("零速请求失败：%s；请使用独立断电。" % stop_error)
+        rc = 1
     finally:
         rig.close()
     sys.exit(rc)
