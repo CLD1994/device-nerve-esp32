@@ -44,6 +44,12 @@ void cartproto_send_mode(const char*m,const char*r) { snprintf(reply,sizeof(repl
 BaseType_t xTaskCreatePinnedToCore(void(*fn)(void*),const char*n,unsigned s,void*a,unsigned p,void*h,unsigned c) { (void)fn;(void)n;(void)s;(void)a;(void)p;(void)h;(void)c;return pdPASS; }
 TickType_t xTaskGetTickCount(void) { return 0; }
 void vTaskDelayUntil(TickType_t*p,TickType_t t) { (void)p;(void)t; }
+static int64_t diag_clock;
+int64_t esp_timer_get_time(void) { return ++diag_clock; }
+bool cartpos_get_supervision(cartpos_supervision_t *out) {
+    *out=(cartpos_supervision_t){.position_um=cartpos_position_um()}; return true;
+}
+void cartproto_send_raw(const char *data,int len) { (void)data;(void)len; }
 #include "../components/cartfsm/cartfsm.c"
 static void reset(void) { require_lock=false;s_started=false;s_mode=CM_DISABLED;s_reason=CR_NONE;s_calib=CAL_DONE;s_calib_l_um=850000;s_last_cmd_v=0;enabled=false;power=false;fail_at_enable=false;stops=0;velocity=0;position=0;reply[0]=0;assert(cartfsm_start()==ESP_OK);s_calib=CAL_DONE;referenced=true;require_lock=true; }
 int main(void) {

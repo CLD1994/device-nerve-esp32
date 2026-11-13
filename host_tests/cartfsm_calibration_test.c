@@ -50,6 +50,24 @@ void cartproto_register_exec(cartproto_exec_cb_t cb) { dispatch=cb; }
 void cartproto_send_ok(const char *name,long value) { snprintf(reply,sizeof(reply),"OK %s",name);reply_value=value; }
 void cartproto_send_err(const char *name) { snprintf(reply,sizeof(reply),"ERR %s",name); }
 void cartproto_send_mode(const char *mode,const char *reason) { (void)reason;snprintf(reply,sizeof(reply),"MODE %s",mode); }
+static int64_t diag_clock;
+static bool diag_snapshot_available=true, diag_use_snapshot;
+static cartpos_supervision_t diag_snapshot;
+static char diag_output[8192];
+static size_t diag_output_len;
+static unsigned diag_raw_sends;
+int64_t esp_timer_get_time(void) { return ++diag_clock; }
+bool cartpos_get_supervision(cartpos_supervision_t *out) {
+    if (!diag_snapshot_available) return false;
+    *out=diag_use_snapshot ? diag_snapshot
+        : (cartpos_supervision_t){.position_um=cartpos_position_um()}; return true;
+}
+void cartproto_send_raw(const char *data,int len) {
+    assert(power_test_lock_depth==0); /* 格式化后的发送不持有输出锁。 */
+    assert(len>0 && diag_output_len+(size_t)len<sizeof(diag_output));
+    memcpy(diag_output+diag_output_len,data,(size_t)len);
+    diag_output_len+=(size_t)len; diag_output[diag_output_len]=0; diag_raw_sends++;
+}
 #include "../components/cartfsm/cartfsm.c"
 static void boot(void) {
     s_started=false;s_mode=CM_DISABLED;s_reason=CR_NONE;s_calib=CAL_NONE;
@@ -112,4 +130,5 @@ int main(void) {
     assert(s_calib==CAL_NONE && disk.length_um==0 && !strcmp(reply,"ERR MARK_LEFT"));
     boot();assert(s_calib==CAL_NONE);cmd(CART_CMD_CONFIRM_LEFT);assert(!referenced);
     puts("cartfsm calibration: all assertions passed");
+    return 0;
 }

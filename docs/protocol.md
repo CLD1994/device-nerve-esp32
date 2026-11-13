@@ -226,3 +226,11 @@ VEL_VALID <cart> <pole>
 `max_accel_run.py` 的 `TestRig._dispatch` 仍可能先写原始日志文件，再处理协议行。
 磁盘或系统调度阻塞会延迟它对异常的反应，不能将此次有效性门禁解释成所有工具都具备
 无阻塞实时停机保证，也不能用它代替固件看门狗、物理隔离或现场独立断电。
+
+### STEP_LOSS只读触发证据（实验）
+
+`STEPLOSS?`在DISABLED或FAULT已停稳时导出最后一条被接受的STEP_LOSS证据，
+READY或仍减速时回`ERR STEPLOSS_BUSY`，无记录回`ERR STEPLOSS_NONE`。
+应答采用`SL1 <event_id> <field> <integer>`逐字段输出并以`END 1`结束。
+记录是设备固定RAM中的触发拍，不是MODE输出时的状态，不改变原故障判断。
+字段、工具、生命周期及非同步限制见[STEP_LOSS诊断](step-loss-diagnostic.md)。
