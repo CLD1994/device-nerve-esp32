@@ -21,6 +21,7 @@ cartpole_host — cartpole 固件串口联调工具（PC 直连 ESP32-S3 UART1/C
 """
 
 import argparse
+import math
 import sys
 import time
 
@@ -248,7 +249,7 @@ def cmd_state(rig, args):
             ths.append(th)
     dt = time.time() - t0
     rate = rig.state_count / dt
-    print("时长 %.1f s，STATE %d 行 → %.1f Hz（目标 200）" %
+    print("时长 %.1f s，STATE %d 行 → %.1f Hz" %
           (dt, rig.state_count, rate))
     print("UNKNOWN 行：%d（要求 0）" % rig.unknown_count)
     if xs:
@@ -259,7 +260,14 @@ def cmd_state(rig, args):
         print("theta_urad ∈ [%d, %d]（θ ∈ [%.2f°, %.2f°]）" %
               (min(ths), max(ths),
                min(ths) / 17453.3, max(ths) / 17453.3))
-    ok = 199.0 <= rate <= 201.0 and rig.unknown_count == 0
+    expected = getattr(args, "expected_hz", None)
+    rate_ok = expected is None or abs(rate - expected) <= 1.0
+    if expected is not None:
+        print("目标 %.1f Hz（容差 ±1 Hz）：%s" %
+              (expected, "通过" if rate_ok else "未通过"))
+    else:
+        print("未指定目标频率，仅检查有数据且 UNKNOWN 为 0。")
+    ok = rig.state_count > 0 and rate_ok and rig.unknown_count == 0
     return 0 if ok else 1
 
 
@@ -310,11 +318,18 @@ def main():
     p = sub.add_parser("config"); p.add_argument("name"); p.add_argument("value", type=int)
     sub.add_parser("dump")
     p = sub.add_parser("state"); p.add_argument("--secs", type=float, default=10.0)
+    p.add_argument("--expected-hz", type=float, help="预期 STATE 频率，容差 ±1 Hz；省略时仅报告实测频率")
     sub.add_parser("wdt-test")
     sub.add_parser("console")
     sub.add_parser("reset")
 
     args = ap.parse_args()
+    if args.cmd == "state":
+        if not math.isfinite(args.secs) or args.secs <= 0:
+            ap.error("--secs 必须是正的有限秒数")
+        if args.expected_hz is not None and (
+                not math.isfinite(args.expected_hz) or args.expected_hz <= 0):
+            ap.error("--expected-hz 必须是正的有限频率")
     rig = Rig(args.port, args.baud)
     try:
         table = {

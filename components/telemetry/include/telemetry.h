@@ -1,8 +1,8 @@
 /*
- * telemetry — 200 Hz STATE 状态流（protocol.md §数据面）
+ * telemetry — 500 Hz STATE 状态流（protocol.md §数据面）
  *
  * 所有固件模式（DISABLED/READY/FAULT）无条件发送——数据面
- * 常开是契约。组帧经 cartproto_send_raw 上 UART1（TX 互斥共用）。
+ * 常开是契约。组帧经 cartproto_send_raw 上 UART0（TX 互斥共用）。
  *
  * 字段来源：x_um ← cartpos_position_um()（含回零原点）；theta_urad ←
  * poleang_theta_urad()（域实现内应用标定）；vx_mm_s ← cartpos
@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 /**
- * @brief 创建 200 Hz 组帧任务（CPU1、优先级 2、vTaskDelayUntil 5 ms）。
+ * @brief 创建 500 Hz 组帧任务（CPU1、优先级 2、vTaskDelayUntil 2 ms）。
  * @return ESP_OK 或任务创建错误。
  */
 esp_err_t telemetry_start(void);

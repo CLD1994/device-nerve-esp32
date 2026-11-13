@@ -44,6 +44,49 @@ class RigStateTest(unittest.TestCase):
         rig.ser.write.assert_not_called()
 
 
+class StateRateTest(unittest.TestCase):
+    def run_state(self, count, expected, unknown=0):
+        rig = SimpleNamespace(last_state=None, state_count=0, unknown_count=0)
+        def pump(duration):
+            rig.state_count = count
+            rig.unknown_count = unknown
+        rig.pump = pump
+        with patch.object(host.time, "time", side_effect=[0.0, 0.0, 1.0, 1.0]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            return host.cmd_state(rig, SimpleNamespace(secs=1.0, expected_hz=expected))
+
+    def test_explicit_rate_accepts_500_hz(self):
+        self.assertEqual(self.run_state(500, 500), 0)
+
+    def test_explicit_rate_rejects_old_firmware_rate(self):
+        self.assertEqual(self.run_state(200, 500), 1)
+
+    def test_legacy_rate_can_be_checked_explicitly(self):
+        self.assertEqual(self.run_state(200, 200), 0)
+
+    def test_no_expected_rate_only_checks_data_quality(self):
+        self.assertEqual(self.run_state(500, None), 0)
+        self.assertEqual(self.run_state(0, None), 1)
+        self.assertEqual(self.run_state(500, None, unknown=1), 1)
+
+    def test_invalid_cli_measurement_options_do_not_open_port(self):
+        for option, value in [("--secs", "0"), ("--secs", "nan"),
+                              ("--expected-hz", "0"), ("--expected-hz", "inf")]:
+            with self.subTest(option=option, value=value), \
+                    patch.object(host.sys, "argv", ["tool", "--port", "unused", "state", option, value]), \
+                    patch.object(host, "Rig") as rig, \
+                    contextlib.redirect_stderr(io.StringIO()), \
+                    self.assertRaises(SystemExit) as result:
+                host.main()
+            self.assertEqual(result.exception.code, 2)
+            rig.assert_not_called()
+
+    def test_rate_tolerance_is_one_hz(self):
+        self.assertEqual(self.run_state(499, 500), 0)
+        self.assertEqual(self.run_state(501, 500), 0)
+        self.assertEqual(self.run_state(498, 500), 1)
+
+
 class CalibrationCommandTest(unittest.TestCase):
     def rig(self, response):
         rig = SimpleNamespace(last_reply=("OK", "CONFIRM_LEFT", -1), replies={})

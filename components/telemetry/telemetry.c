@@ -1,5 +1,5 @@
 /*
- * telemetry — 200 Hz STATE 流实现
+ * telemetry — 500 Hz STATE 流实现
  */
 
 #include "telemetry.h"
@@ -8,6 +8,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "telemetry_timing.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
 
@@ -17,7 +18,6 @@
 
 static const char *TAG = "telemetry";
 
-#define TELEMETRY_PERIOD_MS   5      /* 200 Hz */
 #define TELEMETRY_TASK_PRIO   2
 #define TELEMETRY_TASK_CORE   1
 #define TELEMETRY_TASK_STACK  3072
@@ -29,8 +29,8 @@ static void telemetry_task(void *arg)
     TickType_t last_wake = xTaskGetTickCount();
     char buf[64];
 
-    ESP_LOGI(TAG, "STATE 流任务已启动：200 Hz，优先级 %d，CPU%d",
-             TELEMETRY_TASK_PRIO, TELEMETRY_TASK_CORE);
+    ESP_LOGI(TAG, "STATE 流任务已启动：%d Hz，优先级 %d，CPU%d",
+             TELEMETRY_RATE_HZ, TELEMETRY_TASK_PRIO, TELEMETRY_TASK_CORE);
 
     bool wdt_ok = (esp_task_wdt_add(NULL) == ESP_OK);
     if (!wdt_ok) {
@@ -57,7 +57,7 @@ static void telemetry_task(void *arg)
         if (wdt_ok) {
             esp_task_wdt_reset();
         }
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(TELEMETRY_PERIOD_MS));
+        vTaskDelayUntil(&last_wake, TELEMETRY_PERIOD_TICKS);
     }
 }
 
