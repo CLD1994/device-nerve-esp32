@@ -8,7 +8,7 @@ PC 联调机）通过串口以 **protocol.md 线协议** 驱动：200 Hz 状态�
 
 > **硬件已改版（2026-10-17，见 [docs/hardware.md](docs/hardware.md)）**：
 > 小车编码器 AS5600→板载 MT6835、摆角改外接 MT6835、协议通道 UART1→UART0、
-> 烧录日志切原生 USB。固件适配已完成（双 SPI 编码器骨架多实例、通道迁移、
+> 烧录切原生 USB；当前 UART1 日志配置见硬件文档 §5。固件适配已完成（双 SPI 编码器骨架多实例、通道迁移、
 > vbus/LED/按键/CH224Q 调档）；上板回归按 hardware.md 检查清单执行（待办）。
 
 **线协议唯一权威：本仓库之外的项目主仓库
@@ -23,10 +23,11 @@ PC 联调机）通过串口以 **protocol.md 线协议** 驱动：200 Hz 状态�
 | 步进驱动 | TMC2209 | EN=21（低有效）、STEP=5、DIR=6、UART TX=17/RX=18 | 42 步进电机驱动，单线 UART 配置 |
 | 小车编码器 | MT6835（板载，21 bit） | SPI SCK=12、MOSI=11、MISO=13、CS=10 | 多圈 → x_um 遥测与丢步判定（2026-10-17 改版接替 AS5600） |
 | 摆角编码器 | MT6835（外接，21 bit） | SPI SCK=47、MOSI=48、MISO=38、CS=14 | ±π µrad 摆角与角速度遥测 |
-| 主机通道 | UART0 | TX=43 / RX=44 @460800 8N1 | protocol.md 线协议（飞线直连；CH343P 已移除） |
+| 主机通道 | UART0 | TX=43 / RX=44，当前真机 @1000000 8N1 | protocol.md 线协议（飞线直连；CH343P 已移除） |
 | 供电 | CH224Q PD | [供电配置、I2C 与分压接线](docs/hardware.md#1-usb-c-拓扑与-pd-供电) | USB-PD 协商供电与 VBUS 回读 |
 | 按键/LED | 3 键 + 1 LED | but=7/2/1、LED=15 | 按键驱动层读取；LED 1Hz 心跳（行为语义待定义） |
-| 烧录/日志 | 原生 USB | D−=19 / D+=20 | USB-Serial/JTAG |
+| 烧录 | 原生 USB | D−=19 / D+=20 | USB-Serial/JTAG |
+| 日志 | UART1（可配置） | TX=41 / RX=42 | 接线和配置见 [硬件文档 §5](docs/hardware.md#5-上位机通道飞线)；仓库默认仍为 USB 日志 |
 
 机械：2GT 20T 同步带，40 mm/圈；细分 8（settings 微步参数，NVS
 namespace `cart`）→ 1600 steps/圈 = 40 steps/mm = 25 µm/step。
@@ -86,8 +87,11 @@ telemetry 组帧（prio 2）。全部订阅任务看门狗。
 ```powershell
 . C:\esp\v6.1\esp-idf\export.ps1
 idf.py -B build build                    # 正式固件（不含任何测试代码）
-idf.py -B build flash monitor            # 烧录 + 日志
+idf.py -B build flash                    # 完整烧录
 ```
+
+日志切到 UART1 后，烧录口与日志口须分别使用；配置和监听命令见
+[硬件文档 §5](docs/hardware.md#5-上位机通道飞线)。
 
 ### 测试固件（独立测试工程，官方 unit_test 模式）
 
