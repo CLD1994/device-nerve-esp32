@@ -23,6 +23,7 @@
 #include "telemetry.h"
 #include "cartproto.h"
 #include "cartfsm.h"
+#include "current_1200_experiment.h"
 
 static motor_handle_t s_mot;   /* 运行/保持电流中转用（app_main 单次启动） */
 
@@ -30,6 +31,8 @@ static void on_driver_settings(int idx, float new_value)
 {
     (void)new_value;
     if (idx == SET_RUN_MA || idx == SET_HOLD_MA) {
+        ESP_LOGW("app_main", "电流settings变更：按配置请求run=%d hold=%d mA；不再沿用本次启动1200mA覆盖",
+                 settings_run_current_ma(), settings_hold_current_ma());
         esp_err_t err = motor_set_current(s_mot, settings_run_current_ma(),
                                           settings_hold_current_ma());
         if (err != ESP_OK) {
@@ -67,6 +70,18 @@ void app_main(void)
         ESP_ERROR_CHECK(magnetic_encoder_mt6835_init(&pcfg, &enc_pole));
         poleang_init(enc_pole);
         motor_handle_t mot;
+        const int stored_run_ma = settings_run_current_ma();
+        const int stored_hold_ma = settings_hold_current_ma();
+        const int experiment_run_ma = current_1200_experiment_run(
+            stored_run_ma, stored_hold_ma, CONFIG_TMC2209_RSENSE);
+        ESP_LOGW("app_main", "1200mA实验：settings run=%d hold=%d；本次初始化请求run=%d hold=%d mA；NVS不变，电机保持禁用",
+                 stored_run_ma, stored_hold_ma, experiment_run_ma, stored_hold_ma);
+        if (experiment_run_ma != stored_run_ma) {
+            ESP_LOGW("app_main", "实验请求量化：VSENSE=0 IRUN_CS=21 IHOLD_CS=6，名义约1215/387mA；不是芯片写入确认或实际电流测量");
+        }
+        if (experiment_run_ma == stored_run_ma) {
+            ESP_LOGW("app_main", "未覆盖：仅800/400mA且Rsense=0.11配置适用；核对实际初始化日志");
+        }
         motor_tmc2209_config_t mcfg = {
             .tmc = {
                 .uart_num = UART_NUM_2,   /* 端口分配：UART0=协议、UART2=TMC、日志=原生 USB */
@@ -77,8 +92,8 @@ void app_main(void)
                 .slave_addr = 0,
                 .r_sense = CONFIG_TMC2209_RSENSE,
                 .init_microstep = settings_microstep(),
-                .init_run_ma = settings_run_current_ma(),
-                .init_hold_ma = settings_hold_current_ma(),
+                .init_run_ma = experiment_run_ma,
+                .init_hold_ma = stored_hold_ma,
             },
             .step_gpio = CONFIG_BSP_STEP_GPIO,
             .dir_gpio = CONFIG_BSP_DIR_GPIO,
