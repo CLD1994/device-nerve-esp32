@@ -17,6 +17,8 @@
 
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_timer.h"
 #include "magnetic_encoder.h"
 #include "magnetic_encoder_tracker.h"
 #include "magnetic_encoder_core.h"
@@ -59,6 +61,13 @@ typedef struct magnetic_encoder_inst_s {
 
     /* 以下状态由 lock 保护，仅采样任务写、契约面读 */
     portMUX_TYPE                 lock;
+    magnetic_encoder_sampling_stats_t sampling_stats;
+#ifdef CONFIG_MAGNETIC_ENCODER_EXPERIMENT_2KHZ
+    TaskHandle_t sample_task;
+    esp_timer_handle_t sample_timer;
+    int64_t timer_epoch_us;
+    int64_t notified_at_us;
+#endif
     magnetic_encoder_tracker_t   tracker;   /* 多圈累计（首样本种子） */
     int64_t                      pos_counts;
     int64_t                      sampled_at_us;

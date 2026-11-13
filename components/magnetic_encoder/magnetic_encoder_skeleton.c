@@ -99,22 +99,85 @@ static void fail_desc_of(const magnetic_encoder_inst_t *inst,
  * 采样任务（1 kHz，CPU1）
  * ================================================================ */
 
+#ifdef CONFIG_MAGNETIC_ENCODER_EXPERIMENT_2KHZ
+/* esp_timer 任务回调只通知，不执行SPI，也不在回调内补采。 */
+static void sampling_tick(void *arg)
+{
+    magnetic_encoder_inst_t *inst = arg;
+    portENTER_CRITICAL(&inst->lock);
+    inst->notified_at_us = esp_timer_get_time();
+    portEXIT_CRITICAL(&inst->lock);
+    xTaskNotifyGive(inst->sample_task);
+}
+#endif
+
+#ifdef CONFIG_MAGNETIC_ENCODER_SAMPLING_STATS
+/* 采样任务只聚合RAM；日志格式化/写出不在采样路径执行。 */
+static void sampling_stats_task(void *arg)
+{
+    magnetic_encoder_inst_t *inst = arg;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        portENTER_CRITICAL(&inst->lock);
+        magnetic_encoder_sampling_stats_t s = inst->sampling_stats;
+        portEXIT_CRITICAL(&inst->lock);
+        ESP_LOGI(inst->name,
+            "采样统计 target=%dHz elapsed_us=%lld attempts=%llu fail=%llu skipped=%llu discarded=%llu "
+            "success_dt_us=[%lld,%lld] read_max_us=%lld work_max_us=%lld "
+            "latest_notify_to_start_max_us=%lld read_overrun=%llu work_overrun=%llu",
+            ME_SAMPLE_RATE_HZ, (long long)(esp_timer_get_time() - s.first_attempt_us),
+            (unsigned long long)s.attempts,
+            (unsigned long long)s.failures, (unsigned long long)s.skipped_cycles,
+            (unsigned long long)s.discarded_notifications,
+            (long long)s.success_interval_min_us, (long long)s.success_interval_max_us,
+            (long long)s.read_max_us, (long long)s.work_max_us, (long long)s.wake_max_us,
+            (unsigned long long)s.read_overruns, (unsigned long long)s.work_overruns);
+    }
+}
+#endif
+
 static void skeleton_task(void *arg)
 {
     magnetic_encoder_inst_t *inst = (magnetic_encoder_inst_t *)arg;
 
+#ifdef CONFIG_MAGNETIC_ENCODER_EXPERIMENT_2KHZ
+    int64_t last_cycle = -1;
+#else
     TickType_t last_wake = xTaskGetTickCount();
+#endif
 
-    bool wdt_ok = (esp_task_wdt_add(NULL) == ESP_OK);
-    if (!wdt_ok) {
-        ESP_LOGW(inst->name, "任务看门狗订阅失败——采样任务不受监控");
-    }
+    bool wdt_ok = false;
+    bool wdt_attempted = false;
 
     while (1) {
+        int64_t notified_at = -1;
+#ifdef CONFIG_MAGNETIC_ENCODER_EXPERIMENT_2KHZ
+        uint32_t notices = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        portENTER_CRITICAL(&inst->lock);
+        notified_at = inst->notified_at_us;
+        if (notices > 1) inst->sampling_stats.discarded_notifications += notices - 1;
+        uint64_t skipped = 0;
+        bool due = magnetic_encoder_sampling_due(inst->timer_epoch_us,
+            esp_timer_get_time(), &last_cycle, &skipped);
+        inst->sampling_stats.skipped_cycles += skipped;
+        if (!due) inst->sampling_stats.discarded_notifications++;
+        portEXIT_CRITICAL(&inst->lock);
+        if (!due) continue;
+#endif
+        /* 2 kHz定时器启动成功并通知后才订阅，启动失败清理等待任务时
+         * 不遗留已删除任务的看门狗订阅。 */
+        if (!wdt_attempted) {
+            wdt_attempted = true;
+            wdt_ok = (esp_task_wdt_add(NULL) == ESP_OK);
+            if (!wdt_ok) ESP_LOGW(inst->name, "任务看门狗订阅失败——采样任务不受监控");
+        }
+        int64_t begin = esp_timer_get_time();
         uint32_t raw = 0;
         uint8_t status = 0;
 
-        if (inst->impl->read_frame(inst->impl_ctx, &raw, &status)) {
+        bool read_ok = inst->impl->read_frame(inst->impl_ctx, &raw, &status);
+        int64_t read_end = esp_timer_get_time();
+        if (read_ok) {
             if (publish_sample(inst, raw, status)) {
                 ESP_LOGI(inst->name, "读取在连续 %d 次失败后恢复",
                          MAGNETIC_ENCODER_FAIL_LIMIT);
@@ -137,8 +200,21 @@ static void skeleton_task(void *arg)
             esp_task_wdt_reset();
         }
 
-        /* Fixed 1 kHz cadence; never busy-wait (watchdog). */
+        int64_t work_end = esp_timer_get_time();
+        portENTER_CRITICAL(&inst->lock);
+        magnetic_encoder_sampling_record(&inst->sampling_stats, begin, read_end,
+            work_end, notified_at, read_ok);
+        portEXIT_CRITICAL(&inst->lock);
+#ifdef CONFIG_MAGNETIC_ENCODER_EXPERIMENT_2KHZ
+        /* 读取期间积压的通知不补采；下一轮只等待后续通知。实际周期编号
+         * 再次去重，防止延迟回调在同一周期反复触发读取。 */
+        uint32_t discarded = ulTaskNotifyTake(pdTRUE, 0);
+        portENTER_CRITICAL(&inst->lock);
+        inst->sampling_stats.discarded_notifications += discarded;
+        portEXIT_CRITICAL(&inst->lock);
+#else
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(ME_SKELETON_PERIOD_MS));
+#endif
     }
 }
 
@@ -287,17 +363,46 @@ esp_err_t magnetic_encoder_skeleton_start(magnetic_encoder_inst_t *inst,
         ESP_LOGW(name, "首读失败（%s）——采样任务将继续重试", desc);
     }
 
+#ifdef CONFIG_MAGNETIC_ENCODER_EXPERIMENT_2KHZ
+    esp_timer_create_args_t timer_args = {
+        .callback = sampling_tick, .arg = inst, .dispatch_method = ESP_TIMER_TASK,
+        .name = name, .skip_unhandled_events = true,
+    };
+    esp_err_t err = esp_timer_create(&timer_args, &inst->sample_timer);
+    if (err != ESP_OK) return err;
+    TaskHandle_t *task_out = &inst->sample_task;
+#else
+    void *task_out = NULL;
+#endif
     BaseType_t ok = xTaskCreatePinnedToCore(skeleton_task, name,
                                             ME_SKELETON_TASK_STACK, inst,
-                                            ME_SKELETON_TASK_PRIO, NULL,
+                                            ME_SKELETON_TASK_PRIO, task_out,
                                             ME_SKELETON_TASK_CORE);
     if (ok != pdPASS) {
+#ifdef CONFIG_MAGNETIC_ENCODER_EXPERIMENT_2KHZ
+        esp_timer_delete(inst->sample_timer);
+#endif
         ESP_LOGE(name, "创建采样任务失败");
         return ESP_ERR_NO_MEM;
     }
+#ifdef CONFIG_MAGNETIC_ENCODER_EXPERIMENT_2KHZ
+    inst->timer_epoch_us = esp_timer_get_time();
+    err = esp_timer_start_periodic(inst->sample_timer, ME_SAMPLE_PERIOD_US);
+    if (err != ESP_OK) {
+        vTaskDelete(inst->sample_task);
+        esp_timer_delete(inst->sample_timer);
+        return err;
+    }
+#endif
+#ifdef CONFIG_MAGNETIC_ENCODER_SAMPLING_STATS
+    if (xTaskCreatePinnedToCore(sampling_stats_task, "encoder_stats", 3072, inst,
+                               1, NULL, ME_SKELETON_TASK_CORE) != pdPASS) {
+        ESP_LOGW(name, "统计导出任务创建失败；采样继续但无周期统计日志");
+    }
+#endif
 
-    ESP_LOGI(name, "采样任务已启动：1 kHz，优先级 %d，CPU%d，%d counts/rev",
-             ME_SKELETON_TASK_PRIO, ME_SKELETON_TASK_CORE,
+    ESP_LOGI(name, "采样任务已启动：目标 %d Hz，优先级 %d，CPU%d，%d counts/rev",
+             ME_SAMPLE_RATE_HZ, ME_SKELETON_TASK_PRIO, ME_SKELETON_TASK_CORE,
              (int)impl->counts_per_rev(impl_ctx));
     return ESP_OK;
 }

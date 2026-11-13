@@ -109,7 +109,7 @@ static inline int64_t magnetic_encoder_position_counts(magnetic_encoder_handle_t
 /**
  * 兼容接口：最后一次有效速度缓存，首个满窗前为 0。失败、预热和过期
  * 不清除缓存，本接口没有有效性保证；控制和停稳判断须使用 get_sample
- * 并检查 velocity_valid。速度取17 个样本的位置差除以实际时间差。
+ * 并检查 velocity_valid。速度取配置窗口的位置差除以实际时间差（1kHz 17点、2kHz 33点）。
  */
 static inline int32_t magnetic_encoder_velocity_counts_per_s(magnetic_encoder_handle_t enc)
 {
