@@ -9,6 +9,9 @@
 #include "poleang.h"
 #include "freertos/task.h"
 int power_test_lock_depth;
+static unsigned tmc_reads;
+static bool tmc_read_ok=true;
+bool tmc2209_read_reg(uint8_t reg,uint32_t *out) { assert(power_test_lock_depth==1);tmc_reads++;*out=reg;return tmc_read_ok; }
 static bool require_lock;
 static bool power, enabled, fail_at_enable;
 static int stops, velocity;
@@ -33,6 +36,7 @@ void cartaxis_set_vel_mm_s(long x) { assert(power_test_lock_depth==1);velocity=x
 void cartaxis_halt(void) { assert(power_test_lock_depth==1);velocity=0; }
 void cartaxis_stop(void) { assert(power_test_lock_depth==1);velocity=0;stops++; }
 bool cartaxis_try_stop_at_rest(void) { assert(power_test_lock_depth==1);if(velocity!=0)return false;velocity=0;stops++;return true; }
+bool cartaxis_peek_at_rest(void) { return true; }
 bool cartaxis_at_rest(void) { return velocity==0; }
 void cartaxis_set_accel_mm_s2(long x) { (void)x; }
 void cartaxis_set_decel_mm_s2(long x) { (void)x; }
@@ -44,6 +48,8 @@ void cartproto_send_mode(const char*m,const char*r) { snprintf(reply,sizeof(repl
 BaseType_t xTaskCreatePinnedToCore(void(*fn)(void*),const char*n,unsigned s,void*a,unsigned p,void*h,unsigned c) { (void)fn;(void)n;(void)s;(void)a;(void)p;(void)h;(void)c;return pdPASS; }
 TickType_t xTaskGetTickCount(void) { return 0; }
 void vTaskDelayUntil(TickType_t*p,TickType_t t) { (void)p;(void)t; }
+int64_t esp_timer_get_time(void) { return 0; }
+void cartproto_send_raw(const char *data,int len) { (void)data;(void)len; }
 #include "../components/cartfsm/cartfsm.c"
 static void reset(void) { require_lock=false;s_started=false;s_mode=CM_DISABLED;s_reason=CR_NONE;s_calib=CAL_DONE;s_calib_l_um=850000;s_last_cmd_v=0;enabled=false;power=false;fail_at_enable=false;stops=0;velocity=0;position=0;reply[0]=0;assert(cartfsm_start()==ESP_OK);s_calib=CAL_DONE;referenced=true;require_lock=true; }
 int main(void) {

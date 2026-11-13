@@ -157,6 +157,9 @@ uint8_t tmc2209_crc8(const uint8_t *data, unsigned len);
  * Uses formula: CS = 32 * sqrt(2) * I_rms * (R_sense + 0.02) / V_fs - 1
  * Automatically picks VSENSE based on current level.
  * Result is clamped to [0, 31].
+ * This single-current helper chooses its own range; do not independently apply
+ * it to run/hold fields sharing one hardware VSENSE. The driver uses the
+ * run-selected range for both fields.
  *
  * @param ma       RMS current in mA.
  * @param r_sense  Sense resistor in ohms.

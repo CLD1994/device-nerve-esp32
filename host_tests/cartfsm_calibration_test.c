@@ -14,6 +14,9 @@ TickType_t xTaskGetTickCount(void) { return 0; }
 void vTaskDelayUntil(TickType_t*p,TickType_t t) { (void)p;(void)t; }
 
 int power_test_lock_depth;
+static unsigned tmc_reads;
+static bool tmc_read_ok=true;
+bool tmc2209_read_reg(uint8_t reg,uint32_t *out) { assert(power_test_lock_depth==1);tmc_reads++;*out=reg;return tmc_read_ok; }
 bool cartpower_ready(void) { return true; }
 static cartcal_record_t disk;
 static esp_err_t load_error, save_error;
@@ -40,6 +43,7 @@ void cartaxis_set_vel_mm_s(long v) { (void)v; }
 void cartaxis_halt(void) { }
 void cartaxis_stop(void) { }
 bool cartaxis_try_stop_at_rest(void) { return true; }
+bool cartaxis_peek_at_rest(void) { return true; }
 bool cartaxis_at_rest(void) { return true; }
 void cartaxis_set_accel_mm_s2(long x) { (void)x; }
 void cartaxis_set_decel_mm_s2(long x) { (void)x; }
@@ -48,6 +52,16 @@ void cartproto_register_exec(cartproto_exec_cb_t cb) { dispatch=cb; }
 void cartproto_send_ok(const char *name,long value) { snprintf(reply,sizeof(reply),"OK %s",name);reply_value=value; }
 void cartproto_send_err(const char *name) { snprintf(reply,sizeof(reply),"ERR %s",name); }
 void cartproto_send_mode(const char *mode,const char *reason) { (void)reason;snprintf(reply,sizeof(reply),"MODE %s",mode); }
+static char diag_output[2048];
+static size_t diag_output_len;
+static int64_t diag_clock;
+int64_t esp_timer_get_time(void) { return ++diag_clock; }
+void cartproto_send_raw(const char *data,int len) {
+ assert(power_test_lock_depth==0);
+ assert(len>0 && diag_output_len+(size_t)len<sizeof(diag_output));
+ memcpy(diag_output+diag_output_len,data,(size_t)len);
+ diag_output_len+=(size_t)len;diag_output[diag_output_len]=0;
+}
 #include "../components/cartfsm/cartfsm.c"
 static void boot(void) {
     s_started=false;s_mode=CM_DISABLED;s_reason=CR_NONE;s_calib=CAL_NONE;
@@ -98,4 +112,5 @@ int main(void) {
     assert(s_calib==CAL_NONE && disk.length_um==0 && !strcmp(reply,"ERR MARK_LEFT"));
     boot();assert(s_calib==CAL_NONE);cmd(CART_CMD_CONFIRM_LEFT);assert(!referenced);
     puts("cartfsm calibration: all assertions passed");
+    return 0;
 }

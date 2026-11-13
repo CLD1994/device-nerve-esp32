@@ -163,7 +163,7 @@ gcc -std=c11 -Wall -Wextra -Werror \
   -Icomponents/cartaxis/include -Icomponents/cartproto/include \
   -Icomponents/poleang/include -Icomponents/motor/include \
   -Icomponents/magnetic_encoder/include -Icomponents/cartcal/include \
-  -Icomponents/settings/include \
+  -Icomponents/settings/include -Icomponents/tmc2209/include \
   host_tests/cartfsm_power_test.c components/cartfsm/cartfsm_core.c \
   components/cartparams/params.c components/cartproto/cartproto_parse.c -o /tmp/cartfsm-power && /tmp/cartfsm-power
 ```

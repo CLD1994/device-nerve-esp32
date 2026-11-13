@@ -183,3 +183,9 @@ ENABLE还要求供电验证有效；否则返回`ERR POWER`，不使能。供电
 速度判断与清目标在引擎锁内原子执行，输出锁防止并发VEL穿过禁用流程；后到VEL在DISABLED下忽略。禁用保留有效位置参考和保存参数，也不清供电失败锁；再次ENABLE仍需供电和参考门禁。
 
 引擎速度为零不证明机械静止。关闭EN会失去保持力，不得把本命令作为对滑行、外力或坠落的安全保证。不可手推制造丢步故障来代替禁用。
+
+## TMC 只读核查
+
+`TMC?` 仅在 `DISABLED` 且软件 STEP 引擎静止时允许，其他状态返回 `ERR TMC_BUSY`。
+返回 `TMC1 NAME VALID RAW BEGIN_US END_US` 五行及 `TMC1 END`，不改变配置或使能。
+字段、静止读数限制及 Windows 使用方式见 [TMC 只读诊断](tmc-readonly.md)。

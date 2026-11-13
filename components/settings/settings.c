@@ -32,7 +32,7 @@ static const param_meta_t s_meta[SETTINGS_COUNT] = {
     [SET_MICROSTEP]  = { "microstep",         8.0f,   true  },  /* 2^n, 1–256 */
     [SET_FULL_STEP]  = { "full_steps_per_rev", 200.0f, true  },  /* ∈{200, 400} */
     [SET_MM_PER_REV] = { "mm_per_rev",        40.0f,  false },  /* (0, 500] */
-    [SET_RUN_MA]     = { "run_current_mA",    800.0f, true  },  /* (0, 2000] */
+    [SET_RUN_MA]     = { "run_current_mA",    1500.0f, true  },  /* (0, 2000] */
     [SET_HOLD_MA]    = { "hold_current_mA",   400.0f, true  },  /* [0, 运行电流] */
 };
 
