@@ -103,33 +103,44 @@ def execute(link, args):
             elif delta >= STOP_UM and not failure:
                 failure.append('正向100mm触发停机')
         link.guard = guard
-        # 从首个非零写入之前开始；写入耗时也占用预算。
-        deadline = link.clock() + WINDOW_S
+        first_frame_deadline = link.clock() + .1
+        deadline = None
+        last_nonzero_start = None
         reached = None
         next_send = 0
         previous = link.states
-        while True:
-            if link.clock() >= deadline:
-                raise Abort('非零窗口截止')
-            link.poll()
+        def check_deadlines():
             now = link.clock()
-            if now >= deadline:
-                raise Abort('非零窗口截止')
+            if deadline is None:
+                if now >= first_frame_deadline:
+                    raise Abort('起步等待新状态超时')
+            else:
+                if now >= deadline:
+                    raise Abort('非零窗口截止')
+                if now - last_nonzero_start >= .05:
+                    raise Abort('非零命令续发期限已过；禁止恢复旧目标')
+        while True:
+            check_deadlines()
+            link.poll()
+            check_deadlines()
+            now = link.clock()
             state = link.fresh()
             if failure:
                 raise Abort(failure[0])
-            if reached is None and abs(state[2] - 400) <= 5:
-                reached = now
-            if reached is not None and now - reached >= HOLD_S:
-                break
-            if now >= next_send:
-                if link.states == previous:
-                    raise Abort('没有新接收状态；停止非零命令')
-                if link.clock() >= deadline:
-                    raise Abort('非零窗口截止')
+            if last_nonzero_start is not None:
+                if reached is None and abs(state[2] - 400) <= 5:
+                    reached = now
+                if reached is not None and now - reached >= HOLD_S:
+                    break
+            if now >= next_send and link.states != previous:
+                check_deadlines()
                 previous = link.states
+                # 写耗时计入运动窗及续发期限；空poll不会续发旧目标。
+                last_nonzero_start = link.clock()
+                if deadline is None:
+                    deadline = last_nonzero_start + WINDOW_S
+                next_send = last_nonzero_start + .025
                 link.send('VEL 400')
-                next_send = link.clock() + .025
             link.sleep(.002)
     finally:
         try:

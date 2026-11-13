@@ -151,4 +151,56 @@ class Tests(unittest.TestCase):
             with self.assertRaises(Abort):self.run_probe(f)
         self.assertEqual(unsafe,[])
 
+    def test_normal_500hz_empty_polls_are_not_fault(self):
+        class Paced(Rig):
+            last_read=-1
+            def read(self,n):
+                if not self.rx and self.t-self.last_read < .002:return b''
+                self.last_read=self.t
+                return super().read(n)
+        f=Paced();self.run_probe(f)
+        self.assertIn('VEL 400',f.writes)
+
+    def test_late_fresh_frame_cannot_resume_after_heartbeat_deadline(self):
+        class Gap(Rig):
+            def __init__(self):super().__init__();self.jumped=False;self.nonzero=0
+            def write(self,data):
+                if data==b'VEL 400\n':self.nonzero+=1
+                return super().write(data)
+            def read(self,n):
+                if self.v and not self.jumped:
+                    self.t+=.08;self.jumped=True
+                return super().read(n)
+        f=Gap()
+        with self.assertRaises(Abort):self.run_probe(f)
+        self.assertEqual(f.nonzero,1);self.assertEqual(f.v,0)
+
+    def test_short_gap_waits_without_duplicate_nonzero(self):
+        class Gap(Rig):
+            def __init__(self):super().__init__();self.first=None;self.sent=[]
+            def write(self,data):
+                if data==b'VEL 400\n':
+                    self.sent.append(self.t)
+                    if self.first is None:self.first=self.t
+                return super().write(data)
+            def read(self,n):
+                if self.v and self.first is not None and  .024 <= self.t-self.first < .028:return b''
+                return super().read(n)
+        f=Gap();self.run_probe(f)
+        self.assertGreaterEqual(f.sent[1]-f.sent[0],.025)
+        self.assertLess(f.sent[1]-f.sent[0],.05)
+
+    def test_stream_ends_before_first_motion_no_nonzero(self):
+        class Ends(Rig):
+            frozen=False
+            def read(self,n):
+                if self.frozen:return b''
+                data=super().read(n)
+                if self.t>=.4:self.frozen=True
+                return data
+        f=Ends()
+        with self.assertRaises(Abort):self.run_probe(f)
+        self.assertNotIn('VEL 400',f.writes)
+        self.assertLess(f.t,1.6)
+
 if __name__=='__main__':unittest.main()
