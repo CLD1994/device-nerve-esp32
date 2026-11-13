@@ -85,6 +85,7 @@ void motor_halt(motor_handle_t m)
 
 void motor_stop(motor_handle_t m) { (void)m; }
 bool motor_at_rest(motor_handle_t m) { (void)m; return g_at_rest; }
+bool motor_try_stop_at_rest(motor_handle_t m) { (void)m; return g_at_rest; }
 int32_t motor_position_steps(motor_handle_t m) { (void)m; return g_pos_steps; }
 
 void motor_set_position(motor_handle_t m, int32_t steps)

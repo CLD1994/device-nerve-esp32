@@ -482,6 +482,26 @@ void step_engine_stop(void)
     portEXIT_CRITICAL(&s_spinlock);
 }
 
+bool step_engine_try_stop_at_rest(void)
+{
+    portENTER_CRITICAL(&s_spinlock);
+    /* 精确Q16判零与清目标同锁，不能把小于1 step/s的残速舍入为零。
+     * 调用方串行化目标提交；自然停稳的ISR已同锁发布零速/停止标志。 */
+    if (s_v_q16 != 0) {
+        portEXIT_CRITICAL(&s_spinlock);
+        return false;
+    }
+    s_stopped = true;
+    s_target_q16 = 0;
+    if (s_timer != NULL && s_timer_running) {
+        gptimer_stop(s_timer);
+        s_timer_running = false;
+    }
+    s_chain_remaining_us = 0;
+    portEXIT_CRITICAL(&s_spinlock);
+    return true;
+}
+
 int32_t step_engine_position_steps(void)
 {
     return s_position;
