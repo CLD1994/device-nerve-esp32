@@ -1,27 +1,9 @@
 import types
 import unittest
+from probe_test_support import Fake
 from low_speed_probe import Link, Abort, execute, motion, validate, stopped
 
 
-class Fake:
-    def __init__(self):
-        self.t = 0.; self.writes = []; self.rx = b'\n'; self.v = 0; self.x = 0
-    def clock(self): return self.t
-    def sleep(self, n): self.t += n; self.x += self.v * n * 1000
-    def write(self, data):
-        cmd=data.decode().strip(); self.writes.append(cmd)
-        if cmd=='QUERY': self.rx+=b'MODE READY NONE\n'
-        elif cmd=='CALIB?':
-            self.rx+=b'OK CAL_STATE 2\nOK CAL_LENGTH_UM 853436\nOK CAL_SAVED 1\nOK CAL_STORAGE 0\n'
-        elif cmd=='CONFIG?':
-            for k,v in dict(VEL_MAX=20,ACC_MAX=100,WDT_MS=100,WDT_DEC=100,X_MARGIN_UM=10000,POLE_ZERO_URAD=2159697,POLE_INV=1,X_INV=0,STEP_LOSS_UM=3000).items():
-                self.rx+=('OK %s %s\n'%(k,v)).encode()
-        elif cmd.startswith('CONFIG '):
-            _,k,v=cmd.split(); self.rx+=('OK %s %s\n'%(k,v)).encode()
-        elif cmd.startswith('VEL '): self.v=int(cmd.split()[1])
-        return len(data)
-    def read(self,n):
-        data=self.rx+b'VEL_VALID 1 1\n'+('STATE %d 3141592 %d 0\n'%(self.x,self.v)).encode();self.rx=b'';return data
 
 
 def args(command='run', confirm=True):

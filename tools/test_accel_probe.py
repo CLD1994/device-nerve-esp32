@@ -1,19 +1,8 @@
 import unittest
 from types import SimpleNamespace
-from test_low_speed_probe import Fake
+from probe_test_support import Rig
 from accel_probe import execute, Link, Abort
 
-class Rig(Fake):
-    def __init__(self):
-        super().__init__(); self.cfg=dict(VEL_MAX=20,ACC_MAX=100,WDT_MS=100,WDT_DEC=100,X_MARGIN_UM=10000,POLE_ZERO_URAD=0,POLE_INV=1,X_INV=0,STEP_LOSS_UM=3000)
-    def write(self,data):
-        cmd=data.decode().strip()
-        if cmd=='CONFIG?':
-            self.writes.append(cmd)
-            self.rx+=''.join('OK %s %d\n'%p for p in self.cfg.items()).encode();return len(data)
-        if cmd.startswith('CONFIG '):
-            _,k,v=cmd.split();self.cfg[k]=int(v)
-        return super().write(data)
 
 def args(cmd='run',yes=True):return SimpleNamespace(command=cmd,confirm_motion=yes,confirm_clearance=yes)
 class Tests(unittest.TestCase):

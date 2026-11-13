@@ -1,16 +1,9 @@
 import unittest
 from types import SimpleNamespace
-from test_accel_probe import Rig
+from probe_test_support import Bench, Rig
 from low_speed_probe import Link, Abort
 from step50k_probe import execute
 
-class Bench(Rig):
-    def __init__(self):
-        super().__init__(); self.x=-326662
-    def write(self,data):
-        n=super().write(data)
-        self.rx=self.rx.replace(b'853436',b'853325')
-        return n
 
 def options(**kw):
     d=dict(command='run',acceleration=9000,hold_s=0.,margin_mm=50.,normal_decel=9000,watchdog_decel=5000,

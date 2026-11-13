@@ -1,6 +1,6 @@
 # 两次往返专用探针
 
-`tools/roundtrip_probe.py` 仅手动启动一次左→右→左→右→左，目标速度1250 mm/s、ACC_MAX10000 mm/s²、WDT_MS100、WDT_DEC5000。普通VEL0使用ACC_MAX减速；预算仍按正常减速度5000的假设。脚本不设置电流，1.5A请求由当前实验固件及现场确认；不自动ENABLE、RESET、标定或清除FAULT。
+`tools/roundtrip_probe.py` 仅手动启动一次左→右→左→右→左，目标速度1250 mm/s、ACC_MAX10000 mm/s²、WDT_MS100、WDT_DEC5000。普通VEL0使用ACC_MAX减速；预算仍按正常减速度5000的假设。脚本不设置电流，所需运行电流应在固件中配置，并在现场确认；不自动ENABLE、RESET、标定或清除FAULT。
 
 名义端点为853.325mm标定行程减10mm软余量后的±416.6625mm。run要求有效标定参考、READY NONE、人工将小车放在左名义端点内侧5mm并保持静止（−416.6625 < x ≤ −411.6625mm）。不是贴住物理挡块。当前FAULT或参考未确认会拒绝，不自动恢复。
 

@@ -26,7 +26,13 @@ int32_t poleang_theta_urad(void);
 /** 已标定角速度（mrad/s，符号随 POLE_INV 翻转）；缓存值不携带有效性，不可用作停稳或安全判断。 */
 int32_t poleang_vth_mrad_s(void);
 
-typedef struct { int32_t theta_urad; int32_t vth_mrad_s; } poleang_measurement_t;
+typedef struct {
+    int32_t theta_urad;
+    int32_t vth_mrad_s;
+    int64_t sampled_at_us;
+    uint64_t sample_seq;
+    int64_t velocity_span_us;
+} poleang_measurement_t;
 /** 同一编码器快照的角度和有效速度；无效返回false且不修改out。 */
 bool poleang_get_measurement(poleang_measurement_t *out);
 

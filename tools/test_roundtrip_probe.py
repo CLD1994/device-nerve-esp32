@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 from low_speed_probe import Link,Abort
-from test_step50k_probe import Bench as BaseBench
+from probe_test_support import Bench as BaseBench
 
 class Bench(BaseBench):
     def __init__(self):
