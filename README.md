@@ -124,6 +124,17 @@ wsl gcc -std=c11 -Wall -Wextra -Werror \
   -Ihost_tests/stub -Icomponents/<c>/include ... host_tests/<t>.c ...
 ```
 
+摆角单元回归使用类别接口替身，不连接设备；覆盖非零启动角、重新初始化后的
+零偏复用、累计多圈不影响绝对角、环绕、方向和不同编码器分辨率：
+
+```bash
+gcc -std=c11 -Wall -Wextra -Werror \
+  -Icomponents/magnetic_encoder/include -Icomponents/poleang/include \
+  -Icomponents/cartparams/include \
+  host_tests/poleang_test.c components/poleang/poleang.c -lm -o /tmp/poleang_test
+/tmp/poleang_test
+```
+
 PD 供电、UART0 控制的空载相电流测量使用 `CURRENT_MEASUREMENT=ON` 独立入口，
 构建方法、指令、供电检查和示波器采集说明见[硬件测试指南](test/README.md)。
 

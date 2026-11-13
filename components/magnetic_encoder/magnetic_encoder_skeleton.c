@@ -123,6 +123,15 @@ int32_t magnetic_encoder_inst_counts_per_rev(magnetic_encoder_handle_t enc)
     return inst->impl->counts_per_rev(inst->impl_ctx);
 }
 
+uint32_t magnetic_encoder_inst_angle_counts(magnetic_encoder_handle_t enc)
+{
+    magnetic_encoder_inst_t *inst = (magnetic_encoder_inst_t *)enc;
+    portENTER_CRITICAL(&inst->lock);
+    uint32_t raw = inst->last_raw;
+    portEXIT_CRITICAL(&inst->lock);
+    return raw;
+}
+
 int64_t magnetic_encoder_inst_position_counts(magnetic_encoder_handle_t enc)
 {
     magnetic_encoder_inst_t *inst = (magnetic_encoder_inst_t *)enc;
@@ -169,6 +178,7 @@ esp_err_t magnetic_encoder_skeleton_start(magnetic_encoder_inst_t *inst,
     inst->lock = (portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED;
     inst->ops = (struct magnetic_encoder_s){
         .counts_per_rev        = magnetic_encoder_inst_counts_per_rev,
+        .angle_counts          = magnetic_encoder_inst_angle_counts,
         .position_counts       = magnetic_encoder_inst_position_counts,
         .velocity_counts_per_s = magnetic_encoder_inst_velocity_counts_per_s,
         .is_ok                 = magnetic_encoder_inst_is_ok,
