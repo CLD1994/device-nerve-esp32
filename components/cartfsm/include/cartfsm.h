@@ -5,7 +5,8 @@
  * 失联、丢步（编码器实测位置与指令位置的偏差）、软限位窗口持续钳制、
  * FAULT 停机次序（目标斜坡置 0 → 速度精确为零 → EN 关 → 推 MODE）。
  * 命令执行回调（cartproto exec，CPU0）：命令×模式矩阵 + CONFIG
- * 注册表作用点。上电 DISABLED、EN 关。
+ * 注册表作用点。上电 DISABLED、EN 关；ENABLE同时要求20V验证有效。
+ * POWER故障立即停STEP并禁用，不使用缺电条件下的斜坡制动。
  */
 
 #pragma once

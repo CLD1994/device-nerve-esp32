@@ -36,7 +36,7 @@ STATE <x_um> <theta_urad> <vx_mm_s> <vth_mrad_s>\n
 |---|---|---|
 | `DISABLED` | 关闭使能 | 上电默认；FAULT 经 `RESET` 清除后回到此态 |
 | `READY` | 使能，静止或跟踪 `VEL` | DISABLED 且两点标定完成后收到 `ENABLE` |
-| `FAULT` | 斜坡停机后关闭使能 | 故障，见转换表 |
+| `FAULT` | 常规故障斜坡停机；POWER立即停止STEP并禁用 | 故障，见转换表 |
 
 模式转换（完整分类）。坐标由手动两点标定建立，标定语义见 `calib-spec.md`：
 
@@ -44,7 +44,7 @@ STATE <x_um> <theta_urad> <vx_mm_s> <vth_mrad_s>\n
 |---|---|---|
 | DISABLED | `MARK LEFT` / `MARK RIGHT`（见标定决策表） | DISABLED |
 | DISABLED | `ENABLE`（标定完成 `CAL_DONE`） | READY |
-| READY | 丢步 / AS5600 或 MT6835 读取失败 | FAULT |
+| READY | 丢步 / AS5600 或 MT6835 读取失败 / 供电失效 | FAULT |
 | FAULT | 收到 `RESET` | DISABLED |
 
 ### `MODE` 行：模式事件与查询应答
@@ -61,6 +61,7 @@ MODE <mode> <reason>\n
 | `STEP_LOSS` | 丢步（AS5600 位置与指令位置偏差超阈值） |
 | `AS5600` | 小车编码器读取失败（历史器件名：rev2 起小车位实为板载 MT6835，字面量为线协议冻结值） |
 | `MT6835` | 摆角编码器读取失败 |
+| `POWER` | 供电验证失效或供电样本过期，立即停止STEP并禁用 |
 
 `MODE` 行无 ACK，端侧晚开串口会错过开机以来的转换，因此端侧在启动同步和任何需要复核的时刻发 `QUERY` 补一拍。
 
@@ -72,14 +73,14 @@ MARK LEFT\n               记当前实测位置为左端，回 OK MARK_LEFT <E �
 MARK RIGHT\n              记右端并完成标定，回 OK MARK_RIGHT <L µm>
 CONFIRM LEFT\n           用已保存行程确认当前位置为左参考点；不使能
 CALIB?\n                 查询保存与本次定位状态（见标定保存指南）
-ENABLE\n                  标定完成后使能进 READY，推 MODE READY NONE
+ENABLE\n                  标定完成且20V供电验证有效后使能进 READY，推 MODE READY NONE
 RESET\n                   清除 FAULT
 QUERY\n                   查询当前模式，回答一行 MODE
 CONFIG <NAME> <value>\n   设置运行参数，回答 OK 或 ERR
 CONFIG?\n                 dump 全部参数（调试与日志记录用）
 ```
 
-标定与回执原则：`MARK LEFT`/`MARK RIGHT`/`ENABLE` 仅 DISABLED 态接受；拒绝时回 `ERR MARK_LEFT`/`ERR MARK_RIGHT`/`ERR ENABLE`（回执名是单 token），普通参数/模式拒绝时状态保持；存储与参考失败的语义见[标定保存指南](calibration.md)。`VEL`/`RESET` 在不适用态静默忽略、无回执。标定决策表（`L = E_right − E_left` 合法窗 100000–1000000 µm，域反向得负即拒）与 ENABLE 动作次序见 `calib-spec.md`。
+标定与回执原则：`MARK LEFT`/`MARK RIGHT`/`ENABLE` 仅 DISABLED 态接受；拒绝时回 `ERR MARK_LEFT`/`ERR MARK_RIGHT`/`ERR ENABLE`；ENABLE的供电条件不满足时优先回`ERR POWER`（回执名是单 token），普通参数/模式拒绝时状态保持；存储与参考失败的语义见[标定保存指南](calibration.md)。`VEL`/`RESET` 在不适用态静默忽略、无回执。标定决策表（`L = E_right − E_left` 合法窗 100000–1000000 µm，域反向得负即拒）与 ENABLE 动作次序见 `calib-spec.md`。
 
 命令 × 模式矩阵（完整分类）：
 
@@ -87,7 +88,7 @@ CONFIG?\n                 dump 全部参数（调试与日志记录用）
 |---|---|---|---|
 | `VEL` | 忽略 | 执行 | 忽略 |
 | `MARK LEFT` / `MARK RIGHT` | 执行或 `ERR`（标定决策表） | `ERR` | `ERR` |
-| `ENABLE` | 执行或 `ERR`（标定决策表） | 忽略 | 忽略 |
+| `ENABLE` | 供电验证有效且标定完成才执行，否则 `ERR POWER` / `ERR ENABLE` | 忽略 | 忽略 |
 | `RESET` | 忽略 | 忽略 | → DISABLED |
 | `QUERY` | 回 `MODE` | 回 `MODE` | 回 `MODE` |
 | `CONFIRM LEFT` | 执行或 `ERR`（见标定保存指南） | `ERR` | `ERR` |
@@ -157,3 +158,11 @@ NVS恢复规则见[标定保存指南](calibration.md)。
 - 参数注册表默认值与范围依据实测微调。
 - MT6835 的 SPI 寄存器映射在固件实现阶段确定。
 - 与旧协议（`deploy/protocol.md`）的关系：旧协议随旧装置退役，本文件为新装置唯一协议权威。
+
+## 20 V 供电状态与运动门禁
+
+ENABLE还要求供电验证有效；否则返回`ERR POWER`，不使能。供电验证条件与时序见
+[硬件说明](hardware.md#14-正式固件的供电门禁)。标定、QUERY和CONFIG读取不要求供电就绪。
+运行中供电失败/样本超时触发`MODE FAULT POWER`，立即停止STEP并禁用驱动，不承诺缺电
+时的斜坡制动。`POWER`是新增reason值。RESET可将模式回DISABLED，但不会清除电源故障
+锁定；输入恢复也不自动使能，须排查后重启验证。原有标定使能前提不变。

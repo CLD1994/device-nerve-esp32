@@ -8,6 +8,7 @@
  * FAULT 停机次序（契约）：目标斜坡置 0（电机加速度临时切到
  * WDT_DEC 档）→ 监督任务等速度精确为零 → EN 关 → 推 MODE 行。
  * RESET 离开 FAULT 时恢复 ACC_MAX 档并清电机状态。
+ * POWER故障例外：立即停止STEP并禁用，不能依赖缺电时斜坡制动。
  */
 
 #include "cartfsm.h"
@@ -17,6 +18,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
 
@@ -26,6 +28,7 @@
 #include "cartproto.h"
 #include "cartcal.h"
 #include "settings.h"
+#include "cartpower.h"
 
 static const char *TAG = "cartfsm";
 
@@ -41,6 +44,8 @@ static volatile cm_reason_t s_reason = CR_NONE;
 static volatile long s_last_cmd_v = 0;     /* 最近有效目标（软限位持续钳制） */
 static volatile bool s_fault_settling = false;  /* FAULT 斜坡停机进行中 */
 static bool s_started = false;
+/* 串行化使能/VEL与供电急停；锁内不做I2C或NVS。 */
+static SemaphoreHandle_t s_output_lock;
 
 /* ---- 本次定位状态与已提交的装置标定 ---- */
 static calib_state_t s_calib = CAL_NONE;
@@ -101,6 +106,7 @@ static const char *reason_str(cm_reason_t r)
     case CR_STEP_LOSS: return "STEP_LOSS";
     case CR_AS5600:    return "AS5600";
     case CR_MT6835:    return "MT6835";
+    case CR_POWER:     return "POWER";
     default:           return "NONE";
     }
 }
@@ -127,6 +133,11 @@ static void params_apply_engine(void)
  * 电机调用在 s_lock 之外（不与电机实现内部的锁嵌套）。 */
 static void clamp_and_commit_velocity(long v_mm_s)
 {
+    xSemaphoreTake(s_output_lock, portMAX_DELAY);
+    if (s_mode != CM_READY || !cartpower_ready()) {
+        xSemaphoreGive(s_output_lock);
+        return;
+    }
     const fw_params_t *p = fw_params();
     long xmin, xmax;
     soft_window(p, &xmin, &xmax);
@@ -138,12 +149,18 @@ static void clamp_and_commit_velocity(long v_mm_s)
     portEXIT_CRITICAL(&s_lock);
 
     cartaxis_set_vel_mm_s(eff);
+    xSemaphoreGive(s_output_lock);
 }
 
 /* 监督拍软限位持续钳制：当前目标被窗口钳为不同值时斜坡停并清
  * 目标。读/写 s_last_cmd_v 持锁，电机调用在锁外。 */
 static void supervise_soft_limit(const fw_params_t *p)
 {
+    xSemaphoreTake(s_output_lock, portMAX_DELAY);
+    if (s_mode != CM_READY) {
+        xSemaphoreGive(s_output_lock);
+        return;
+    }
     portENTER_CRITICAL(&s_lock);
     long cmd = s_last_cmd_v;
     portEXIT_CRITICAL(&s_lock);
@@ -168,6 +185,7 @@ static void supervise_soft_limit(const fw_params_t *p)
             cartaxis_halt();
         }
     }
+    xSemaphoreGive(s_output_lock);
 }
 
 static void params_apply_one(const char *name)
@@ -205,8 +223,39 @@ static void push_mode(cm_mode_t m, cm_reason_t r)
     cartproto_send_mode(mode_str(m), reason_str(r));
 }
 
+/* 调用者持输出锁。缺电时不能依赖斜坡制动，因此立即停STEP并禁用。 */
+static void power_stop_locked(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    s_mode = CM_FAULT;
+    s_reason = CR_POWER;
+    s_last_cmd_v = 0;
+    s_fault_settling = false;
+    portEXIT_CRITICAL(&s_lock);
+    cartaxis_stop();
+    cartaxis_enable(false);
+}
+
+static void enter_power_fault(void)
+{
+    xSemaphoreTake(s_output_lock, portMAX_DELAY);
+    if (s_mode == CM_DISABLED) {
+        xSemaphoreGive(s_output_lock);
+        return; /* RESET已生效；供电门仍锁定，不能靠旧监督快照重入FAULT。 */
+    }
+    bool changed = s_mode != CM_FAULT || s_reason != CR_POWER;
+    power_stop_locked();
+    xSemaphoreGive(s_output_lock);
+    if (changed) push_mode(CM_FAULT, CR_POWER);
+}
+
 static void enter_fault(cm_reason_t r)
 {
+    xSemaphoreTake(s_output_lock, portMAX_DELAY);
+    if (s_mode != CM_READY) {
+        xSemaphoreGive(s_output_lock);
+        return;
+    }
     portENTER_CRITICAL(&s_lock);
     s_mode = CM_FAULT;
     s_reason = r;
@@ -217,6 +266,7 @@ static void enter_fault(cm_reason_t r)
     const fw_params_t *p = fw_params();
     cartaxis_set_accel_mm_s2(p->wdt_dec);
     cartaxis_halt();
+    xSemaphoreGive(s_output_lock);
     /* ②③（等 vel_now==0 → EN 关 → 推 MODE）由监督任务完成 */
 }
 
@@ -346,36 +396,47 @@ static void exec_calib_query(void)
 
 static void exec_enable(void)
 {
+    xSemaphoreTake(s_output_lock, portMAX_DELAY);
     if (s_mode != CM_DISABLED) {
-        return;   /* READY/FAULT 忽略（规格 §5 矩阵） */
+        xSemaphoreGive(s_output_lock);
+        return;
+    }
+    if (!cartpower_ready()) {
+        xSemaphoreGive(s_output_lock);
+        cartproto_send_err("POWER");
+        return;
     }
     check_reference();
     if (s_calib != CAL_DONE) {
+        xSemaphoreGive(s_output_lock);
         cartproto_send_err("ENABLE");
         return;
     }
-    cm_mode_t m = s_mode;
-    cm_reason_t r = CR_NONE;
-    if (!cm_step(&m, &r, CE_CMD_ENABLE)) {
-        return;
-    }
-    /* C 重锚到 E：先于模式发布——监督任务见 READY 即按拍判定，
-     * 携旧 C 会在首拍 STEP_LOSS 误报（标定后手挪过的窗口） */
     cartaxis_set_position_um((long)cartpos_position_um());
     cartaxis_enable(true);
+    /* 覆盖检查与开启间缓存失效的窗口；下个监督拍仍持续检查。 */
+    if (!cartpower_ready()) {
+        power_stop_locked();
+        xSemaphoreGive(s_output_lock);
+        push_mode(CM_FAULT, CR_POWER);
+        return;
+    }
     portENTER_CRITICAL(&s_lock);
     s_mode = CM_READY;
     s_reason = CR_NONE;
     s_last_cmd_v = 0;
     portEXIT_CRITICAL(&s_lock);
+    xSemaphoreGive(s_output_lock);
     push_mode(CM_READY, CR_NONE);
 }
 
 static void exec_reset(void)
 {
+    xSemaphoreTake(s_output_lock, portMAX_DELAY);
     cm_mode_t m = s_mode;
     cm_reason_t r = s_reason;
     if (!cm_step(&m, &r, CE_CMD_RESET)) {
+        xSemaphoreGive(s_output_lock);
         return;   /* 仅 FAULT 生效 */
     }
     portENTER_CRITICAL(&s_lock);
@@ -389,6 +450,7 @@ static void exec_reset(void)
     cartaxis_enable(false);
     check_reference();
     params_apply_engine();       /* 恢复 ACC_MAX 档等 */
+    xSemaphoreGive(s_output_lock);
     push_mode(CM_DISABLED, CR_NONE);
 }
 
@@ -458,6 +520,25 @@ static void exec_cmd(const cart_req_t *req)
     }
 }
 
+/* 与RESET/ENABLE/VEL同锁；旧监督快照不能关闭新一轮READY的驱动。 */
+static void settle_fault(void)
+{
+    bool completed = false;
+    cm_reason_t reason = CR_NONE;
+    xSemaphoreTake(s_output_lock, portMAX_DELAY);
+    if (s_mode == CM_FAULT && s_fault_settling) {
+        cartaxis_halt();
+        if (cartaxis_at_rest()) {
+            cartaxis_enable(false);
+            s_fault_settling = false;
+            reason = s_reason;
+            completed = true;
+        }
+    }
+    xSemaphoreGive(s_output_lock);
+    if (completed) push_mode(CM_FAULT, reason);
+}
+
 /* ---- 监督任务（1 kHz，CPU1） ---- */
 
 static void fsm_task(void *arg)
@@ -483,7 +564,10 @@ static void fsm_task(void *arg)
         bool m6835_ok = poleang_is_ok();
 #endif
 
-        if (mode == CM_READY) {
+        /* 即使处于其它故障的斜坡停机，也不依赖失效供电继续制动。 */
+        if ((mode == CM_READY || mode == CM_FAULT) && !cartpower_ready()) {
+            enter_power_fault();
+        } else if (mode == CM_READY) {
             if (!a5600_ok || !cartpos_reference_is_valid() || !saved_track_valid()) {
                 enter_fault(CR_AS5600);
             } else if (!m6835_ok) {
@@ -505,17 +589,7 @@ static void fsm_task(void *arg)
                 }
             }
         } else if (mode == CM_FAULT && s_fault_settling) {
-            /* 次序 ②③：每拍重发斜坡停——吃掉 FAULT 进入后仍在途的
-             * 目标写入（exec_vel 锁外 set_vel 可晚于 enter_fault
-             * 的 halt，穿透后不能只靠 WDT 兜底）→ 等零 → EN 关 →
-             * 推 MODE */
-            cartaxis_halt();
-            if (cartaxis_at_rest()) {
-                cartaxis_enable(false);
-                s_fault_settling = false;
-                cm_reason_t r = s_reason;
-                push_mode(CM_FAULT, r);
-            }
+            settle_fault();
         }
         /* DISABLED：无监督动作（STATE 流照发） */
 
@@ -575,6 +649,9 @@ esp_err_t cartfsm_start(void)
     if (s_started) {
         return ESP_OK;
     }
+
+    s_output_lock = xSemaphoreCreateMutex();
+    if (s_output_lock == NULL) return ESP_ERR_NO_MEM;
 
     /* 上电默认 DISABLED、EN 关。cartaxis_enable 的返回值仅在电机实现
      * 未初始化时非 ESP_OK，而 app_main 已先经 ESP_ERROR_CHECK(

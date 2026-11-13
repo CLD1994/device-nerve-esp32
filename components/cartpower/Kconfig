@@ -1,0 +1,25 @@
+menu "cartpower - 20V 供电验证"
+    config CARTPOWER_SETTLE_MS
+        int "请求后的最小稳定等待(ms)"
+        range 1000 10000
+        default 3000
+    config CARTPOWER_TIMEOUT_MS
+        int "从请求开始的验证超时(ms)"
+        range 5000 30000
+        default 10000
+    config CARTPOWER_SAMPLE_MS
+        int "供电采样间隔(ms)"
+        range 20 500
+        default 100
+    config CARTPOWER_STABLE_SAMPLES
+        int "连续有效样本数"
+        range 3 10
+        default 5
+    config CARTPOWER_FRESH_MS
+        int "样本有效期限(ms)"
+        range 200 2000
+        default 500
+        help
+            必须至少为两倍采样间隔加100ms。供电任务停滞时，
+            FSM按此期限拒绝使能或停机；不是硬件保护响应保证。
+endmenu

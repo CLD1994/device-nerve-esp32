@@ -20,7 +20,7 @@ extern "C" {
 typedef enum { CM_DISABLED, CM_READY, CM_FAULT } cm_mode_t;
 
 typedef enum {
-    CR_NONE, CR_STEP_LOSS, CR_AS5600, CR_MT6835,
+    CR_NONE, CR_STEP_LOSS, CR_AS5600, CR_MT6835, CR_POWER,
 } cm_reason_t;
 
 typedef enum {
@@ -29,6 +29,7 @@ typedef enum {
     CE_AS5600_FAIL,
     CE_MT6835_FAIL,
     CE_STEP_LOSS,         /* READY 丢步 */
+    CE_POWER_FAIL,       /* READY供电失效，立即停机 */
 } cm_event_t;
 
 /**

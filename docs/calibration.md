@@ -160,7 +160,7 @@ gcc -std=c11 -Wall -Wextra -Werror \
 /tmp/cartcal-test
 
 gcc -std=c11 -Wall -Wextra -Werror \
-  -Icomponents/cartfsm/host_stub -Icomponents/cartcal/host_stub -Ihost_tests/stub \
+  -Ihost_tests/power_stubs -Icomponents/cartfsm/host_stub -Icomponents/cartcal/host_stub -Ihost_tests/stub \
   $(find components -type d -name include -printf '-I%p ') \
   host_tests/cartfsm_calibration_test.c components/cartfsm/cartfsm_core.c \
   components/cartparams/params.c -lm -o /tmp/cartfsm-calibration-test

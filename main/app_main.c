@@ -5,7 +5,7 @@
  * → settings_init → bsp_init → 小车位编码器（板载 MT6835，SPI2）+
  * cartpos_init → 摆角位编码器（外接 MT6835，SPI3）+ poleang_init →
  * motor_tmc2209_init + cartaxis_init → 组装点订阅运行/保持电流中转 →
- * cartproto_start → cartfsm_start → telemetry_start。测试代码不编入
+ * cartpower_start（异步20V验证）→ cartproto_start → cartfsm_start → telemetry_start。测试代码不编入
  * 正式固件（见 test/ 独立测试工程）。
  */
 
@@ -16,7 +16,7 @@
 #include "motor_tmc2209.h"
 #include "motor.h"
 #include "cartaxis.h"
-#include "ch224q.h"
+#include "cartpower.h"
 #include "magnetic_encoder_mt6835.h"
 #include "cartpos.h"
 #include "poleang.h"
@@ -91,32 +91,11 @@ void app_main(void)
         if (!settings_subscribe(on_driver_settings)) {
             ESP_LOGW("app_main", "settings 订阅失败（槽满）——运行/保持电流变更不会生效");
         }
-        /* rev2 供电观测（非致命——诱骗由 CF1 电阻保证上电成立）：
-         * vbus 电压与 CH224Q 握手状态进启动日志，供诱骗成功判定 */
-        float vbus = bsp_vbus_read_volt();
-        ESP_LOGI("app_main", "总线电压 %.2f V", (double)vbus);
-        {
-            ch224q_handle_t ch224q = NULL;
-            ch224q_config_t cqcfg = {
-                .bus      = bsp_get_i2c_bus(),
-                .dev_addr = CONFIG_CH224Q_I2C_ADDR,
-            };
-            if (ch224q_init(&cqcfg, &ch224q) == ESP_OK) {
-                ch224q_status_t st;
-                uint16_t ma = 0;
-                if (ch224q_get_status(ch224q, &st) == ESP_OK) {
-                    ESP_LOGI("app_main",
-                             "CH224Q @0x%02x：PD=%d QC3=%d QC2=%d BC12=%d",
-                             cqcfg.dev_addr, st.pd, st.qc3, st.qc2, st.bc12);
-                }
-                if (ch224q_get_current_ma(ch224q, &ma) == ESP_OK) {
-                    ESP_LOGI("app_main", "CH224Q 当前档最大电流 %u mA", ma);
-                }
-            } else {
-                ESP_LOGW("app_main",
-                         "CH224Q 挂载 0x%02x 失败——若 0x22/0x23 扫描后仍不"
-                         "在位，检查焊接（不影响上电诱骗）", cqcfg.dev_addr);
-            }
+        /* 不因供电失败重启循环请求：保持诊断通道，ENABLE由供电门阻止。 */
+        esp_err_t power_err = cartpower_start(bsp_get_i2c_bus());
+        if (power_err != ESP_OK) {
+            ESP_LOGE("app_main", "20V供电验证无法启动: %s；电机保持禁用",
+                     esp_err_to_name(power_err));
         }
         ESP_ERROR_CHECK(cartproto_start());
         ESP_ERROR_CHECK(cartfsm_start());

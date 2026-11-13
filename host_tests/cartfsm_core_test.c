@@ -33,6 +33,8 @@ static bool step(cm_event_t ev)
 /* ---- 转换表逐行（三态） ---- */
 static void test_transitions(void)
 {
+    m = CM_READY; r = CR_NONE;
+    CHECK(step(CE_POWER_FAIL) && m == CM_FAULT && r == CR_POWER, "READY+POWER→FAULT/POWER");
     /* DISABLED + ENABLE → READY/NONE */
     m = CM_DISABLED; r = CR_NONE;
     CHECK(step(CE_CMD_ENABLE) && m == CM_READY && r == CR_NONE,

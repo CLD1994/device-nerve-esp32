@@ -8,7 +8,13 @@
 #include "cartproto.h"
 #include "settings.h"
 #include "poleang.h"
+#include "freertos/task.h"
+BaseType_t xTaskCreatePinnedToCore(void(*fn)(void*),const char*n,unsigned s,void*a,unsigned p,void*h,unsigned c) { (void)fn;(void)n;(void)s;(void)a;(void)p;(void)h;(void)c;return pdPASS; }
+TickType_t xTaskGetTickCount(void) { return 0; }
+void vTaskDelayUntil(TickType_t*p,TickType_t t) { (void)p;(void)t; }
 
+int power_test_lock_depth;
+bool cartpower_ready(void) { return true; }
 static cartcal_record_t disk;
 static esp_err_t load_error, save_error;
 static bool healthy, referenced, apply_ok, enabled;
