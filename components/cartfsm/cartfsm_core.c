@@ -24,6 +24,10 @@ bool cm_step(cm_mode_t *mode, cm_reason_t *reason, cm_event_t ev)
 
     case CM_READY:
         switch (ev) {
+        case CE_POWER_FAIL:
+            *mode = CM_FAULT;
+            *reason = CR_POWER;
+            return true;
         case CE_STEP_LOSS:
             *mode = CM_FAULT;
             *reason = CR_STEP_LOSS;

@@ -139,3 +139,42 @@ gcc -std=c11 -Wall -Wextra -Werror -Itest/main \
 ```
 
 该测试验证调档准入、等待时限、电压边界、连续采样、失败后禁止启动以及重试恢复。
+
+## 正式固件20V门禁的宿主回归
+
+以下均为单元测试，I2C、ADC、时钟和任务以替身隔离，不连接真实设备。输出包含
+预期的失败诊断，不代表真实板卡发生故障。`power_stubs`仅用于这些测试，不用于固件构建。
+
+```bash
+gcc -std=c11 -Wall -Wextra -Werror -Icomponents/cartpower/include \
+  host_tests/cartpower_core_test.c components/cartpower/cartpower_core.c \
+  -o /tmp/cartpower-core && /tmp/cartpower-core
+
+gcc -std=c11 -Wall -Wextra -Werror \
+  -Ihost_tests/power_stubs -Ihost_tests/stub \
+  -Icomponents/cartpower/include -Icomponents/ch224q/include \
+  host_tests/cartpower_adapter_test.c components/cartpower/cartpower_core.c \
+  -lm -o /tmp/cartpower-adapter && /tmp/cartpower-adapter
+
+gcc -std=c11 -Wall -Wextra -Werror \
+  -Ihost_tests/power_stubs -Ihost_tests/stub \
+  -Icomponents/cartfsm/include -Icomponents/cartparams/include \
+  -Icomponents/cartpower/include -Icomponents/cartpos/include \
+  -Icomponents/cartaxis/include -Icomponents/cartproto/include \
+  -Icomponents/poleang/include -Icomponents/motor/include \
+  -Icomponents/magnetic_encoder/include -Icomponents/cartcal/include \
+  -Icomponents/settings/include \
+  host_tests/cartfsm_power_test.c components/cartfsm/cartfsm_core.c \
+  components/cartparams/params.c -o /tmp/cartfsm-power && /tmp/cartfsm-power
+```
+
+必须另行在目标ESP-IDF编译，并在确认硬件额定值后做真机验收：普通5V电源不得使能；
+PD20V稳定验证之前不得使能；断线、ADC/I2C失败及重新上电不得自动运动。
+运行中电源失效试验需独立停机手段与足够轨道余量，不能由上述单元测试替代。
+
+### Unity测试镜像的20 V请求范围
+
+Unity测试镜像启动本身不请求20 V。只有明确选择带`[pd20]`标记的运动/使能流程测试时，
+才在驱动禁用状态请求并等待20 V验证；验证失败则断言停止，不绕过生产供电门。
+运行这些用例（包括`*`或`[flowtest]`选中它们）之前必须确认适配器支持20 V、整板耐压
+和机械安全。被动纯逻辑用例不主动调档；之前已请求的20 V不会由测试结束自动降回9 V。

@@ -19,7 +19,7 @@ typedef struct {
     bool bc12;          /* bit0：BC1.2 握手成功 */
     bool qc2;           /* bit1：QC2.0 */
     bool qc3;           /* bit2：QC3.0 */
-    bool pd;            /* bit3：PD 握手成功（rev2 关注态：20V 协商成立） */
+    bool pd;            /* bit3：PD 握手成功；不能单独证明实际电压档位 */
     bool epr_active;    /* bit4：EPR 已激活 */
     bool epr_present;   /* bit5：EPR 存在（>100W） */
     bool avs_present;   /* bit6：AVS 存在 */

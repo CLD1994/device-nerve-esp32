@@ -29,6 +29,8 @@
 
 #include "cartpos.h"
 #include "cartaxis.h"
+#include "cartpower.h"
+#include "bsp.h"
 
 static const char *TAG = "cartfsm_flowtest";
 
@@ -82,10 +84,28 @@ static void to_disabled(void)
     }
 }
 
+/* 仅会使能/运动的用例调用；被动测试镜像启动不请求升压。 */
+static void prepare_motion_power(void)
+{
+    TEST_ASSERT_TRUE_MESSAGE(en_is_off(), "请求20V前必须禁用驱动");
+    ESP_LOGW(TAG, "此用例将请求20V并使能电机；运行前须确认整板耐压与轨道安全");
+    if (!cartpower_ready()) {
+        esp_err_t err = cartpower_start(bsp_get_i2c_bus());
+        TEST_ASSERT_TRUE_MESSAGE(err == ESP_OK || err == ESP_ERR_INVALID_STATE,
+                                 "供电验证启动失败");
+        for (int t = 0; t < CONFIG_CARTPOWER_TIMEOUT_MS + 1000; t += 20) {
+            if (cartpower_ready()) break;
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(cartpower_ready(), "20V尚未验证；检查供电与日志，失败后重启");
+}
+
 /* 1. 标定正路径：两 MARK + ENABLE → READY，重定基后无误报 */
-TEST_CASE("流程：两 MARK + ENABLE → READY 无误报", "[cartfsm][flowtest]")
+TEST_CASE("流程：两 MARK + ENABLE → READY 无误报", "[cartfsm][flowtest][pd20]")
 {
     to_disabled();
+    prepare_motion_power();
     cartfsm_test_reset_calib();
     cartfsm_test_inject_loss_bias(0);
 
@@ -150,9 +170,10 @@ TEST_CASE("流程：未标定 ENABLE 拒（断电语义）", "[cartfsm][flowtest
 }
 
 /* 2. 重新标定：CAL_DONE 后 MARK LEFT 覆盖重开 */
-TEST_CASE("流程：重新标定覆盖重开", "[cartfsm][flowtest]")
+TEST_CASE("流程：重新标定覆盖重开", "[cartfsm][flowtest][pd20]")
 {
     to_disabled();
+    prepare_motion_power();
     cartfsm_test_reset_calib();
 
     cart_req_t ml = { .cmd = CART_CMD_MARK_LEFT };
@@ -175,9 +196,10 @@ TEST_CASE("流程：重新标定覆盖重开", "[cartfsm][flowtest]")
 }
 
 /* 3. READY 注入 |E−C| 偏差 → FAULT/STEP_LOSS（既有保护） */
-TEST_CASE("流程：READY 偏差注入 → FAULT/STEP_LOSS", "[cartfsm][flowtest]")
+TEST_CASE("流程：READY 偏差注入 → FAULT/STEP_LOSS", "[cartfsm][flowtest][pd20]")
 {
     to_disabled();
+    prepare_motion_power();
     cartfsm_test_reset_calib();
     cart_req_t ml = { .cmd = CART_CMD_MARK_LEFT };
     cartfsm_test_exec(&ml);
@@ -209,9 +231,10 @@ TEST_CASE("流程：READY 偏差注入 → FAULT/STEP_LOSS", "[cartfsm][flowtest
  * 减速完成即 EN 关（绿，边距约 200 ms）。
  * 注意：本用例小车自右端向左小幅移动（<50 mm），台位在位时保持
  * 警戒。 */
-TEST_CASE("流程：FAULT settling 吃掉在途目标（WDT 不兜底）", "[cartfsm][flowtest]")
+TEST_CASE("流程：FAULT settling 吃掉在途目标（WDT 不兜底）", "[cartfsm][flowtest][pd20]")
 {
     to_disabled();
+    prepare_motion_power();
     cartfsm_test_reset_calib();
     cart_req_t ml = { .cmd = CART_CMD_MARK_LEFT };
     cartfsm_test_exec(&ml);
@@ -251,9 +274,10 @@ TEST_CASE("流程：FAULT settling 吃掉在途目标（WDT 不兜底）", "[car
 }
 
 /* 4. READY 注入 AS5600 失联 → FAULT/AS5600（复用既有口径） */
-TEST_CASE("流程：编码器失联注入 → FAULT/AS5600", "[cartfsm][flowtest]")
+TEST_CASE("流程：编码器失联注入 → FAULT/AS5600", "[cartfsm][flowtest][pd20]")
 {
     to_disabled();
+    prepare_motion_power();
     cartfsm_test_reset_calib();
     cart_req_t ml = { .cmd = CART_CMD_MARK_LEFT };
     cartfsm_test_exec(&ml);
@@ -276,9 +300,10 @@ TEST_CASE("流程：编码器失联注入 → FAULT/AS5600", "[cartfsm][flowtest
 }
 
 /* 5. FAULT → RESET 回 DISABLED 后标定仍在，直接 ENABLE 恢复 */
-TEST_CASE("流程：FAULT 后 RESET 保留标定直接恢复", "[cartfsm][flowtest]")
+TEST_CASE("流程：FAULT 后 RESET 保留标定直接恢复", "[cartfsm][flowtest][pd20]")
 {
     to_disabled();
+    prepare_motion_power();
     cartfsm_test_reset_calib();
     cart_req_t ml = { .cmd = CART_CMD_MARK_LEFT };
     cartfsm_test_exec(&ml);
