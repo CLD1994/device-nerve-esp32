@@ -39,6 +39,7 @@ int64_t cartaxis_cmd_position_um(void) { return command_pos; }
 void cartaxis_set_vel_mm_s(long v) { (void)v; }
 void cartaxis_halt(void) { }
 void cartaxis_stop(void) { }
+bool cartaxis_try_stop_at_rest(void) { return true; }
 bool cartaxis_at_rest(void) { return true; }
 void cartaxis_set_accel_mm_s2(long x) { (void)x; }
 void cartaxis_set_decel_mm_s2(long x) { (void)x; }

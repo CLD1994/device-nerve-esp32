@@ -430,6 +430,31 @@ static void exec_enable(void)
     push_mode(CM_READY, CR_NONE);
 }
 
+/* 仅正常零速禁用；与VEL、ENABLE及故障输出共用互斥量。 */
+static void exec_disable(void)
+{
+    xSemaphoreTake(s_output_lock, portMAX_DELAY);
+    if (s_mode == CM_READY) {
+        /* 精确速度检查与清目标必须由引擎在同一锁内完成。 */
+        if (!cartaxis_try_stop_at_rest()) {
+            xSemaphoreGive(s_output_lock);
+            cartproto_send_err("BUSY");
+            return;
+        }
+        cartaxis_enable(false);
+        portENTER_CRITICAL(&s_lock);
+        s_last_cmd_v = 0;
+        s_fault_settling = false;
+        s_mode = CM_DISABLED;
+        s_reason = CR_NONE;
+        portEXIT_CRITICAL(&s_lock);
+    }
+    cm_mode_t mode = s_mode;
+    cm_reason_t reason = s_reason;
+    xSemaphoreGive(s_output_lock);
+    push_mode(mode, reason);
+}
+
 static void exec_reset(void)
 {
     xSemaphoreTake(s_output_lock, portMAX_DELAY);
@@ -512,6 +537,7 @@ static void exec_cmd(const cart_req_t *req)
     case CART_CMD_MARK_RIGHT:  exec_mark_right(); break;
     case CART_CMD_ENABLE:      exec_enable(); break;
     case CART_CMD_RESET:       exec_reset(); break;
+    case CART_CMD_DISABLE:     exec_disable(); break;
     case CART_CMD_VEL:         exec_vel(req->v_mm_s); break;
     case CART_CMD_CONFIG_SET:  exec_config_set(req); break;
     case CART_CMD_CONFIG_DUMP: exec_config_dump(); break;

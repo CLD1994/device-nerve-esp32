@@ -136,6 +136,17 @@ def cmd_query(rig, args):
     return 0
 
 
+def cmd_disable(rig, args):
+    rig.last_mode = None
+    rig.last_reply = None
+    rig.send_line("DISABLE")
+    rig.pump(0.5)
+    if rig.last_mode == ("DISABLED", "NONE"):
+        return 0
+    print("DISABLE 未确认：MODE=%s，回执=%s。BUSY 时先 VEL 0 并观察停稳；FAULT 保留原故障。" % (rig.last_mode, rig.last_reply))
+    return 1
+
+
 def cmd_reset(rig, args):
     rig.send_line("RESET")
     rig.pump(0.3)
@@ -143,8 +154,7 @@ def cmd_reset(rig, args):
     if m and m[0] == "DISABLED":
         print("RESET → DISABLED")
         return 0
-    print("RESET 未生效（当前 %s；RESET 仅 FAULT 时有效——READY 下可手推小车"
-          " ≥3 mm 制造 STEP_LOSS 故障后再 RESET）" % (m,))
+    print("RESET 未生效（当前 %s；仅 FAULT 时有效。READY 下先发送 VEL 0，观察停稳后使用 disable；不要手推制造故障。）" % (m,))
     return 1
 
 
@@ -322,6 +332,7 @@ def main():
     sub.add_parser("wdt-test")
     sub.add_parser("console")
     sub.add_parser("reset")
+    sub.add_parser("disable")
 
     args = ap.parse_args()
     if args.cmd == "state":
@@ -338,7 +349,7 @@ def main():
             "mark-right": cmd_mark_right, "enable": cmd_enable, "vel": cmd_vel,
             "config": cmd_config, "dump": cmd_dump, "state": cmd_state,
             "wdt-test": cmd_wdt_test, "console": cmd_console,
-            "reset": cmd_reset,
+            "reset": cmd_reset, "disable": cmd_disable,
         }
         rc = table[args.cmd](rig, args)
     finally:

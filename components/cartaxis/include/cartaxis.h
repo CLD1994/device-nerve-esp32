@@ -26,6 +26,8 @@ void cartaxis_set_vel_mm_s(long v_mm_s);
 void cartaxis_halt(void);
 void cartaxis_stop(void);
 bool cartaxis_at_rest(void);
+/** 自然停稳后精确零速原子停表；调用方须串行化目标提交。 */
+bool cartaxis_try_stop_at_rest(void);
 int64_t cartaxis_cmd_position_um(void);
 void cartaxis_set_position_um(long um);   /* 前置：电机静止 */
 void cartaxis_set_accel_mm_s2(long a_mm_s2);

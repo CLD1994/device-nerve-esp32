@@ -117,6 +117,16 @@ python tools/cartpole_host.py --port COM11 --baud 460800 enable
 
 成功回执为 `[MODE] READY NONE`。确认左点本身不使能、不发送 STEP，也不自动移动。不要将保存验收直接接成高加速度试验；还需单独验证运动方向、限位和制动距离。若位置采样中断，保持禁用并重新确认参考，不以反复 ENABLE 绕过保护。
 
+### 正常停稳后返回禁用
+
+```powershell
+python tools/cartpole_host.py --port COM11 --baud 460800 vel 0
+# 人工观察停稳，再执行：
+python tools/cartpole_host.py --port COM11 --baud 460800 disable
+```
+
+必须收到`MODE DISABLED NONE`才按禁用状态继续操作。`ERR BUSY`表示引擎仍在运动，不能手推小车制造故障；等待停稳后重试。FAULT仍按原故障处理，RESET不是READY下的禁用命令。禁用后参考继续有效，但采样中断仍会使它失效；不得把引擎零速度当作机械停止保证。详见[禁用协议](protocol.md#正常停止后的禁用)。
+
 ## 物理条件与安全边界
 
 用户必须保证实际停在左标记，软件不能检测挡块或替用户确认物理位置。断电期间小车可以移动，但启动后仍需回到同一左标记确认，不能使用断电前的当前位置。

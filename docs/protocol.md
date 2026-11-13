@@ -3,7 +3,7 @@
 板对板 UART 直连（3.3 V TTL，共地），**460800 8N1**，ASCII 行文本。链路上分两个面，共用一条物理串口，按行首单词分发：
 
 - **数据面**：ESP32-S3 → CV610 的 500 Hz 状态流（`STATE` 行），只携带物理量遥测，不携带任何控制语义或状态标志。
-- **控制面**：双向的命令与应答。CV610 以命令驱动 ESP32-S3：运动命令（`VEL`）、标定与流程命令（`MARK LEFT`/`MARK RIGHT`/`ENABLE`/`RESET`）、状态查询（`QUERY`）、运行参数配置（`CONFIG`）。固件以模式事件（`MODE` 行）与配置/标定应答（`OK`/`ERR` 行）回应。
+- **控制面**：双向的命令与应答。CV610 以命令驱动 ESP32-S3：运动命令（`VEL`）、标定与流程命令（`MARK LEFT`/`MARK RIGHT`/`ENABLE`/`DISABLE`/`RESET`）、状态查询（`QUERY`）、运行参数配置（`CONFIG`）。固件以模式事件（`MODE` 行）与配置/标定应答（`OK`/`ERR` 行）回应。
 
 消息名与枚举值用完整英文单词，不用缩写——在 460800 下保留便于调试的可读格式，但必须计入带宽预算；字段保持固定顺序的十进制整数，不采用 key=value（每种行只有一个固定格式，键名重复约 40% 字节却不消除任何歧义）。所有行首单词与枚举词**大小写敏感，全大写**。
 
@@ -38,7 +38,7 @@ STATE <x_um> <theta_urad> <vx_mm_s> <vth_mrad_s>\n
 
 | 模式 | 电机 | 进入方式 |
 |---|---|---|
-| `DISABLED` | 关闭使能 | 上电默认；FAULT 经 `RESET` 清除后回到此态 |
+| `DISABLED` | 关闭使能 | 上电默认；正常停稳后DISABLE，或FAULT经RESET回到此态 |
 | `READY` | 使能，静止或跟踪 `VEL` | DISABLED 且两点标定完成后收到 `ENABLE` |
 | `FAULT` | 常规故障斜坡停机；POWER立即停止STEP并禁用 | 故障，见转换表 |
 
@@ -49,6 +49,7 @@ STATE <x_um> <theta_urad> <vx_mm_s> <vth_mrad_s>\n
 | DISABLED | `MARK LEFT` / `MARK RIGHT`（见标定决策表） | DISABLED |
 | DISABLED | `ENABLE`（标定完成 `CAL_DONE`） | READY |
 | READY | 丢步 / AS5600 或 MT6835 读取失败 / 供电失效 | FAULT |
+| READY | `DISABLE`且引擎精确零速 | DISABLED |
 | FAULT | 收到 `RESET` | DISABLED |
 
 ### `MODE` 行：模式事件与查询应答
@@ -78,6 +79,7 @@ MARK RIGHT\n              记右端并完成标定，回 OK MARK_RIGHT <L µm>
 CONFIRM LEFT\n           用已保存行程确认当前位置为左参考点；不使能
 CALIB?\n                 查询保存与本次定位状态（见标定保存指南）
 ENABLE\n                  标定完成且20V供电验证有效后使能进 READY，推 MODE READY NONE
+DISABLE\n                 READY且引擎零速时禁用；运动中ERR BUSY；FAULT不清除
 RESET\n                   清除 FAULT
 QUERY\n                   查询当前模式，回答一行 MODE
 CONFIG <NAME> <value>\n   设置运行参数，回答 OK 或 ERR
@@ -93,6 +95,7 @@ CONFIG?\n                 dump 全部参数（调试与日志记录用）
 | `VEL` | 忽略 | 执行 | 忽略 |
 | `MARK LEFT` / `MARK RIGHT` | 执行或 `ERR`（标定决策表） | `ERR` | `ERR` |
 | `ENABLE` | 供电验证有效且标定完成才执行，否则 `ERR POWER` / `ERR ENABLE` | 忽略 | 忽略 |
+| `DISABLE` | 幂等回MODE DISABLED NONE | 精确零速才禁用，否则ERR BUSY | 回当前MODE与原因，不改变故障 |
 | `RESET` | 忽略 | 忽略 | → DISABLED |
 | `QUERY` | 回 `MODE` | 回 `MODE` | 回 `MODE` |
 | `CONFIRM LEFT` | 执行或 `ERR`（见标定保存指南） | `ERR` | `ERR` |
@@ -172,3 +175,11 @@ ENABLE还要求供电验证有效；否则返回`ERR POWER`，不使能。供电
 运行中供电失败/样本超时触发`MODE FAULT POWER`，立即停止STEP并禁用驱动，不承诺缺电
 时的斜坡制动。`POWER`是新增reason值。RESET可将模式回DISABLED，但不会清除电源故障
 锁定；输入恢复也不自动使能，须排查后重启验证。原有标定使能前提不变。
+
+## 正常停止后的禁用
+
+`DISABLE` 不自动减速，不是急停。先发送 `VEL 0`，观察小车停稳，再执行主机工具的 `disable`。READY下只有步进引擎精确速度为零才清目标、停止发步并关闭EN，随后回`MODE DISABLED NONE`；速度非零时回`ERR BUSY`且不改变目标或模式。DISABLED下重复执行幂等；FAULT下仅回当前故障，不清故障或中断已有停机流程。
+
+速度判断与清目标在引擎锁内原子执行，输出锁防止并发VEL穿过禁用流程；后到VEL在DISABLED下忽略。禁用保留有效位置参考和保存参数，也不清供电失败锁；再次ENABLE仍需供电和参考门禁。
+
+引擎速度为零不证明机械静止。关闭EN会失去保持力，不得把本命令作为对滑行、外力或坠落的安全保证。不可手推制造丢步故障来代替禁用。

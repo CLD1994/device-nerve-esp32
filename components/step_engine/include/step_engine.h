@@ -40,6 +40,11 @@ esp_err_t step_engine_init(int step_gpio, int dir_gpio);
  */
 void step_engine_stop(void);
 
+/** 自然停稳后原子收口：精确Q16速度非零则false且状态不变；为零时
+ * 清目标、停表、清等待并返回true。调用方必须串行化后续目标提交。
+ * 不代表机械静止，也不替代运动中的急停。 */
+bool step_engine_try_stop_at_rest(void);
+
 /* ---- 速度模式 ---- */
 
 /**

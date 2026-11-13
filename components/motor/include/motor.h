@@ -34,6 +34,10 @@ void motor_stop(motor_handle_t m);
 /** true ⇔ 当前速度精确为零（引擎内部定点域判零，不经整数舍入）。 */
 bool motor_at_rest(motor_handle_t m);
 
+/** 自然停稳后原子检查精确零速并清目标停表；非零无副作用返回false。
+ * 调用方须阻止并发/后续速度提交；不能据此判断机械静止。 */
+bool motor_try_stop_at_rest(motor_handle_t m);
+
 /** 指令位置（微步，自上电累计）。 */
 int32_t motor_position_steps(motor_handle_t m);
 

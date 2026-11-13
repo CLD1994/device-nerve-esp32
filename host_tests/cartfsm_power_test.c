@@ -32,6 +32,7 @@ int64_t cartaxis_cmd_position_um(void) { return position; }
 void cartaxis_set_vel_mm_s(long x) { assert(power_test_lock_depth==1);velocity=x; }
 void cartaxis_halt(void) { assert(power_test_lock_depth==1);velocity=0; }
 void cartaxis_stop(void) { assert(power_test_lock_depth==1);velocity=0;stops++; }
+bool cartaxis_try_stop_at_rest(void) { assert(power_test_lock_depth==1);if(velocity!=0)return false;velocity=0;stops++;return true; }
 bool cartaxis_at_rest(void) { return velocity==0; }
 void cartaxis_set_accel_mm_s2(long x) { (void)x; }
 void cartaxis_set_decel_mm_s2(long x) { (void)x; }
@@ -63,5 +64,12 @@ int main(void) {
     reset();power=true;s_calib=CAL_PENDING;exec_enable();assert(!enabled && !strcmp(reply,"ERR ENABLE"));
     exec_confirm_left();assert(s_calib==CAL_DONE && !enabled);power=false;exec_enable();assert(!enabled && !strcmp(reply,"ERR POWER"));
     power=true;exec_enable();assert(enabled);enter_power_fault();exec_reset();referenced=false;exec_enable();assert(!enabled && s_calib==CAL_PENDING);
+    cart_req_t disable_req;assert(cartproto_parse_line("DISABLE",&disable_req));
+    reset();exec_cmd(&disable_req);assert(s_mode==CM_DISABLED && !enabled && !strcmp(reply,"MODE DISABLED NONE"));
+    power=true;exec_enable();exec_vel(50);exec_cmd(&disable_req);assert(s_mode==CM_READY && enabled && velocity==50 && !strcmp(reply,"ERR BUSY"));
+    exec_vel(0);exec_cmd(&disable_req);assert(s_mode==CM_DISABLED && !enabled && s_last_cmd_v==0 && s_calib==CAL_DONE);
+    exec_vel(100);assert(velocity==0);exec_enable();assert(enabled && s_mode==CM_READY);
+    enter_fault(CR_STEP_LOSS);exec_cmd(&disable_req);assert(s_mode==CM_FAULT && s_reason==CR_STEP_LOSS && s_fault_settling);
+    power=false;enter_power_fault();exec_cmd(&disable_req);assert(s_reason==CR_POWER && !enabled);exec_reset();exec_cmd(&disable_req);exec_enable();assert(!enabled && !strcmp(reply,"ERR POWER"));
     puts("cartfsm_power_test: all cases passed");
 }
