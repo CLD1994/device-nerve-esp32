@@ -1,7 +1,10 @@
 #include <assert.h>
 #include <stdio.h>
-#define ESP_LOGD(...) ((void)0)
-#include "../components/tmc2209/tmc2209.c"
+#include "tmc2209.h"
+#include "tmc2209_hw.h"
+#include "driver/gpio.h"
+#include "freertos/task.h"
+enum { REG_CHOPCONF=0x6c, REG_IHOLD_IRUN=0x10 };
 static uint32_t registers[128];
 static unsigned en_calls;
 bool tmc2209_write_reg(uint8_t r,uint32_t v) { registers[r]=v;return true; }
@@ -19,7 +22,7 @@ static void check(int run,int vsense,int csrun,int cshold) {
 int main(void) {
  tmc2209_config_t c={.r_sense=.11f,.init_run_ma=1500,.init_hold_ma=400,.init_microstep=8};
  assert(tmc2209_init(&c)==ESP_OK);
- assert(!s_vsense && ((registers[REG_IHOLD_IRUN]>>8)&31)==26);
+ assert(((registers[REG_CHOPCONF] >> 17) & 1) == 0 && ((registers[REG_IHOLD_IRUN]>>8)&31)==26);
  assert((registers[REG_IHOLD_IRUN]&31)==6 && en_calls==0);
  check(800,1,25,12);check(850,1,27,12);check(1200,0,21,6);check(1500,0,26,6);
  assert(tmc2209_set_current(300,400)==ESP_ERR_INVALID_ARG);

@@ -6,7 +6,7 @@
 python tools/tmc_readonly.py --port COM11 --baud 460800
 ```
 
-只发送 `TMC?`。READY、FAULT（即使已停稳）均拒绝；不会自动禁用、配置、写寄存器、使能或运动。禁用状态下持有既有 ENABLE/output 互斥门禁完成 UART 读取，释放后输出。不要在实时采样或运动路径调用。应答校验 CRC、0x05同步字节、0xff主机地址、匹配的寄存器和完整请求回声。
+只发送 `TMC?`。READY、FAULT（即使已停稳）均拒绝；不会自动禁用、配置、写寄存器、使能或运动。禁用状态下持有使能与输出互斥锁完成 UART 读取，释放后输出。不要在实时采样或运动路径调用。应答校验 CRC、0x05同步字节、0xff主机地址、匹配的寄存器和完整请求回声。
 
 协议逐行 `TMC1 NAME VALID RAW BEGIN_US END_US`，结束 `TMC1 END`。VALID=0时RAW=0只是占位，工具转换为null，不可作为有效值解码。五项独立读取，非原子/非同步；时标是软件UART调用包络。查询的是当前静止配置/状态，不能回溯STEP_LOSS瞬间。没有自动重试或为验证写入重写配置。
 
@@ -16,9 +16,9 @@ python tools/tmc_readonly.py --port COM11 --baud 460800
 - IOIN (0x06)：包含芯片版本与当前引脚状态。
 - DRV_STATUS (0x6f)：温度/短路/静止等状态与CS_ACTUAL。禁用/保持状态不能证明运行时电流。
 
-`IHOLD_IRUN`只写不可读，不请求此寄存器。软件请求电流不等于读回或测得相电流。现场已确认Rsense=0.11Ω；电流换算仍需结合VSENSE、模式及实际测量。低层写接口目前未增设IFCNT事务验证，本改动不把软件“已生效”日志升级为芯片验证结论。
+`IHOLD_IRUN`只写不可读，不请求此寄存器。软件请求电流不等于读回或测得相电流。现场已确认Rsense=0.11Ω；电流换算仍需结合VSENSE、模式及实际测量。写接口不通过 IFCNT 验证事务，因此初始化成功日志不能替代芯片读回验证。
 
-工具不调用flush；接收期限从write返回后计，不保证整个程序硬时限。UART读取可能阻塞，门禁只在禁用态允许，因此不会在运行态阻挡运动停机监督。实验固件已在静止真机上读出这些寄存器；该记录不等于所有硬件或运行状态均已验证。
+工具不调用flush；接收期限从write返回后计，不保证整个程序硬时限。UART读取可能阻塞，门禁只在禁用态允许，因此不会在运行态阻挡运动停机监督。静止查询不能用于判定运动中的故障原因。
 
 ## 默认电流与保存值
 
@@ -39,20 +39,11 @@ python tools/tmc_readonly.py --port COM11 --baud 460800
 ## 宿主检查
 
 ```bash
-python -m unittest discover -s tools -p 'test_tmc_readonly.py'
-cc -std=gnu17 -Wall -Wextra -Werror \
-  -Ihost_tests/tmc_current_stubs -Ihost_tests/power_stubs \
-  -Ihost_tests/step_engine_stubs -Ihost_tests/stub -Icomponents/tmc2209/include \
-  host_tests/tmc_current_test.c -lm -o /tmp/tmc-current && /tmp/tmc-current
-cc -std=gnu17 -Wall -Wextra -Werror \
-  -Ihost_tests/power_stubs -Icomponents/cartfsm/host_stub \
-  -Icomponents/cartcal/host_stub -Ihost_tests/stub \
-  $(find components -type d -name include -printf '-I%p ') \
-  host_tests/tmc_readonly_test.c components/cartfsm/cartfsm_core.c \
-  components/cartparams/params.c components/cartproto/cartproto_parse.c \
-  -lm -o /tmp/tmc-readonly && /tmp/tmc-readonly
+bash host_tests/test_tmc.sh
 ```
 
-这些检查隔离 UART、时钟、寄存器和任务，只验证软件请求、门禁和应答格式，
+测试通过 UART、时钟、寄存器和任务边界注入替身，以独立编译的生产模块验证公开接口。
+覆盖电流量程与编码、禁用态查询、运行态拒绝，以及 UART 短帧、回声不符、发送超时、
+错误响应身份和 CRC。失败读回必须保留调用者原有输出值。它们只验证软件行为，
 不证明 ESP-IDF 目标编译、实际电流或热稳定。settings 默认值断言位于组件 Unity 测试，
 需目标测试镜像单独执行。
