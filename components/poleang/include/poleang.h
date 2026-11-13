@@ -19,7 +19,8 @@ extern "C" {
 /** 绑定编码器实例。 */
 void poleang_init(magnetic_encoder_handle_t enc);
 
-/** 已标定摆角（±π 环绕 µrad）；首样本前为 0。 */
+/** 已标定摆角（±π 环绕 µrad）；单圈角读取语义见 magnetic_encoder_angle_counts。
+ * 首样本前使用缓存 0 换算，不代表有效机械角度。 */
 int32_t poleang_theta_urad(void);
 
 /** 已标定角速度（mrad/s，符号随 POLE_INV 翻转）；窗口未满为 0。 */

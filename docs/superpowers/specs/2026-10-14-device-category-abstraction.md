@@ -74,6 +74,7 @@
 | 函数 | 语义 |
 |---|---|
 | `int32_t magnetic_encoder_counts_per_rev(magnetic_encoder_handle_t)` | 每转原始计数（分辨率）：AS5600 为 4096，MT6835 为 2097152 |
+| `uint32_t magnetic_encoder_angle_counts(magnetic_encoder_handle_t)` | 最近有效采样的单圈绝对计数，范围 [0, counts_per_rev)，不以启动姿态归零，方向沿器件实现配置。首样本前缓存为 0；读失败保留上一值，数值不携带有效性；is_ok 初始为 true，不是已有有效样本或数据新鲜的证明。 |
 | `int64_t magnetic_encoder_position_counts(magnetic_encoder_handle_t)` | 多圈累计位置（accumulator，原始 counts，带符号，原生方向，自 init 累计）；首样本前为 0。int64 承载：连续单方向旋转不溢出（参考 espp 的溢出论证；本台位 int32 即够，类别层取通用宽度） |
 | `int32_t magnetic_encoder_velocity_counts_per_s(magnetic_encoder_handle_t)` | 角速度估计（counts/s，16 窗均值）。量化级 62.5 counts/s（16 ms 窗整数化）；窗口未满为 0 |
 | `bool magnetic_encoder_is_ok(magnetic_encoder_handle_t)` | 连续 ≥10 次读取失败为 false；一次成功即恢复 true |
@@ -129,7 +130,7 @@
 
 | 函数 | 语义 |
 |---|---|
-| `int32_t poleang_theta_urad(void)` | θ = ±π 环绕(counts × 2π ÷ counts_per_rev 对应角 − POLE_ZERO_URAD)，POLE_INV 为真时取反；首样本前为 0 |
+| `int32_t poleang_theta_urad(void)` | θ = ±π 环绕(angle_counts × 2π ÷ counts_per_rev − POLE_ZERO_URAD)，POLE_INV 为真时取反；不使用相对累计 position_counts。首次有效采样前的缓存换算结果不代表机械角度 |
 | `int32_t poleang_vth_mrad_s(void)` | round(counts/s × 2π × 1000 ÷ counts_per_rev)，符号随 POLE_INV；量化级细于旧实现的 1 mrad/s，与旧值相差 ≤1 mrad/s |
 | `bool poleang_is_ok(void)` | 转发 magnetic_encoder_is_ok |
 

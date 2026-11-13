@@ -63,7 +63,7 @@ typedef struct magnetic_encoder_inst_s {
     int64_t                      pos_counts;
     magnetic_encoder_vel_win_t   vel;       /* 16 ms 速度窗 */
     int32_t                      vel_counts_per_s;
-    uint32_t                     last_raw;  /* 最新原始角（器件自测面） */
+    uint32_t                     last_raw;  /* 最新单圈绝对角（类别契约与器件自测面） */
     uint8_t                      status;    /* 最新 STATUS（器件自测面） */
     magnetic_encoder_fail_t      fail;      /* 失败计数与健康位 */
 } magnetic_encoder_inst_t;
@@ -83,8 +83,9 @@ esp_err_t magnetic_encoder_skeleton_start(magnetic_encoder_inst_t *inst,
                                           void *impl_ctx,
                                           const char *name);
 
-/* 契约四函数的骨架公共实现（实现层把操作表指到这里，enc 即实例） */
+/* 契约函数的骨架公共实现（实现层把操作表指到这里，enc 即实例） */
 int32_t magnetic_encoder_inst_counts_per_rev(magnetic_encoder_handle_t enc);
+uint32_t magnetic_encoder_inst_angle_counts(magnetic_encoder_handle_t enc);
 int64_t  magnetic_encoder_inst_position_counts(magnetic_encoder_handle_t enc);
 int32_t  magnetic_encoder_inst_velocity_counts_per_s(magnetic_encoder_handle_t enc);
 bool     magnetic_encoder_inst_is_ok(magnetic_encoder_handle_t enc);

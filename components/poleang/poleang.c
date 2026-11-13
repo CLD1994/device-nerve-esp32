@@ -4,8 +4,8 @@
  * 零位与符号（POLE_ZERO_URAD / POLE_INV，来自 cartparams 注册表）
  * 在读取时应用。µrad 换算的整数算术与原 mt6835_raw_to_urad 逐位
  * 一致（u64 中间量、π = 3141592 / 2π = 6283185、±π 环绕、wrap 后
- * 符号翻转）；单圈角 = 多圈 counts 对每转计数取模（与原 last_raw
- * 同值，pos ≡ raw (mod cpr)）。参数写入瞬间 theta 与 vth 可能取到
+ * 符号翻转）；单圈绝对角由类别契约提供，不使用自启动累计位移。
+ * 参数写入瞬间 theta 与 vth 可能取到
  * 不同快照，200 Hz 下一帧自愈——与迁移前一致，接受。
  */
 #include "poleang.h"
@@ -30,10 +30,9 @@ int32_t poleang_theta_urad(void)
 {
     const fw_params_t *p = fw_params();
     int32_t cpr = magnetic_encoder_counts_per_rev(s_enc);
-    int64_t counts = magnetic_encoder_position_counts(s_enc);
-    uint32_t raw_mod = (uint32_t)(((counts % cpr) + cpr) % cpr);
+    uint32_t raw = magnetic_encoder_angle_counts(s_enc);
 
-    int64_t a = (int64_t)((uint64_t)raw_mod * (uint64_t)POLEANG_2PI_URAD
+    int64_t a = (int64_t)((uint64_t)raw * (uint64_t)POLEANG_2PI_URAD
                           / (uint64_t)cpr);
     a -= p->pole_zero_urad;
 

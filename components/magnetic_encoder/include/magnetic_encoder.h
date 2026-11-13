@@ -22,9 +22,10 @@ extern "C" {
 
 typedef struct magnetic_encoder_s *magnetic_encoder_handle_t;
 
-/** 操作表：实现填写四个函数指针；必须作为实例结构的首成员。 */
+/** 操作表：实现填写类别函数指针；必须作为实例结构的首成员。 */
 struct magnetic_encoder_s {
     int32_t (*counts_per_rev)(magnetic_encoder_handle_t enc);
+    uint32_t (*angle_counts)(magnetic_encoder_handle_t enc);
     int64_t  (*position_counts)(magnetic_encoder_handle_t enc);
     int32_t  (*velocity_counts_per_s)(magnetic_encoder_handle_t enc);
     bool     (*is_ok)(magnetic_encoder_handle_t enc);
@@ -34,6 +35,19 @@ struct magnetic_encoder_s {
 static inline int32_t magnetic_encoder_counts_per_rev(magnetic_encoder_handle_t enc)
 {
     return enc->counts_per_rev(enc);
+}
+
+/**
+ * @brief 最近一次有效采样的单圈绝对角，范围 [0, counts_per_rev)。
+ *
+ * 保留器件零位，不以启动姿态归零；方向沿实现配置（例如 AS5600
+ * 的 invert_dir），不是保证未经处理的寄存器值。首样本前缓存为 0，
+ * 读失败保留上次采样值。数值不携带有效性；is_ok 是连续读取失败
+ * 阈值状态，初始为 true，不能证明已有有效样本或数据新鲜。
+ */
+static inline uint32_t magnetic_encoder_angle_counts(magnetic_encoder_handle_t enc)
+{
+    return enc->angle_counts(enc);
 }
 
 /**
