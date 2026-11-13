@@ -1,7 +1,7 @@
 #include "probe_control.h"
 #include <string.h>
 static bool frequency(uint32_t n) {
-    const uint32_t values[] = {1000,5000,10000,16000,20000,22000,24000,28000,32000,40000};
+    const uint32_t values[] = {1000,5000,10000,16000,20000,22000,24000,28000,32000,40000,50000};
     for (unsigned i=0; i<sizeof(values)/sizeof(values[0]); ++i) if(n==values[i]) return true;
     return false;
 }
