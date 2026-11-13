@@ -16,4 +16,4 @@ endif()
 idf_component_register(SRCS ${me_srcs}
                     INCLUDE_DIRS "include"
                     REQUIRES freertos esp_driver_i2c esp_driver_spi
-                    PRIV_REQUIRES as5600 mt6835)
+                    PRIV_REQUIRES as5600 mt6835 esp_timer)

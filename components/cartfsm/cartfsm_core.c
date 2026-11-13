@@ -3,6 +3,7 @@
  */
 
 #include "cartfsm_core.h"
+#include "params.h"
 
 #include <stddef.h>
 
@@ -80,5 +81,5 @@ bool cm_step_loss(long e_um, long c_um, long step_loss_um)
 
 bool cm_calib_valid(long l_um)
 {
-    return l_um >= 100000L && l_um <= 1000000L;
+    return fw_calib_length_valid(l_um);
 }

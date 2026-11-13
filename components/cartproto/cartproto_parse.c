@@ -117,6 +117,10 @@ bool cartproto_parse_line(const char *line, cart_req_t *out)
             out->cmd = CART_CMD_ENABLE;
             return true;
         }
+        if (streq_n(line, cmd_len, "CALIB?")) {
+            out->cmd = CART_CMD_CALIB_QUERY;
+            return true;
+        }
         if (streq_n(line, cmd_len, "CONFIG?")) {
             out->cmd = CART_CMD_CONFIG_DUMP;
             return true;
@@ -128,6 +132,11 @@ bool cartproto_parse_line(const char *line, cart_req_t *out)
     size_t rest = cmd_len + 1;
     if (rest >= len) {
         return false;   /* 命令词后直接结束（如 "VEL "）——行尾空白已剥 */
+    }
+
+    if (streq_n(line, cmd_len, "CONFIRM") && streq_n(&line[rest], len - rest, "LEFT")) {
+        out->cmd = CART_CMD_CONFIRM_LEFT;
+        return true;
     }
 
     /* MARK <LEFT|RIGHT>：命令词 + 字面方向词（规格 §2） */

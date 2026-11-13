@@ -7,9 +7,13 @@
 #include "cartpos.h"
 
 #include <math.h>
+#include <limits.h>
+#include <inttypes.h>
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_timer.h"
 #include "settings.h"
 
 static const char *TAG = "cartpos";
@@ -19,23 +23,36 @@ static const char *TAG = "cartpos";
 static magnetic_encoder_handle_t s_enc;
 
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
-static long   s_offset_um = 0;     /* 原点偏移（µm 整数） */
+static int64_t s_offset_um = 0;     /* 原点偏移（µm 整数） */
 static double s_um_per_count = 0.0;
+static uint64_t s_scale_revision;
+static bool s_scale_valid;
+static bool s_reference_valid;
+static cartpos_reference_t s_reference;
+
+#define CARTPOS_REFERENCE_WINDOW_US 100000
+#define CARTPOS_REFERENCE_RANGE_UM 100
+#define CARTPOS_REFERENCE_POLL_MS 5
 
 static void refresh_scale(void)
 {
     float upr = settings_units_per_rev();
-    if (!(upr > 0.0f)) {
+    bool valid = isfinite(upr) && upr > 0.0f;
+    if (!valid) {
         ESP_LOGW(TAG, "invalid units_per_rev=%.3f — falling back to %.1f mm/rev",
                  (double)upr, (double)CARTPOS_DEFAULT_UPR);
         upr = CARTPOS_DEFAULT_UPR;
     }
 
     int32_t cpr = magnetic_encoder_counts_per_rev(s_enc);
-    double  umc = (double)upr * 1000.0 / (double)cpr;
+    valid = valid && cpr > 0;
+    double umc = cpr > 0 ? (double)upr * 1000.0 / (double)cpr : 0.0;
 
     portENTER_CRITICAL(&s_lock);
     s_um_per_count = umc;
+    s_scale_valid = valid;
+    s_scale_revision++;
+    s_reference_valid = false;
     portEXIT_CRITICAL(&s_lock);
 }
 
@@ -54,6 +71,10 @@ static void on_settings_change(int idx, float new_value)
 void cartpos_init(magnetic_encoder_handle_t enc)
 {
     s_enc = enc;
+    portENTER_CRITICAL(&s_lock);
+    s_offset_um = 0;
+    s_reference_valid = false;
+    portEXIT_CRITICAL(&s_lock);
     refresh_scale();
     if (!settings_subscribe(on_settings_change)) {
         ESP_LOGW(TAG, "settings 订阅失败（槽满）——每转行程变更不会生效");
@@ -61,19 +82,19 @@ void cartpos_init(magnetic_encoder_handle_t enc)
 }
 
 /* 无偏移原始位置（µm） */
-static long raw_um(int64_t counts)
+static int64_t raw_um(int64_t counts)
 {
     double umc;
     portENTER_CRITICAL(&s_lock);
     umc = s_um_per_count;
     portEXIT_CRITICAL(&s_lock);
-    return (long)llround((double)counts * umc);
+    return (int64_t)llround((double)counts * umc);
 }
 
 int64_t cartpos_position_um(void)
 {
     portENTER_CRITICAL(&s_lock);
-    long offset = s_offset_um;
+    int64_t offset = s_offset_um;
     portEXIT_CRITICAL(&s_lock);
     return raw_um(magnetic_encoder_position_counts(s_enc)) - offset;
 }
@@ -95,13 +116,146 @@ bool cartpos_is_ok(void)
 
 void cartpos_set_origin_mm(float new_pos_mm)
 {
-    long raw = raw_um(magnetic_encoder_position_counts(s_enc));
-    long offset = raw - (long)llround((double)new_pos_mm * 1000.0);
+    int64_t raw = raw_um(magnetic_encoder_position_counts(s_enc));
+    int64_t offset = raw - (int64_t)llround((double)new_pos_mm * 1000.0);
 
     portENTER_CRITICAL(&s_lock);
     s_offset_um = offset;
+    s_reference_valid = false;
     portEXIT_CRITICAL(&s_lock);
 
-    ESP_LOGI(TAG, "原点已重置：%.3f mm（原始 %.3f mm，偏移 %ld µm）",
+    ESP_LOGI(TAG, "原点已重置：%.3f mm（原始 %.3f mm，偏移 %" PRId64 " µm）",
              (double)new_pos_mm, (double)raw / 1000.0, offset);
+}
+
+/* 不以旧的 is_ok=true 或零速度推断已有有效、连续的新样本。 */
+static bool fresh_sample(magnetic_encoder_sample_t *sample)
+{
+    if (!magnetic_encoder_get_sample(s_enc, sample)) {
+        return false;
+    }
+    int64_t now = esp_timer_get_time();
+    return sample->valid && sample->ok && sample->last_attempt_ok
+        && sample->sampled_at_us >= 0 && sample->sampled_at_us <= now
+        && now - sample->sampled_at_us <= MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US;
+}
+
+static bool checked_raw_um(int64_t counts, double scale, int64_t *out)
+{
+    double value = (double)counts * scale;
+    /* double 的 INT64_MAX 向上舍入为 2^63；必须排除该边界。 */
+    if (!isfinite(value) || value >= 0x1p63 || value < -0x1p63) {
+        return false;
+    }
+    *out = (int64_t)llround(value);
+    return true;
+}
+
+bool cartpos_capture_reference(cartpos_reference_t *out)
+{
+    if (out == NULL || s_enc == NULL) {
+        return false;
+    }
+    double scale;
+    uint64_t revision;
+    bool scale_valid;
+    portENTER_CRITICAL(&s_lock);
+    scale = s_um_per_count;
+    revision = s_scale_revision;
+    scale_valid = s_scale_valid;
+    portEXIT_CRITICAL(&s_lock);
+    if (!scale_valid) {
+        return false;
+    }
+
+    magnetic_encoder_sample_t first;
+    int64_t min_um, max_um;
+    if (!fresh_sample(&first) || !checked_raw_um(first.position_counts, scale, &min_um)) {
+        return false;
+    }
+    max_um = min_um;
+    uint64_t previous_seq = first.sample_seq;
+    int64_t start = esp_timer_get_time();
+    int64_t last_check = start;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(CARTPOS_REFERENCE_POLL_MS) > 0
+                       ? pdMS_TO_TICKS(CARTPOS_REFERENCE_POLL_MS) : 1);
+        int64_t now = esp_timer_get_time();
+        if (now - last_check > MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US) {
+            return false;
+        }
+        last_check = now;
+        magnetic_encoder_sample_t current;
+        int64_t raw;
+        if (!fresh_sample(&current) || current.sample_seq <= previous_seq
+            || current.failure_seq != first.failure_seq
+            || current.continuity_seq != first.continuity_seq
+            || current.sampled_at_us < first.sampled_at_us
+            || !checked_raw_um(current.position_counts, scale, &raw)) {
+            return false;
+        }
+        previous_seq = current.sample_seq;
+        if (raw < min_um) min_um = raw;
+        if (raw > max_um) max_um = raw;
+        if ((uint64_t)max_um - (uint64_t)min_um > CARTPOS_REFERENCE_RANGE_UM) {
+            return false;
+        }
+        portENTER_CRITICAL(&s_lock);
+        bool same_scale = s_scale_valid && s_scale_revision == revision;
+        portEXIT_CRITICAL(&s_lock);
+        if (!same_scale) {
+            return false;
+        }
+        if (now - start >= CARTPOS_REFERENCE_WINDOW_US
+            && current.sampled_at_us - first.sampled_at_us >= CARTPOS_REFERENCE_WINDOW_US) {
+            *out = (cartpos_reference_t){
+                .raw_um = raw, .scale_revision = revision,
+                .failure_seq = current.failure_seq,
+                .continuity_seq = current.continuity_seq,
+            };
+            return true;
+        }
+        /* 采样时间未推进足够长时，不能无限等待。 */
+        if (esp_timer_get_time() - start > CARTPOS_REFERENCE_WINDOW_US
+                                          + MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US) {
+            return false;
+        }
+    }
+}
+
+bool cartpos_apply_reference(const cartpos_reference_t *ref, int64_t target_um)
+{
+    magnetic_encoder_sample_t current;
+    if (ref == NULL || !fresh_sample(&current)
+        || current.failure_seq != ref->failure_seq
+        || current.continuity_seq != ref->continuity_seq
+        || (target_um > 0 && ref->raw_um < INT64_MIN + target_um)
+        || (target_um < 0 && ref->raw_um > INT64_MAX + target_um)) {
+        return false;
+    }
+    portENTER_CRITICAL(&s_lock);
+    bool accepted = s_scale_valid && s_scale_revision == ref->scale_revision;
+    if (accepted) {
+        s_offset_um = ref->raw_um - target_um;
+        s_reference = *ref;
+        s_reference_valid = true;
+    }
+    portEXIT_CRITICAL(&s_lock);
+    return accepted;
+}
+
+bool cartpos_reference_is_valid(void)
+{
+    magnetic_encoder_sample_t current;
+    bool fresh = fresh_sample(&current);
+    portENTER_CRITICAL(&s_lock);
+    if (s_reference_valid && (!fresh || !s_scale_valid
+        || s_scale_revision != s_reference.scale_revision
+        || current.failure_seq != s_reference.failure_seq
+        || current.continuity_seq != s_reference.continuity_seq)) {
+        s_reference_valid = false;
+    }
+    bool valid = s_reference_valid;
+    portEXIT_CRITICAL(&s_lock);
+    return valid;
 }

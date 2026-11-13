@@ -18,6 +18,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
+#include "esp_timer.h"
 
 /* ---- 任务布局（契约不变量：CPU1、优先级 3、1 kHz） ---- */
 #define ME_SKELETON_PERIOD_MS   1
@@ -29,10 +30,12 @@
  * 状态发布（仅采样任务调用；首读时任务未起，同样安全）
  * ================================================================ */
 
-static void publish_sample(magnetic_encoder_inst_t *inst,
+static bool publish_sample(magnetic_encoder_inst_t *inst,
                            uint32_t raw, uint8_t status)
 {
+    int64_t now_us = esp_timer_get_time();
     portENTER_CRITICAL(&inst->lock);
+    bool recovered = magnetic_encoder_fail_step(&inst->fail, true);
 
     /* 多圈累计（首样本种子）+ 速度窗推进，一并原子发布 */
     int64_t pos = magnetic_encoder_tracker_update(
@@ -41,8 +44,17 @@ static void publish_sample(magnetic_encoder_inst_t *inst,
     inst->last_raw        = raw;
     inst->status          = status;
     inst->vel_counts_per_s = magnetic_encoder_vel_push(&inst->vel, pos);
+    if (inst->has_sample &&
+        now_us - inst->sampled_at_us > MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US) {
+        inst->continuity_seq++;
+    }
+    inst->sampled_at_us = now_us;
+    inst->sample_seq++;
+    inst->has_sample = true;
+    inst->last_attempt_ok = true;
 
     portEXIT_CRITICAL(&inst->lock);
+    return recovered;
 }
 
 /* 失败计数推进（与契约 is_ok 读同锁，保证 NOT OK 可见性同步） */
@@ -50,6 +62,10 @@ static bool fail_step_locked(magnetic_encoder_inst_t *inst, bool read_ok)
 {
     portENTER_CRITICAL(&inst->lock);
     bool event = magnetic_encoder_fail_step(&inst->fail, read_ok);
+    inst->last_attempt_ok = read_ok;
+    if (!read_ok) {
+        inst->failure_seq++;
+    }
     portEXIT_CRITICAL(&inst->lock);
     return event;
 }
@@ -84,12 +100,10 @@ static void skeleton_task(void *arg)
         uint8_t status = 0;
 
         if (inst->impl->read_frame(inst->impl_ctx, &raw, &status)) {
-            if (fail_step_locked(inst, true)) {
+            if (publish_sample(inst, raw, status)) {
                 ESP_LOGI(inst->name, "读取在连续 %d 次失败后恢复",
                          MAGNETIC_ENCODER_FAIL_LIMIT);
             }
-
-            publish_sample(inst, raw, status);
 
             if (inst->impl->on_sample != NULL) {
                 inst->impl->on_sample(inst->impl_ctx, status);
@@ -159,6 +173,28 @@ bool magnetic_encoder_inst_is_ok(magnetic_encoder_handle_t enc)
     return ok;
 }
 
+bool magnetic_encoder_inst_get_sample(magnetic_encoder_handle_t enc,
+                                      magnetic_encoder_sample_t *out)
+{
+    if (enc == NULL || out == NULL) {
+        return false;
+    }
+    magnetic_encoder_inst_t *inst = (magnetic_encoder_inst_t *)enc;
+    portENTER_CRITICAL(&inst->lock);
+    *out = (magnetic_encoder_sample_t){
+        .position_counts = inst->pos_counts,
+        .sampled_at_us = inst->sampled_at_us,
+        .sample_seq = inst->sample_seq,
+        .failure_seq = inst->failure_seq,
+        .continuity_seq = inst->continuity_seq,
+        .valid = inst->has_sample,
+        .last_attempt_ok = inst->last_attempt_ok,
+        .ok = inst->fail.ok,
+    };
+    portEXIT_CRITICAL(&inst->lock);
+    return true;
+}
+
 /* ================================================================
  * 生命周期
  * ================================================================ */
@@ -182,6 +218,7 @@ esp_err_t magnetic_encoder_skeleton_start(magnetic_encoder_inst_t *inst,
         .position_counts       = magnetic_encoder_inst_position_counts,
         .velocity_counts_per_s = magnetic_encoder_inst_velocity_counts_per_s,
         .is_ok                 = magnetic_encoder_inst_is_ok,
+        .get_sample            = magnetic_encoder_inst_get_sample,
     };
     inst->impl     = impl;
     inst->impl_ctx = impl_ctx;
@@ -198,6 +235,9 @@ esp_err_t magnetic_encoder_skeleton_start(magnetic_encoder_inst_t *inst,
         publish_sample(inst, raw, status);
         ESP_LOGI(name, "在线——首读 raw=%u（种子，pos=0）", raw);
     } else {
+        /* 首读失败计入序列，但保持原 is_ok 初始为 true 的语义。 */
+        inst->failure_seq++;
+        inst->last_attempt_ok = false;
         char desc[96];
         fail_desc_of(inst, desc, sizeof(desc));
         ESP_LOGW(name, "首读失败（%s）——采样任务将继续重试", desc);

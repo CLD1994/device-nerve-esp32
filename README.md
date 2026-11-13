@@ -138,6 +138,10 @@ gcc -std=c11 -Wall -Wextra -Werror \
 PD 供电、UART0 控制的空载相电流测量使用 `CURRENT_MEASUREMENT=ON` 独立入口，
 构建方法、指令、供电检查和示波器采集说明见[硬件测试指南](test/README.md)。
 
+## 标定持久化
+
+行程和摆角配置可保存到NVS，重启后须手推到同一左参考点并显式确认，不能直接使能。Windows控制口示例、首次保存、重启后左参考确认、回执核对与失败恢复见[标定保存指南](docs/calibration.md)。
+
 ## 联调
 
 `tools/cartpole_host.py`（`pip install pyserial`）：

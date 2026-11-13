@@ -70,6 +70,8 @@ MODE <mode> <reason>\n
 VEL <v_mm_s>\n            目标速度 [mm/s]，钳位 ±VEL_MAX 后斜坡跟踪
 MARK LEFT\n               记当前实测位置为左端，回 OK MARK_LEFT <E µm>
 MARK RIGHT\n              记右端并完成标定，回 OK MARK_RIGHT <L µm>
+CONFIRM LEFT\n           用已保存行程确认当前位置为左参考点；不使能
+CALIB?\n                 查询保存与本次定位状态（见标定保存指南）
 ENABLE\n                  标定完成后使能进 READY，推 MODE READY NONE
 RESET\n                   清除 FAULT
 QUERY\n                   查询当前模式，回答一行 MODE
@@ -77,7 +79,7 @@ CONFIG <NAME> <value>\n   设置运行参数，回答 OK 或 ERR
 CONFIG?\n                 dump 全部参数（调试与日志记录用）
 ```
 
-标定与回执原则：`MARK LEFT`/`MARK RIGHT`/`ENABLE` 仅 DISABLED 态接受；拒绝时回 `ERR MARK_LEFT`/`ERR MARK_RIGHT`/`ERR ENABLE`（回执名是单 token），状态保持。`VEL`/`RESET` 在不适用态静默忽略、无回执。标定决策表（`L = E_right − E_left` 合法窗 100000–1000000 µm，域反向得负即拒）与 ENABLE 动作次序见 `calib-spec.md`。
+标定与回执原则：`MARK LEFT`/`MARK RIGHT`/`ENABLE` 仅 DISABLED 态接受；拒绝时回 `ERR MARK_LEFT`/`ERR MARK_RIGHT`/`ERR ENABLE`（回执名是单 token），普通参数/模式拒绝时状态保持；存储与参考失败的语义见[标定保存指南](calibration.md)。`VEL`/`RESET` 在不适用态静默忽略、无回执。标定决策表（`L = E_right − E_left` 合法窗 100000–1000000 µm，域反向得负即拒）与 ENABLE 动作次序见 `calib-spec.md`。
 
 命令 × 模式矩阵（完整分类）：
 
@@ -88,7 +90,9 @@ CONFIG?\n                 dump 全部参数（调试与日志记录用）
 | `ENABLE` | 执行或 `ERR`（标定决策表） | 忽略 | 忽略 |
 | `RESET` | 忽略 | 忽略 | → DISABLED |
 | `QUERY` | 回 `MODE` | 回 `MODE` | 回 `MODE` |
-| `CONFIG` | 接受 | 接受 | 拒绝（`ERR`） |
+| `CONFIRM LEFT` | 执行或 `ERR`（见标定保存指南） | `ERR` | `ERR` |
+| `CALIB?` | 接受 | 接受 | 接受 |
+| `CONFIG` | 接受 | 仅非摆角/非X_INV参数 | 拒绝（`ERR`） |
 | `CONFIG?` | 接受 | 接受 | 接受 |
 
 `VEL` 语义：固件以不超过 `ACC_MAX` 的加速度向目标速度过渡，换向经零速；收到新 `VEL` 即更新目标并保持到下一条。非法行静默丢弃，目标不变。
@@ -111,13 +115,13 @@ CONFIG?\n                 dump 全部参数（调试与日志记录用）
 | `X_INV` | 0 | 0 – 1 | — | 小车 +x 方向翻转，使命令与 `x_um`/`vx_mm_s` 满足符号约定 |
 | `STEP_LOSS_UM` | 3000 | 500 – 20000 | µm | 丢步判定阈值：指令位置与 AS5600 实测偏差超过即 FAULT |
 
-`CONFIG` 语义：成功时回 `OK <NAME> <value>`（回显归一化后的值），参数立即生效；未知 NAME、超出范围、或当前模式为 FAULT 时回 `ERR <NAME>`。固件按上表默认值上电，默认值本身即安全可运行；端侧在会话开始时按自身 `config.h` 推送本台位参数——**参数权威在端侧，固件只持默认值**。表中后四项为台位标定量：符号与零位偏置使 §符号约定 可满足，`STEP_LOSS_UM` 须实机调校，标定结果由端侧 `config.h` 固化并随会话推送。运行中收紧限制（调低 `X_MARGIN_UM`/`ACC_MAX` 等）立即约束当前运动；放宽不产生任何主动运动。
+`CONFIG` 语义：成功时回 `OK <NAME> <value>`（回显归一化后的值），参数立即生效；未知 NAME、超出范围、或当前模式为 FAULT 时回 `ERR <NAME>`。`POLE_ZERO_URAD` 和 `POLE_INV` 仅在 DISABLED 接受，NVS提交成功后才应用和回OK，失败回 `ERR CAL_STORAGE`；重启恢复。`X_INV` 也仅在DISABLED修改。其他参数使用默认值或由端侧会话配置。完整持久化、重启参考门和故障语义见[标定保存指南](calibration.md)。运行中收紧限制（调低 `X_MARGIN_UM`/`ACC_MAX` 等）立即约束当前运动；放宽不产生任何主动运动。
 
 ## 符号约定（实机验证方法）
 
-摆角零位使用编码器的单圈绝对角，不以固件启动姿态归零。主机保存的
-`POLE_ZERO_URAD` 在机械安装和方向不变时可以跨重启复用，但固件参数仍按默认值
-启动，主机每次会话须重新下发零偏和 `POLE_INV`；本协议不隐含 NVS 保存。
+摆角零位使用编码器的单圈绝对角，不以固件启动姿态归零。固件保存的
+`POLE_ZERO_URAD` 和 `POLE_INV` 在机械安装和方向不变时可以跨重启复用，
+NVS恢复规则见[标定保存指南](calibration.md)。
 `RESET` 只清故障，不重置编码器累计状态或运行参数。
 若零偏来自旧固件的开机相对角，升级后须重新标定，不能直接沿用该数值。
 绝对角读取与累计位置的区别见
@@ -137,11 +141,11 @@ CONFIG?\n                 dump 全部参数（调试与日志记录用）
 1. 上电（DISABLED，状态流已在发送，摆杆自然下垂最安全）。
 2. 端侧开串口，发 `QUERY` 同步当前模式，不依赖可能错过的事件。
 3. 可选：`CONFIG` 推送本台位参数。
-4. 手推小车到最左端 → `MARK LEFT`；推到最右端 → `MARK RIGHT`（回显 `L`，肉眼核对 ≈530 mm）。
+4. 手推小车到最左端 → `MARK LEFT`；推到最右端 → `MARK RIGHT`（回显 `L`，核对本装置实际可移动行程）。
 5. 发 `ENABLE`，等 `MODE READY NONE`。
 6. 端侧以小速度 `VEL` 把小车从右端移到 0 附近。
 7. 人手把摆杆扶到直立附近，策略接管。
-8. FAULT 后：`RESET` → `ENABLE` 恢复（RAM 标定保留，无需重新标记）；断电则回第 4 步重新标定。
+8. FAULT 后：`RESET`，查询 `CALIB?`；位置连续性失效时先手推左参考并 `CONFIRM LEFT`，再 `ENABLE`。断电后有可用保存行程时也走左参考确认；无可用记录则回第 4 步两点标定。
 
 ## 未决事项
 

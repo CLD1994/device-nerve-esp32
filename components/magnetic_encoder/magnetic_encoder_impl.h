@@ -61,6 +61,12 @@ typedef struct magnetic_encoder_inst_s {
     portMUX_TYPE                 lock;
     magnetic_encoder_tracker_t   tracker;   /* 多圈累计（首样本种子） */
     int64_t                      pos_counts;
+    int64_t                      sampled_at_us;
+    uint64_t                     sample_seq;
+    uint64_t                     failure_seq;
+    uint64_t                     continuity_seq;
+    bool                         has_sample;
+    bool                         last_attempt_ok;
     magnetic_encoder_vel_win_t   vel;       /* 16 ms 速度窗 */
     int32_t                      vel_counts_per_s;
     uint32_t                     last_raw;  /* 最新单圈绝对角（类别契约与器件自测面） */
@@ -89,6 +95,8 @@ uint32_t magnetic_encoder_inst_angle_counts(magnetic_encoder_handle_t enc);
 int64_t  magnetic_encoder_inst_position_counts(magnetic_encoder_handle_t enc);
 int32_t  magnetic_encoder_inst_velocity_counts_per_s(magnetic_encoder_handle_t enc);
 bool     magnetic_encoder_inst_is_ok(magnetic_encoder_handle_t enc);
+bool magnetic_encoder_inst_get_sample(magnetic_encoder_handle_t enc,
+                                      magnetic_encoder_sample_t *out);
 
 #ifdef __cplusplus
 }
