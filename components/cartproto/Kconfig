@@ -2,8 +2,8 @@ menu "cartproto - cartpole 线协议通讯栈"
 
     config CARTPROTO_UART_BAUD
         int "协议通道（UART0）波特率"
-        default 10000000
-        range 9600 20000000
+        default 1000000
+        range 9600 2000000
         help
             与端侧（Hi3516CV610 / PC 联调）板对板链路的波特率，
             8N1。protocol.md 定为 460800；联调若不过降 230400。
