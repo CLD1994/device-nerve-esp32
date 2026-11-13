@@ -6,13 +6,13 @@ import unittest
 from unittest.mock import patch
 
 import cartpole_host as host
+from host_test_support import session, receive
 
 
 class RigStateTest(unittest.TestCase):
     def make_rig(self):
-        with patch.object(host.serial, "Serial") as serial_class, \
-                patch.object(host.time, "time", side_effect=[0.0, 1.0]):
-            return host.Rig("unused")
+        rig, self.port, _, _ = session(host.Rig)
+        return rig
 
     def test_no_initial_state(self):
         rig = self.make_rig()
@@ -21,14 +21,14 @@ class RigStateTest(unittest.TestCase):
     def test_invalid_state_does_not_create_sample(self):
         rig = self.make_rig()
         with contextlib.redirect_stdout(io.StringIO()):
-            rig._dispatch("STATE invalid 0 0 0")
+            receive(rig, self.port, "STATE invalid 0 0 0")
         self.assertIsNone(rig.last_state)
         self.assertEqual(rig.state_count, 0)
         self.assertEqual(rig.unknown_count, 1)
 
     def test_valid_state_sets_latest_sample(self):
         rig = self.make_rig()
-        rig._dispatch("STATE 80 -3141593 0 0")
+        receive(rig, self.port, "STATE 80 -3141593 0 0")
         self.assertEqual(rig.last_state, ["80", "-3141593", "0", "0"])
         self.assertEqual(rig.state_count, 1)
 
@@ -41,7 +41,7 @@ class RigStateTest(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertEqual(rig.state_count, 0)
         self.assertNotIn("x_um", output.getvalue())
-        rig.ser.write.assert_not_called()
+        self.assertEqual(self.port.writes, [])
 
 
 class StateRateTest(unittest.TestCase):

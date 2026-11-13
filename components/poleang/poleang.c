@@ -1,12 +1,7 @@
 /*
- * poleang — 摆角解释实现：encoder 角量 → 已标定摆角
- *
- * 零位与符号（POLE_ZERO_URAD / POLE_INV，来自 cartparams 注册表）
- * 在读取时应用。µrad 换算的整数算术与原 mt6835_raw_to_urad 逐位
- * 一致（u64 中间量、π = 3141592 / 2π = 6283185、±π 环绕、wrap 后
- * 符号翻转）；单圈绝对角由类别契约提供，不使用自启动累计位移。
- * 参数写入瞬间 theta 与 vth 可能取到
- * 不同快照，下一帧重新读取——与迁移前一致，接受。
+ * poleang 将编码器单圈角度和速度换算为标定后的摆角。
+ * 零位和方向来自运行参数；角度使用微弧度，速度使用毫弧度/秒。
+ * get_measurement 从同一路编码器快照生成整组结果。
  */
 #include "poleang.h"
 
@@ -79,6 +74,8 @@ bool poleang_get_measurement(poleang_measurement_t *out)
     double v = (double)sample.velocity_counts_per_s * POLEANG_2PI_URAD / cpr / 1000.0;
     if (p->pole_inv) { angle = -angle; v = -v; }
     if (!isfinite(v) || v < INT32_MIN || v > INT32_MAX) return false;
-    *out = (poleang_measurement_t){ .theta_urad = (int32_t)angle, .vth_mrad_s = (int32_t)llround(v) };
+    *out = (poleang_measurement_t){ .theta_urad = (int32_t)angle, .vth_mrad_s = (int32_t)llround(v),
+        .sampled_at_us = sample.sampled_at_us, .sample_seq = sample.sample_seq,
+        .velocity_span_us = sample.velocity_span_us };
     return true;
 }

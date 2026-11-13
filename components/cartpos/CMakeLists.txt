@@ -2,4 +2,4 @@
 idf_component_register(SRCS "cartpos.c"
                     INCLUDE_DIRS "include"
                     REQUIRES magnetic_encoder settings
-                    PRIV_REQUIRES esp_timer freertos cartparams)
+                    PRIV_REQUIRES esp_timer freertos)

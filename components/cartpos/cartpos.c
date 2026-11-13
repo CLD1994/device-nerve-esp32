@@ -2,7 +2,7 @@
  * cartpos — 小车位置解释实现
  *
  * 机械比例（每转行程 → µm/count）的唯一权威在本层：位置与速度同源
- * 同值。每转行程非法（≤0）回退 40 mm/rev 并告警（沿袭原 as5600 行为）。
+ * 同值。每转行程非法（≤0）回退 40 mm/rev 并告警。
  */
 #include "cartpos.h"
 
@@ -15,13 +15,13 @@
 #include "freertos/task.h"
 #include "esp_timer.h"
 #include "settings.h"
-#include "params.h"
 
 static const char *TAG = "cartpos";
 
 #define CARTPOS_DEFAULT_UPR  40.0f  /* fallback if units_per_rev is unusable */
 
 static magnetic_encoder_handle_t s_enc;
+static double s_max_velocity_mm_s;
 
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static int64_t s_offset_um = 0;     /* 原点偏移（µm 整数） */
@@ -51,10 +51,10 @@ static void refresh_scale(void)
     valid = valid && cpr > 0;
     double umc = cpr > 0 ? (double)upr * 1000.0 / (double)cpr : 0.0;
 
-    /* 以注册表允许的最大速度预算，而不是当前 VEL 命令。最多四分之一圈
+    /* 以装配层提供的最大速度预算，而不是当前运动命令。最多四分之一圈
      * 留出半圈解缠边界的裕量；这是工程策略，不是硬件实测上限。 */
-    long vmax = fw_params_max_value(FP_VEL_MAX);
-    double budget = valid && vmax > 0 ? floor(
+    double vmax = s_max_velocity_mm_s;
+    double budget = valid && isfinite(vmax) && vmax > 0 ? floor(
         floor(cpr / 4.0) * umc * 1000.0 / (double)vmax) : 0.0;
     int64_t gap = budget > MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US
         ? MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US : (int64_t)budget;
@@ -80,9 +80,10 @@ static void on_settings_change(int idx, float new_value)
     }
 }
 
-void cartpos_init(magnetic_encoder_handle_t enc)
+void cartpos_init(magnetic_encoder_handle_t enc, double max_velocity_mm_s)
 {
     s_enc = enc;
+    s_max_velocity_mm_s = max_velocity_mm_s;
     portENTER_CRITICAL(&s_lock);
     s_offset_um = 0;
     s_reference_valid = false;
@@ -305,6 +306,8 @@ bool cartpos_get_measurement(cartpos_measurement_t *out)
     double v = (double)sample.velocity_counts_per_s * scale / 1000.0;
     if (!valid || !isfinite(x) || !isfinite(v)
         || x < INT32_MIN || x > INT32_MAX || v < INT32_MIN || v > INT32_MAX) return false;
-    *out = (cartpos_measurement_t){ .x_um = (int32_t)llround(x), .vx_mm_s = (int32_t)llround(v) };
+    *out = (cartpos_measurement_t){ .x_um = (int32_t)llround(x), .vx_mm_s = (int32_t)llround(v),
+        .sampled_at_us = sample.sampled_at_us, .sample_seq = sample.sample_seq,
+        .velocity_span_us = sample.velocity_span_us };
     return true;
 }
