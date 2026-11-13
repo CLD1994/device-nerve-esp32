@@ -45,6 +45,17 @@ static void test_zero_and_negative(void)
     CHECK(strcmp(buf, "STATE -2147483647 2147483647 0 0") == 0, "int32 极值");
 }
 
+static void test_wire_lengths(void)
+{
+    char buf[64];
+    int n = telemetry_format_state(buf, sizeof(buf), -249, 3141592, 0, 0);
+    CHECK(n + 1 == 23, "静止示例含换行23字节");
+    n = telemetry_format_state(buf, sizeof(buf), INT32_MIN, INT32_MIN,
+                               INT32_MIN, INT32_MIN);
+    CHECK(n + 1 == 54, "最宽int32字段含换行54字节");
+    CHECK(n < (int)sizeof(buf), "最宽字段仍保留追加换行空间");
+}
+
 static void test_buffer_too_small(void)
 {
     char buf[39];   /* 最长合法行 54 字节 > 39 */
@@ -60,6 +71,7 @@ int main(void)
     test_basic_format();
     test_zero_and_negative();
     test_buffer_too_small();
+    test_wire_lengths();
 
     printf("telemetry_format_test: %d/%d 断言通过\n", s_run - s_fail, s_run);
     return s_fail;

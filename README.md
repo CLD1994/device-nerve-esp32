@@ -2,7 +2,7 @@
 
 cartpole 实验台的运动端固件：ESP32-S3 + TMC2209 步进驱动 +
 双 MT6835 编码器（板载测小车位置、外接测摆角）。上端（Hi3516CV610 或
-PC 联调机）通过串口以 **protocol.md 线协议** 驱动：200 Hz 状态流、
+PC 联调机）通过串口以 **protocol.md 线协议** 驱动：500 Hz 状态流、
 `VEL` 速度模式跟踪、手动两点标定（`MARK LEFT`/`MARK RIGHT`/`ENABLE`）、
 三态模式机与参数注册表。
 
@@ -64,7 +64,7 @@ components/
   mt6835/       MT6835 SPI 帧层 + ±π 环绕换算纯函数（驱动核心，经
                 magnetic_encoder 组合；帧格式抄录见
                 docs/reviews/T4-brief.md）
-  telemetry/    200 Hz STATE 组帧（纯函数 + 常开任务）
+  telemetry/    500 Hz STATE 组帧（纯函数 + 常开任务）
   settings/     NVS 机械参数（微步/每转整步数/每转行程/电流，索引 0–4）
   tmc2209/      驱动配置（电流/细分/EN，初值经 config 注入）（器件
                 驱动，经 motor 组合）
@@ -141,6 +141,16 @@ PD 供电、UART0 控制的空载相电流测量使用 `CURRENT_MEASUREMENT=ON` 
 ## 标定持久化
 
 行程和摆角配置可保存到NVS，重启后须手推到同一左参考点并显式确认，不能直接使能。Windows控制口示例、首次保存、重启后左参考确认、回执核对与失败恢复见[标定保存指南](docs/calibration.md)。
+
+## 状态报告频率
+
+STATE 目标报告率为 500 Hz（2 ms），不改变 ASCII 字段、编码器 1 kHz
+采样或 16 ms 速度估计窗口。固件构建会拒绝不能精确表示 1 ms 的 tick
+配置；项目默认 `CONFIG_FREERTOS_HZ=1000`。500 Hz 的现场稳定性仍需验证，
+不代表控制闭环或策略已经达到相同频率。
+
+编译检查、只读接收验收、带宽预算与回退方式见[状态流验证指南](docs/telemetry.md)。
+历史 200 Hz 验收数据不作为 500 Hz 的通过证据。
 
 ## 联调
 
