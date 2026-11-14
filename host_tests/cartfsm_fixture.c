@@ -97,3 +97,7 @@ void boot(void) {
 void cmd(cart_cmd_t c) { cart_req_t q={.cmd=c};reply[0]=0;dispatch(&q); }
 void velocity(int32_t v) { cart_req_t q={.cmd=CART_CMD_VEL,.v_mm_s=v};dispatch(&q); }
 void config(const char *name,long value) { cart_req_t q={.cmd=CART_CMD_CONFIG_SET,.value=value};snprintf(q.name,sizeof(q.name),"%s",name);dispatch(&q); }
+
+/* 本 fixture 不发起 TMC 查询，诊断契约由 tmc_readonly_test 覆盖。 */
+bool tmc2209_read_reg(uint8_t reg, uint32_t *out) { (void)reg; (void)out; assert(!"unexpected TMC query"); return false; }
+bool cartaxis_peek_at_rest(void) { return axis_rest; }

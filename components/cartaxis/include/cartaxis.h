@@ -26,6 +26,8 @@ void cartaxis_set_vel_mm_s(long v_mm_s);
 void cartaxis_halt(void);
 void cartaxis_stop(void);
 bool cartaxis_at_rest(void);
+/** 只观察引擎零速；不应用挂起细分、不写寄存器或重定基。 */
+bool cartaxis_peek_at_rest(void);
 /** 自然停稳后精确零速原子停表；调用方须串行化目标提交。 */
 bool cartaxis_try_stop_at_rest(void);
 int64_t cartaxis_cmd_position_um(void);

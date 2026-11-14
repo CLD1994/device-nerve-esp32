@@ -79,3 +79,4 @@ int main(int argc,char **argv) {
     else { assert(!strcmp(argv[1],"valid"));valid_record(); }
     printf("cartfsm calibration (%s): all assertions passed\n",argv[1]);
 }
+

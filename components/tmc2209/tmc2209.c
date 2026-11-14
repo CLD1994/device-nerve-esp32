@@ -154,6 +154,18 @@ int tmc2209_ma_to_cs(int ma, float r_sense)
     return cs;
 }
 
+/* Both fields share the ONE hardware VSENSE selected from run current. */
+static int ma_to_cs_at_vsense(int ma, float r_sense, bool vsense)
+{
+    if (ma <= 0) return 0;
+    const float v_fs = vsense ? 0.180f : 0.325f;
+    int cs = (int)roundf(32.0f * sqrtf(2.0f) * ((float)ma / 1000.0f)
+                        * (r_sense + 0.02f) / v_fs - 1.0f);
+    if (cs < 0) cs = 0;
+    if (cs > 31) cs = 31;
+    return cs;
+}
+
 int tmc2209_microstep_to_mres(int ms)
 {
     switch (ms) {
@@ -195,9 +207,9 @@ esp_err_t tmc2209_set_current(int run_ma, int hold_ma)
         return ESP_ERR_INVALID_ARG;
     }
 
-    int cs_run = tmc2209_ma_to_cs(run_ma, s_cfg.r_sense);
-    int cs_hold = tmc2209_ma_to_cs(hold_ma, s_cfg.r_sense);
     bool new_vsense = calc_vsense(run_ma, s_cfg.r_sense);
+    int cs_run = ma_to_cs_at_vsense(run_ma, s_cfg.r_sense, new_vsense);
+    int cs_hold = ma_to_cs_at_vsense(hold_ma, s_cfg.r_sense, new_vsense);
 
     /* If VSENSE changed, update CHOPCONF first */
     if (new_vsense != s_vsense) {
@@ -340,8 +352,8 @@ static esp_err_t apply_default_registers(void)
     }
 
     /* IHOLD_IRUN: current from config */
-    int cs_run = tmc2209_ma_to_cs(s_cfg.init_run_ma, s_cfg.r_sense);
-    int cs_hold = tmc2209_ma_to_cs(s_cfg.init_hold_ma, s_cfg.r_sense);
+    int cs_run = ma_to_cs_at_vsense(s_cfg.init_run_ma, s_cfg.r_sense, s_vsense);
+    int cs_hold = ma_to_cs_at_vsense(s_cfg.init_hold_ma, s_cfg.r_sense, s_vsense);
     uint32_t ihold_irun =
         ((uint32_t)cs_hold << IHOLD_IRUN_IHOLD_SHIFT) |
         ((uint32_t)cs_run  << IHOLD_IRUN_IRUN_SHIFT)  |

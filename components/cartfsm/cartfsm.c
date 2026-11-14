@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <inttypes.h>
 #include "esp_timer.h"
+#include "tmc2209.h"
 #include "cartfsm_step_loss_diag.h"
 
 #include "freertos/FreeRTOS.h"
@@ -569,6 +570,41 @@ static void exec_config_dump(void)
     }
 }
 
+/* Only disabled: no running safety path waits behind diagnostic UART IO.
+ * Keep the existing ENABLE/output mutex throughout the reads, never TX while held.
+ * No writes, no implicit disable, and no attempt to read write-only IHOLD_IRUN. */
+static void exec_tmc_query(void)
+{
+    static const struct { uint8_t address; const char *name; } registers[] = {
+        {0x00, "GCONF"}, {0x6c, "CHOPCONF"}, {0x02, "IFCNT"},
+        {0x06, "IOIN"}, {0x6f, "DRV_STATUS"},
+    };
+    enum { REGISTER_COUNT = sizeof(registers) / sizeof(registers[0]) };
+    struct { uint32_t value; bool valid; int64_t begin_us, end_us; } readings[REGISTER_COUNT] = {0};
+    xSemaphoreTake(s_output_lock, portMAX_DELAY);
+    if (s_mode != CM_DISABLED || !cartaxis_peek_at_rest()) {
+        xSemaphoreGive(s_output_lock);
+        cartproto_send_err("TMC_BUSY");
+        return;
+    }
+    for (unsigned i = 0; i < REGISTER_COUNT; ++i) {
+        readings[i].begin_us = esp_timer_get_time();
+        readings[i].valid = tmc2209_read_reg(registers[i].address, &readings[i].value);
+        if (!readings[i].valid) readings[i].value = 0; /* 无效占位，不作为读回值。 */
+        readings[i].end_us = esp_timer_get_time();
+    }
+    xSemaphoreGive(s_output_lock);
+    for (unsigned i = 0; i < REGISTER_COUNT; ++i) {
+        char line[144];
+        int n = snprintf(line, sizeof(line), "TMC1 %s %u %" PRIu32 " %" PRId64 " %" PRId64 "\n",
+                         registers[i].name, (unsigned)readings[i].valid, readings[i].value,
+                         readings[i].begin_us, readings[i].end_us);
+        if (n > 0 && n < (int)sizeof(line)) cartproto_send_raw(line, n);
+        else { cartproto_send_err("TMC_FORMAT"); return; }
+    }
+    cartproto_send_raw("TMC1 END\n",9);
+}
+
 static void exec_steploss_query(void)
 {
 #ifndef CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS
@@ -616,6 +652,7 @@ static void exec_steploss_query(void)
 static void exec_cmd(const cart_req_t *req)
 {
     switch (req->cmd) {
+    case CART_CMD_TMC_QUERY: exec_tmc_query(); break;
     case CART_CMD_QUERY:       exec_query(); break;
     case CART_CMD_STEPLOSS_QUERY: exec_steploss_query(); break;
     case CART_CMD_CONFIRM_LEFT: exec_confirm_left(); break;

@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 #include "cartfsm.h"
+#include "tmc2209.h"
+#include "esp_timer.h"
 #include "cartpos.h"
 #include "cartcal.h"
 #include "cartaxis.h"
@@ -130,3 +132,7 @@ int main(int argc,char **argv) {
     else { assert(!stored);power=true;cmd(CART_CMD_ENABLE);assert(!enabled && cartfsm_calib()==CAL_NONE && !strcmp(reply,"ERR ENABLE")); }
     printf("cartfsm power (%s): all assertions passed\n",argv[1]);
 }
+
+/* TMC 查询的协作者；本套件不发起诊断，诊断行为由独立套件覆盖。 */
+bool tmc2209_read_reg(uint8_t reg, uint32_t *out) { (void)reg; (void)out; assert(!"unexpected TMC query"); return false; }
+bool cartaxis_peek_at_rest(void) { return resting; }

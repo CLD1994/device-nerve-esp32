@@ -4,7 +4,7 @@
  * UART frame format (verified against TMCStepper + datasheet):
  *   Write:  [SYNC=0x05][slave_addr][reg_addr | 0x80][data3..0][CRC]  (8 bytes)
  *   Read:   [SYNC=0x05][slave_addr][reg_addr | 0x00][CRC]            (4 bytes sent)
- *   Reply:  [SYNC=0x05][slave_addr][reg_addr][data3..0][CRC]          (8 bytes received)
+ *   Reply:  [SYNC=0x05][master_addr=0xff][reg_addr][data3..0][CRC]          (8 bytes received)
  *
  * Echo handling: TX is connected through 1kΩ to the PDN_UART node,
  * and RX is directly connected to the same node.  Every byte we
@@ -22,6 +22,7 @@
 
 #include <string.h>
 
+#include "tmc2209_response.h"
 #include "tmc2209.h"     /* public 声明：read_reg / write_reg / crc8 在本层实现 */
 #include "esp_log.h"
 #include "driver/uart.h"
@@ -99,10 +100,10 @@ static void build_read_dgram(uint8_t *buf, uint8_t slave_addr, uint8_t reg)
 
 /* Parse a response datagram (8 bytes) → register value.
  * Returns true if CRC matches. */
-static bool parse_response_dgram(const uint8_t *buf, uint32_t *val)
+static bool parse_response_dgram(const uint8_t *buf, uint8_t reg, uint32_t *val)
 {
     uint8_t crc = tmc2209_crc8(buf, 7);
-    if (crc != buf[7]) {
+    if (!tmc2209_response_matches(buf, reg, crc)) {
         return false;
     }
     *val = ((uint32_t)buf[3] << 24) |
@@ -161,15 +162,12 @@ static bool uart_read_reg_locked(uint8_t reg, uint32_t *val)
         return false;
     }
 
-    uart_wait_tx_done(s_cfg.uart_num, pdMS_TO_TICKS(10));
+    if (uart_wait_tx_done(s_cfg.uart_num, pdMS_TO_TICKS(10)) != ESP_OK) return false;
 
     /* Discard echo of the 4-byte request */
     uint8_t echo_buf[4];
     int echo_rx = uart_read_bytes(s_cfg.uart_num, echo_buf, 4, pdMS_TO_TICKS(10));
-    if (echo_rx < 4) {
-        ESP_LOGD(TAG, "read_reg: echo short %d/4", echo_rx);
-        /* Continue anyway — maybe we started reading mid-echo */
-    }
+    if (echo_rx != 4 || memcmp(echo_buf, tx_dgram, 4) != 0) return false;
 
     /* Read 8-byte response from slave */
     uint8_t resp_buf[8];
@@ -180,7 +178,7 @@ static bool uart_read_reg_locked(uint8_t reg, uint32_t *val)
         return false;
     }
 
-    return parse_response_dgram(resp_buf, val);
+    return parse_response_dgram(resp_buf, reg, val);
 }
 
 /* ================================================================

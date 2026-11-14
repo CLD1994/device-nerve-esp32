@@ -231,6 +231,11 @@ VEL_VALID <cart> <pole>
 重新播种，且锁存参考失效。速度窗口恢复不能恢复丢失的圈数；必须在 DISABLED 下
 按[标定保存指南](calibration.md)重新确认参考。此工程预算不保证外力超速时仍能正确解缠。
 
+## TMC 只读核查
+
+`TMC?` 仅在 `DISABLED` 且软件 STEP 引擎静止时允许，其他状态返回 `ERR TMC_BUSY`。
+返回 `TMC1 NAME VALID RAW BEGIN_US END_US` 五行及 `TMC1 END`，不改变配置或使能。
+字段、静止读数限制及 Windows 使用方式见 [TMC 只读诊断](tmc-readonly.md)。
 ### STEP_LOSS 可选故障快照
 
 `STEPLOSS?` 需要构建时开启 `CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS`（默认关闭）。
