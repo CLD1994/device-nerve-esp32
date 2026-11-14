@@ -32,15 +32,25 @@ int main(void) {
     poleang_measurement_t pole={.theta_urad=123,.vth_mrad_s=456};
     assert(cartpos_get_measurement(&cart)); assert(cart.x_um==20000 && cart.vx_mm_s==40);
     assert(poleang_get_measurement(&pole)); assert(pole.theta_urad==1570796 && pole.vth_mrad_s==6283);
+    cartpos_supervision_t supervision;
+    assert(cartpos_get_supervision(&supervision));
+    assert(supervision.position_um==20000 && supervision.sample.position_counts==2000);
+    assert(supervision.velocity_mm_s==40 && supervision.sample.sampled_at_us==1000000);
     assert(cart.sampled_at_us==1000000 && cart.sample_seq==42 && cart.velocity_span_us==16000);
     assert(pole.sampled_at_us==1000000 && pole.sample_seq==42 && pole.velocity_span_us==16000);
     params.pole_inv=1;
     assert(poleang_get_measurement(&pole)); assert(pole.theta_urad==-1570796 && pole.vth_mrad_s==-6283);
     sample.velocity_valid=false;
+    assert(cartpos_get_supervision(&supervision) && !supervision.sample.velocity_valid);
+    assert(supervision.position_um==20000); /* 预热不改变位置监督判据。 */
     assert(!cartpos_get_measurement(&cart)); assert(cart.x_um==20000 && cart.vx_mm_s==40);
     assert(!poleang_get_measurement(&pole)); assert(pole.theta_urad==-1570796);
     sample.velocity_valid=true; available=false;
     assert(!cartpos_get_measurement(&cart)); assert(!poleang_get_measurement(&pole));
+    cartpos_supervision_t retained=supervision;
+    assert(!cartpos_get_supervision(&supervision));
+    assert(supervision.position_um==retained.position_um && supervision.sample.sample_seq==retained.sample.sample_seq);
+    assert(!cartpos_get_supervision(NULL));
     available=true; sample.last_attempt_ok=false;
     assert(!cartpos_get_measurement(&cart)); assert(!poleang_get_measurement(&pole));
     sample.last_attempt_ok=true; upr=0; callback(SET_MM_PER_REV,0);

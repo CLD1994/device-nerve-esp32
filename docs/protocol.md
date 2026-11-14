@@ -228,3 +228,13 @@ VEL_VALID <cart> <pole>
 四分之一圈的位移预算。超过时间预算或时钟不递增时保留累计基准，以当前原始角度
 重新播种，且锁存参考失效。速度窗口恢复不能恢复丢失的圈数；必须在 DISABLED 下
 按[标定保存指南](calibration.md)重新确认参考。此工程预算不保证外力超速时仍能正确解缠。
+
+### STEP_LOSS 可选故障快照
+
+`STEPLOSS?` 需要构建时开启 `CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS`（默认关闭）。
+关闭时在任何模式返回 `ERR STEPLOSS_DISABLED`；失步检测和故障停车不受影响。
+开启时在DISABLED或FAULT已停稳时导出最后一条被接受的STEP_LOSS证据，
+READY或仍减速时回`ERR STEPLOSS_BUSY`，无记录回`ERR STEPLOSS_NONE`。
+应答采用`SL1 <event_id> <field> <integer>`逐字段输出并以`END 1`结束。
+记录是设备固定RAM中的触发拍，不是MODE输出时的状态，不改变原故障判断。
+字段、工具、生命周期及非同步限制见[STEP_LOSS诊断](step-loss-diagnostic.md)。

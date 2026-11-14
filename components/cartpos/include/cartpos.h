@@ -28,6 +28,17 @@ int64_t cartpos_position_um(void);
 /** 缓存速度；不携带有效性，不可用作停稳或安全判断。 */
 float cartpos_velocity_mm_s(void);
 
+/** 监督证据：位置与编码器元数据来自同一次快照。
+ * true仅表示取得快照且位置可换算，不保证样本新鲜、速度有效或位置参考有效。
+ * 调用者须分别检查监督前提与sample元数据；本接口不改变故障门限。
+ * false时不修改out。 */
+typedef struct {
+    int64_t position_um;
+    int32_t velocity_mm_s;
+    magnetic_encoder_sample_t sample;
+} cartpos_supervision_t;
+bool cartpos_get_supervision(cartpos_supervision_t *out);
+
 typedef struct {
     int32_t x_um;
     int32_t vx_mm_s;
