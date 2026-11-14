@@ -1,7 +1,7 @@
 /*
  * magnetic_encoder_skeleton — 采样骨架（类别组件内部）
  *
- * 默认 1 kHz、可选 2 kHz 任务（CPU1、优先级3）调用单次采样服务。服务通过注入的读帧
+ * 默认 2 kHz、可回退 1 kHz 任务（CPU1、优先级3）调用单次采样服务。服务通过注入的读帧
  * 回调访问总线，并用单调时钟记录完成时间。失败计数、速度窗和快照
  * 均属于实例状态；公开快照读取与发布共用实例锁。
  *
@@ -127,7 +127,7 @@ bool magnetic_encoder_sampler_sample_once(magnetic_encoder_inst_t *inst)
  * 采样任务（CPU1）
  * ================================================================ */
 
-#ifdef CONFIG_MAGNETIC_ENCODER_EXPERIMENT_2KHZ
+#ifdef CONFIG_MAGNETIC_ENCODER_SAMPLING_2KHZ
 /* esp_timer 任务回调只通知，不执行SPI，也不在回调内补采。 */
 static void sampling_tick(void *arg)
 {
@@ -168,7 +168,7 @@ static void skeleton_task(void *arg)
 {
     magnetic_encoder_inst_t *inst = (magnetic_encoder_inst_t *)arg;
 
-#ifdef CONFIG_MAGNETIC_ENCODER_EXPERIMENT_2KHZ
+#ifdef CONFIG_MAGNETIC_ENCODER_SAMPLING_2KHZ
     int64_t last_cycle = -1;
 #else
     TickType_t last_wake = xTaskGetTickCount();
@@ -179,7 +179,7 @@ static void skeleton_task(void *arg)
 
     while (1) {
         int64_t notified_at = -1;
-#ifdef CONFIG_MAGNETIC_ENCODER_EXPERIMENT_2KHZ
+#ifdef CONFIG_MAGNETIC_ENCODER_SAMPLING_2KHZ
         uint32_t notices = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         portENTER_CRITICAL(&inst->lock);
         notified_at = inst->notified_at_us;
@@ -213,7 +213,7 @@ static void skeleton_task(void *arg)
         magnetic_encoder_sampling_record(&inst->sampling_stats, begin, read_end,
             work_end, notified_at, read_ok);
         portEXIT_CRITICAL(&inst->lock);
-#ifdef CONFIG_MAGNETIC_ENCODER_EXPERIMENT_2KHZ
+#ifdef CONFIG_MAGNETIC_ENCODER_SAMPLING_2KHZ
         /* 读取期间积压的通知不补采；下一轮只等待后续通知。实际周期编号
          * 再次去重，防止延迟回调在同一周期反复触发读取。 */
         uint32_t discarded = ulTaskNotifyTake(pdTRUE, 0);
@@ -388,7 +388,7 @@ esp_err_t magnetic_encoder_skeleton_start(magnetic_encoder_inst_t *inst,
                                                     monotonic_clock, NULL);
     if (result != ESP_OK) return result;
 
-#ifdef CONFIG_MAGNETIC_ENCODER_EXPERIMENT_2KHZ
+#ifdef CONFIG_MAGNETIC_ENCODER_SAMPLING_2KHZ
     esp_timer_create_args_t timer_args = {
         .callback = sampling_tick, .arg = inst, .dispatch_method = ESP_TIMER_TASK,
         .name = name, .skip_unhandled_events = true,
@@ -405,13 +405,13 @@ esp_err_t magnetic_encoder_skeleton_start(magnetic_encoder_inst_t *inst,
                                             ME_SKELETON_TASK_PRIO, task_out,
                                             ME_SKELETON_TASK_CORE);
     if (ok != pdPASS) {
-#ifdef CONFIG_MAGNETIC_ENCODER_EXPERIMENT_2KHZ
+#ifdef CONFIG_MAGNETIC_ENCODER_SAMPLING_2KHZ
         esp_timer_delete(inst->sample_timer);
 #endif
         ESP_LOGE(name, "创建采样任务失败");
         return ESP_ERR_NO_MEM;
     }
-#ifdef CONFIG_MAGNETIC_ENCODER_EXPERIMENT_2KHZ
+#ifdef CONFIG_MAGNETIC_ENCODER_SAMPLING_2KHZ
     inst->timer_epoch_us = esp_timer_get_time();
     err = esp_timer_start_periodic(inst->sample_timer, ME_SAMPLE_PERIOD_US);
     if (err != ESP_OK) {

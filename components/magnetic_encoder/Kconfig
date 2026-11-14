@@ -8,16 +8,17 @@ config MAGNETIC_ENCODER_MT6835
     bool "编入 MT6835 实现（SPI，21-bit，摆角编码器）"
     default y
 
-config MAGNETIC_ENCODER_EXPERIMENT_2KHZ
-    bool "实验：编码器任务采样目标 2 kHz（不提高 SPI 频率）"
-    default n
+config MAGNETIC_ENCODER_SAMPLING_2KHZ
+    bool "编码器任务采样目标 2 kHz（关闭时为 1 kHz）"
+    default y
     help
         使用 esp_timer 通知采样任务。过期通知不补采，任务优先级仍为3。
-        速度窗为33点、名义16ms；这是试验目标，须真机测量验证。
+        速度窗为33点、名义16ms；2 kHz 已在当前装置完成实验验证。
+        目标周期为500us，不保证严格均匀采样或所有负载下无跳采。
 
 config MAGNETIC_ENCODER_SAMPLING_STATS
     bool "输出编码器RAM采样统计（独立低优先级任务，每5秒）"
-    default y if MAGNETIC_ENCODER_EXPERIMENT_2KHZ
+    default y if MAGNETIC_ENCODER_SAMPLING_2KHZ
     default n
     help
         统计每路成功间隔、任务通知延迟、读帧耗时、超期和错误。

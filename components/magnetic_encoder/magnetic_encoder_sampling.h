@@ -1,11 +1,11 @@
-/* 采样实验时基与纯统计逻辑；不访问硬件或RTOS。 */
+/* 采样时基与纯统计逻辑；不访问硬件或RTOS。 */
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
 #ifdef ESP_PLATFORM
 #include "sdkconfig.h"
 #endif
-#ifdef CONFIG_MAGNETIC_ENCODER_EXPERIMENT_2KHZ
+#ifdef CONFIG_MAGNETIC_ENCODER_SAMPLING_2KHZ
 #define ME_SAMPLE_PERIOD_US 500
 #else
 #define ME_SAMPLE_PERIOD_US 1000
