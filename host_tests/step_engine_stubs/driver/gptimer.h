@@ -12,7 +12,7 @@ typedef struct {bool(*on_alarm)(gptimer_handle_t,const gptimer_alarm_event_data_
 esp_err_t gptimer_stop(gptimer_handle_t t);
 esp_err_t gptimer_start(gptimer_handle_t t);
 esp_err_t gptimer_set_alarm_action(gptimer_handle_t t,const gptimer_alarm_config_t *a);
-static inline esp_err_t gptimer_new_timer(const gptimer_config_t*c,gptimer_handle_t*t) {(void)c;*t=(void*)1;return ESP_OK;}
-static inline esp_err_t gptimer_register_event_callbacks(gptimer_handle_t t,const gptimer_event_callbacks_t*c,void*a) {(void)t;(void)c;(void)a;return ESP_OK;}
-static inline esp_err_t gptimer_enable(gptimer_handle_t t) {(void)t;return ESP_OK;}
-static inline esp_err_t gptimer_get_raw_count(gptimer_handle_t t,uint64_t*v) {(void)t;*v=1000;return ESP_OK;}
+esp_err_t gptimer_new_timer(const gptimer_config_t *c, gptimer_handle_t *t);
+esp_err_t gptimer_register_event_callbacks(gptimer_handle_t t, const gptimer_event_callbacks_t *c, void *a);
+esp_err_t gptimer_enable(gptimer_handle_t t);
+esp_err_t gptimer_get_raw_count(gptimer_handle_t t, uint64_t *v);

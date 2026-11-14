@@ -1,7 +1,7 @@
 /*
  * magnetic_encoder_core — 骨架纯函数（类别组件内部接口）
  *
- * 失败计数状态机与名义 16 ms 速度窗。速度窗保留 17 个成功
+ * 失败计数状态机与名义 16 ms 速度窗。速度窗按采样率保留名义 16 ms 的成功
  * 样本，用实际时间差换算；未满窗、时间异常和数值溢出均显式无效。
  *
  * 纯逻辑，无硬件/RTOS 依赖，宿主可测（host_tests/
@@ -12,6 +12,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "magnetic_encoder_sampling.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,9 +21,9 @@ extern "C" {
 /* 连续读失败达到该值 → NOT OK（契约不变量 3） */
 #define MAGNETIC_ENCODER_FAIL_LIMIT   10
 
-/* 速度窗：16 ms（17 个 1 ms 位置样本，环形缓冲） */
+/* 速度窗：16 ms（1 kHz 17 点；2 kHz 33 点，环形缓冲） */
 #define MAGNETIC_ENCODER_MAX_VELOCITY_SPAN_US 32000
-#define MAGNETIC_ENCODER_SPEED_WINDOW 16
+#define MAGNETIC_ENCODER_SPEED_WINDOW (16000 / ME_SAMPLE_PERIOD_US)
 #define MAGNETIC_ENCODER_HIST_LEN     (MAGNETIC_ENCODER_SPEED_WINDOW + 1)
 
 /* ---- 失败计数状态机 ---- */
@@ -63,7 +64,7 @@ typedef struct {
 } magnetic_encoder_velocity_t;
 
 /**
- * 推入读帧完成时间与累计位置。保留 17 个样本；时间必须非负且递增。
+ * 推入读帧完成时间与累计位置。保留 HIST_LEN 个样本；时间必须非负且递增。
  * 非递增时间或相邻间隔大于 max_gap_us 时清窗，以当前样本重新播种。
  * 读取失败由调用方 reset；总跨度超过32ms或算术越界返回 invalid，
  * 不截断为伪低速。总跨度超限保留滑窗，旧慢样本淘汰后自然恢复。

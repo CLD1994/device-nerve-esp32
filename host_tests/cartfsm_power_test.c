@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 #include "cartfsm.h"
+#include "tmc2209.h"
+#include "esp_timer.h"
 #include "cartpos.h"
 #include "cartcal.h"
 #include "cartaxis.h"
@@ -60,6 +62,13 @@ BaseType_t xTaskCreatePinnedToCore(void(*fn)(void*),const char*n,unsigned s,void
 }
 TickType_t xTaskGetTickCount(void) { return 0; }
 void vTaskDelayUntil(TickType_t*p,TickType_t t) { (void)p;(void)t;longjmp(tick_boundary,1); }
+/* 诊断协作者只提供当前实测位置；详细快照字段由专用诊断测试覆盖。 */
+static int64_t diag_clock;
+int64_t esp_timer_get_time(void) { return ++diag_clock; }
+bool cartpos_get_supervision(cartpos_supervision_t *out) {
+    *out=(cartpos_supervision_t){.position_um=position};return true;
+}
+void cartproto_send_raw(const char *data,int len) { (void)data;(void)len;assert(power_test_lock_depth==0); }
 static void tick(void) { if(setjmp(tick_boundary)==0)supervisor(supervisor_arg);assert(power_test_lock_depth==0); }
 static void cmd(cart_cmd_t c) { cart_req_t r={.cmd=c};reply[0]=0;dispatch(&r);assert(power_test_lock_depth==0); }
 static void vel(long v) { cart_req_t r={.cmd=CART_CMD_VEL,.v_mm_s=v};dispatch(&r);assert(power_test_lock_depth==0); }
@@ -123,3 +132,7 @@ int main(int argc,char **argv) {
     else { assert(!stored);power=true;cmd(CART_CMD_ENABLE);assert(!enabled && cartfsm_calib()==CAL_NONE && !strcmp(reply,"ERR ENABLE")); }
     printf("cartfsm power (%s): all assertions passed\n",argv[1]);
 }
+
+/* TMC 查询的协作者；本套件不发起诊断，诊断行为由独立套件覆盖。 */
+bool tmc2209_read_reg(uint8_t reg, uint32_t *out) { (void)reg; (void)out; assert(!"unexpected TMC query"); return false; }
+bool cartaxis_peek_at_rest(void) { return resting; }

@@ -3,7 +3,7 @@
 import argparse
 import json
 from pathlib import Path
-from low_speed_probe import Link, Abort, preflight
+from probe_link import Link, Abort, preflight
 from step50k_plan import calculate, TARGET_SPEED_MM_S, TRAVEL_MM, SOFT_MARGIN_MM
 
 

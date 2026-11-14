@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 from probe_test_support import Bench, Rig
-from low_speed_probe import Link, Abort
+from probe_link import Link, Abort
 from step50k_probe import execute
 
 

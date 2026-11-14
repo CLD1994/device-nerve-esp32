@@ -2,7 +2,7 @@
 import argparse
 import json
 from pathlib import Path
-from low_speed_probe import Link, Abort, preflight
+from probe_link import Link, Abort, preflight
 
 CONFIG = dict(VEL_MAX=400, ACC_MAX=5000, WDT_MS=100, WDT_DEC=5000)
 WINDOW_S = .23

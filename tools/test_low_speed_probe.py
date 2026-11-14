@@ -1,7 +1,8 @@
 import types
 import unittest
 from probe_test_support import Fake
-from low_speed_probe import Link, Abort, execute, motion, validate, stopped
+from probe_link import Link, Abort
+from low_speed_probe import execute, motion, validate, stopped
 
 
 

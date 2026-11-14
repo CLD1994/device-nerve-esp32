@@ -19,3 +19,24 @@ This directory contains host-side tools and test scripts.
 
 所有日志由用户指定新文件保存，不提交到仓库。实验结果不能替代实际速度、
 加速度、温升、波形和停止距离的独立测量。对照记录见[实验结论](../docs/experiment-results.md)。
+
+## 开发与维护边界
+
+运动探针共用 [probe_link.py](probe_link.py) 的串口会话与预检，不依赖低速脚本的命令行入口。
+串口、单调时钟与等待函数由构造参数注入；测试使用内存替身，不打开真实串口。
+各运动脚本负责自己的轨迹、时限和停止条件。专用往返脚本不是训练控制器，
+其风险确认不能替代通用控制器的制动设计。
+
+这些文件不参与生产固件的构建，也不增加生产固件的常驻任务、内存或串口流量。
+独立STEP工程需单独构建和烧录；它不运行生产模式机和编码器任务，
+因而只能检查隔离条件下的STEP输出，不能替代完整固件的负载验证。
+
+主机侧回归可在仓库根目录执行：
+
+```bash
+python -m unittest discover -s tools -p 'test_*.py'
+bash experiments/step-frequency-isolated/tests/run.sh
+```
+
+前者验证主机工具的协议与行为，后者验证独立STEP测量控制逻辑。
+ESP-IDF目标构建、波形和机械运动仍需在目标环境单独验证。

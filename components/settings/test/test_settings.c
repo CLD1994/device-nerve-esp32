@@ -43,7 +43,7 @@ TEST_CASE("默认值抽查（含微步 8）", "[settings]")
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 8.0f, settings_get(SET_MICROSTEP));
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 200.0f, settings_get(SET_FULL_STEP));
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 40.0f, settings_get(SET_MM_PER_REV));
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 800.0f, settings_get(SET_RUN_MA));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 1500.0f, settings_get(SET_RUN_MA));
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 400.0f, settings_get(SET_HOLD_MA));
 }
 
@@ -82,7 +82,7 @@ TEST_CASE("set/get 往返：运行电流", "[settings]")
 
 TEST_CASE("set/get 往返：保持电流", "[settings]")
 {
-    /* 运行电流处于默认 800，600 合法 */
+    /* 运行电流处于默认 1500，600 合法 */
     settings_status_t st = settings_set(SET_HOLD_MA, 600.0f);
     TEST_ASSERT_EQUAL(SETTINGS_OK, st);
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 600.0f, settings_get(SET_HOLD_MA));
@@ -125,14 +125,14 @@ TEST_CASE("非法值：运行电流", "[settings]")
 /* 11. 交叉检查：SET_HOLD_MA > SET_RUN_MA 拒绝 */
 TEST_CASE("交叉检查：保持电流 > 运行电流 拒绝", "[settings]")
 {
-    settings_reset_defaults();  /* 运行电流 = 800 */
-    TEST_ASSERT_EQUAL(SETTINGS_INVALID, settings_set(SET_HOLD_MA, 1000.0f)); /* > 运行电流 800 */
+    settings_reset_defaults();  /* 运行电流 = 1500 */
+    TEST_ASSERT_EQUAL(SETTINGS_INVALID, settings_set(SET_HOLD_MA, 1600.0f)); /* > 运行电流 1500 */
 }
 
 /* 11b. 交叉检查：运行电流收缩到保持电流之下（反向） */
 TEST_CASE("交叉检查：运行电流 < 保持电流 拒绝，收缩到保持电流为界", "[settings]")
 {
-    settings_reset_defaults();  /* 运行电流 = 800，保持电流 = 400 */
+    settings_reset_defaults();  /* 运行电流 = 1500，保持电流 = 400 */
     TEST_ASSERT_EQUAL(SETTINGS_INVALID, settings_set(SET_RUN_MA, 200.0f)); /* < 保持电流 400 */
     /* 收缩到保持电流即可 */
     TEST_ASSERT_EQUAL(SETTINGS_OK, settings_set(SET_RUN_MA, 400.0f));
@@ -195,7 +195,7 @@ TEST_CASE("恢复默认", "[settings]")
     TEST_ASSERT_EQUAL(SETTINGS_OK, st);
 
     TEST_ASSERT_FLOAT_WITHIN(0.001f, 8.0f, settings_get(SET_MICROSTEP));
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 800.0f, settings_get(SET_RUN_MA));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 1500.0f, settings_get(SET_RUN_MA));
 }
 
 /* 15. set 触发通知 */

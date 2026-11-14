@@ -311,3 +311,33 @@ bool cartpos_get_measurement(cartpos_measurement_t *out)
         .velocity_span_us = sample.velocity_span_us };
     return true;
 }
+
+/* 不以速度预热或时间状态过滤监督输入；调用方维持原有参考/健康检查。 */
+bool cartpos_get_supervision(cartpos_supervision_t *out)
+{
+    if (!out || !s_enc) return false;
+    portENTER_CRITICAL(&s_lock);
+    magnetic_encoder_sample_t sample;
+    if (!magnetic_encoder_get_sample(s_enc, &sample)) {
+        portEXIT_CRITICAL(&s_lock);
+        return false;
+    }
+    double scale = s_um_per_count;
+    int64_t offset = s_offset_um;
+    portEXIT_CRITICAL(&s_lock);
+    int64_t raw;
+    if (!checked_raw_um(sample.position_counts, scale, &raw)
+        || (offset > 0 && raw < INT64_MIN + offset)
+        || (offset < 0 && raw > INT64_MAX + offset)) {
+        return false;
+    }
+    double velocity = (double)sample.velocity_counts_per_s * scale / 1000.0;
+    bool representable = isfinite(velocity) && velocity >= INT32_MIN && velocity <= INT32_MAX;
+    sample.velocity_valid = sample.velocity_valid && representable;
+    *out = (cartpos_supervision_t){
+        .position_um = raw - offset,
+        .velocity_mm_s = representable ? (int32_t)lround(velocity) : 0,
+        .sample = sample,
+    };
+    return true;
+}

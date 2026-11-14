@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from low_speed_probe import Link,Abort
+from probe_link import Link,Abort
 from probe_test_support import Bench as BaseBench
 
 class Bench(BaseBench):

@@ -3,7 +3,7 @@
 import argparse
 import json
 from pathlib import Path
-from low_speed_probe import Link, Abort
+from probe_link import Link, Abort
 from step50k_probe import stop_bounded, record_after_stop
 
 SPEED=1250

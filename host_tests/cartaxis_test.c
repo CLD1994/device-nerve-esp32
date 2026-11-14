@@ -157,7 +157,11 @@ int main(void)
     CHECK_EQ(cartaxis_cmd_position_um(), 40000);   /* 挂起期旧档换算，无瞬态 */
     CHECK_EQ(g_chip_ms, 16);                       /* 读数入口不误推 */
 
+    CHECK_EQ(cartaxis_peek_at_rest(), false);
     stub_settle();                                 /* 斜坡完成 → 静止 */
+    CHECK_EQ(cartaxis_peek_at_rest(), true);
+    CHECK_EQ(g_chip_ms, 16); /* 只读查询不得应用pending的32细分 */
+    CHECK_EQ(g_pos_steps, 3200); /* 不重定基 */
     CHECK_EQ(cartaxis_cmd_position_um(), 40000);   /* 入口应用后 µm 仍不变 */
     CHECK_EQ(g_chip_ms, 32);
     CHECK_EQ(g_pos_steps, 6400);                   /* 40000 µm × 160 / 1000 */
