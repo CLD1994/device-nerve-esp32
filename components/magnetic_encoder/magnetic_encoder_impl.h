@@ -15,9 +15,12 @@
 
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_timer.h"
 #include "magnetic_encoder.h"
 #include "magnetic_encoder_tracker.h"
 #include "magnetic_encoder_core.h"
+#include "magnetic_encoder_sampling.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -59,6 +62,13 @@ typedef struct magnetic_encoder_inst_s {
 
     /* 以下状态由 lock 保护，仅采样任务写、契约面读 */
     portMUX_TYPE                 lock;
+    magnetic_encoder_sampling_stats_t sampling_stats;
+#ifdef CONFIG_MAGNETIC_ENCODER_SAMPLING_2KHZ
+    TaskHandle_t sample_task;
+    esp_timer_handle_t sample_timer;
+    int64_t timer_epoch_us;
+    int64_t notified_at_us;
+#endif
     magnetic_encoder_tracker_t   tracker;   /* 多圈累计（首样本种子） */
     int64_t                      pos_counts;
     int64_t                      sampled_at_us;
@@ -98,7 +108,7 @@ bool magnetic_encoder_sampler_sample_once(magnetic_encoder_inst_t *inst);
 /**
  * @brief 启动骨架：接管实例（全量重置）、首读种子、创建采样任务。
  *
- * 任务布局（契约不变量）：1 kHz、CPU1、优先级 3；任务名 = name。
+ * 任务布局（契约不变量）：默认 2 kHz、可回退 1 kHz、CPU1、优先级 3；任务名 = name。
  * inst 由实现层提供存储（静态或堆分配均可）；impl_ctx 生命周期
  * 须长于任务（进程级，无停机路径）。
  *

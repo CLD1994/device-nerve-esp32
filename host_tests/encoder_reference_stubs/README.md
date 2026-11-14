@@ -7,6 +7,7 @@
 
 ```bash
 bash host_tests/test_encoder_sampling.sh
+bash host_tests/test_encoder_2khz.sh
 bash host_tests/test_measurement_validity.sh
 bash host_tests/test_cartfsm_calibration.sh
 ```
@@ -25,3 +26,7 @@ bash host_tests/test_cartfsm_calibration.sh
 快照临界区在宿主侧是单线程替身，任务也不驱动真实硬件。因此这些检查不证明多核并发、
 RTOS 调度、SPI/I²C 时序、真实采样精度或电机停车距离。测量行为与调用方要求见
 [测量有效性说明](../../docs/measurement-validity.md)。
+
+2 kHz 测试正常链接生产采样服务，注入读帧与时钟，以公开快照检查速度窗口。
+定时器/任务替身还验证创建失败清理，以及重复周期和合并通知只读取当前样本；
+不访问私有采样函数。统计开关开启和关闭分别编译运行。这些替身不模拟真实 RTOS 调度。

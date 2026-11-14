@@ -27,7 +27,7 @@ typedef struct {
 } magnetic_encoder_as5600_config_t;
 
 /**
- * @brief 注入接线参数并启动 1 kHz 采样任务。每次调用各出独立实例。
+ * @brief 注入接线参数并启动采样任务（默认 2 kHz，可配置为 1 kHz）。每次调用各出独立实例。
  *
  * @return ESP_OK；cfg 或 handle_out 为 NULL、bus 为 NULL 返回
  *         ESP_ERR_INVALID_ARG；内存不足返回 ESP_ERR_NO_MEM；
