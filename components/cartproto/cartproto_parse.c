@@ -109,6 +109,10 @@ bool cartproto_parse_line(const char *line, cart_req_t *out)
             out->cmd = CART_CMD_TMC_QUERY;
             return true;
         }
+        if (streq_n(line, cmd_len, "STEPLOSS?")) {
+            out->cmd = CART_CMD_STEPLOSS_QUERY;
+            return true;
+        }
         if (streq_n(line, cmd_len, "DISABLE")) {
             out->cmd = CART_CMD_DISABLE;
             return true;

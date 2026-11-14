@@ -12,8 +12,8 @@
 
 /* 注册表顺序（CONFIG? dump 按此顺序） */
 static fw_params_t s_params = {
-    .vel_max        = 1000,     /* 1 – 2000 mm/s          */
-    .acc_max        = 5000,     /* 100 – 30000 mm/s²      */
+    .vel_max        = 1250,     /* 1 – 2000 mm/s          */
+    .acc_max        = 10000,     /* 100 – 30000 mm/s²      */
     .wdt_ms         = 100,      /* 10 – 1000 ms           */
     .wdt_dec        = 5000,     /* 100 – 30000 mm/s²      */
     .x_margin_um    = 10000,    /* 1000 – 50000 µm        */
@@ -108,4 +108,9 @@ bool fw_params_valid(int idx, long value)
 bool fw_calib_length_valid(long l)
 {
     return l >= 100000L && l <= 1000000L;
+}
+
+long fw_params_max_value(int idx)
+{
+    return idx >= 0 && idx < ENTRY_COUNT ? s_entries[idx].max : 0;
 }

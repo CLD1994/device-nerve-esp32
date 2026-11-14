@@ -130,30 +130,47 @@ def hold_time(v):
 class TestRig(Rig):
     """Rig 之上加：带时间戳状态采样、FAULT 事件、原始行日志。"""
 
-    def __init__(self, port, baud=460800, log_path=None):
-        super().__init__(port, baud, timeout=0.01)
-        self.ser.write_timeout = 0.2
+    def __init__(self, port, baud=460800, log_path=None, *,
+                 serial_factory=None, clock=None, output=None, log_sink=None):
+        """log_sink 是可选的文本写入对象，由调用方管理其关闭。
+
+        log_path 由会话打开并关闭，不能与 log_sink 同时指定。
+        """
+        if log_path is not None and log_sink is not None:
+            raise ValueError("log_path 和 log_sink 不能同时指定")
+        super().__init__(port, baud, timeout=0.01, serial_factory=serial_factory,
+                         clock=clock, output=output)
+        self.ser.write_timeout = .02
         self.samples = deque(maxlen=600000)   # (t, x_um, theta_urad, vx, vth)
         self.fault_events = []                # [(t, reason)]
-        self._t0 = time.monotonic()
-        self._log = open(log_path, "a", encoding="ascii") if log_path else None
+        self._t0 = self._clock()
+        self._owns_log = log_path is not None
+        self._log = open(log_path, "a", encoding="ascii") if log_path else log_sink
 
     def now(self):
-        return time.monotonic() - self._t0
+        return self._clock() - self._t0
 
     def _dispatch(self, line):
         if self._log:
             self._log.write("%.3f %s\n" % (self.now(), line))
         super()._dispatch(line)
         parts = line.split()
-        if len(parts) == 5 and parts[0] == "STATE":
+        if self.velocity_validity.failed or (parts[:1] == ["VEL_VALID"] and not self.velocity_validity.ready()):
+            self.samples.clear()
+        if len(parts) == 5 and parts[0] == "STATE" and self.velocity_validity.ready():
             try:
                 x, th, vx, vth = (int(p) for p in parts[1:])
             except ValueError:
                 return
-            self.samples.append((time.monotonic(), x, th, vx, vth))
+            self.samples.append((self._clock(), x, th, vx, vth))
         elif len(parts) == 3 and parts[0] == "MODE" and parts[1] == "FAULT":
-            self.fault_events.append((time.monotonic(), parts[2]))
+            self.fault_events.append((self._clock(), parts[2]))
+
+    def pump(self, duration):
+        try:
+            super().pump(duration)
+        except RuntimeError as exc:
+            raise ExperimentAborted(str(exc)) from exc
 
     def last_state_tuple(self):
         """最近一帧 (x_um, vx_mm_s)；无样本返回 None。"""
@@ -166,7 +183,8 @@ class TestRig(Rig):
         try:
             if self._log:
                 self._log.flush()
-                self._log.close()
+                if self._owns_log:
+                    self._log.close()
         finally:
             super().close()
 
@@ -182,6 +200,10 @@ STATE_MAX_AGE_S = 0.1
 
 
 def checked_state(rig):
+    try:
+        rig.velocity_validity.require()
+    except RuntimeError as exc:
+        raise ExperimentAborted(str(exc)) from exc
     if rig.last_mode != ("READY", "NONE"):
         raise ExperimentAborted("mode=%s" % (rig.last_mode,))
     if not rig.samples:
@@ -208,6 +230,7 @@ def ensure_ready(rig, timeout=5.0):
     m = rig.query()
     if m == ("READY", "NONE"):
         checked_state(rig)
+        rig.velocity_validity.active = True
         return True
     print("当前模式 %s，非 READY；完成手动标定并单独确认 ENABLE 后再试验。" % (m,))
     return False

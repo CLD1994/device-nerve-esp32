@@ -12,4 +12,12 @@ config CARTFSM_TEST_HOOKS
         与历史 FLOW_TEST 选项不同：本项不自动运行任何测试，仅暴露
         注入接口。正式固件保持关闭。
 
+config CARTFSM_STEP_LOSS_DIAGNOSTICS
+    bool "启用 STEP_LOSS 故障快照（调试诊断）"
+    default n
+    help
+        开启后记录失步触发时的位置、时间和编码器元数据，可在停车后
+        用 STEPLOSS? 导出。关闭时不分配快照存储、不执行快照专属采集，
+        查询返回 STEPLOSS_DISABLED。失步检测和故障停车始终有效。
+
 endmenu
