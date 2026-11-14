@@ -11,6 +11,7 @@ import unittest
 from collections import deque
 
 import max_accel_run as m
+from velocity_validity import VelocityValidity
 
 
 class ClassifyOffsetTest(unittest.TestCase):
@@ -126,6 +127,8 @@ class MotionSafetyTest(unittest.TestCase):
         self.rig = create_autospec(m.TestRig, instance=True)
         self.rig.samples = deque([(self.now, 0, 0, 0, 0)])
         self.rig.fault_events = []
+        self.rig.velocity_validity = VelocityValidity(lambda: self.now)
+        self.rig.velocity_validity.update(["VEL_VALID", "1", "1"])
         self.rig.last_mode = ("READY", "NONE")
         self.rig.last_reply = None
         self.rig.last_state_tuple.side_effect = lambda: (
@@ -147,6 +150,7 @@ class MotionSafetyTest(unittest.TestCase):
             self.fail("会话未在有界时间内终止")
         self.now += duration
         if self.emit:
+            self.rig.velocity_validity.update(["VEL_VALID", "1", "1"])
             commanded = int(self.sent[-1].split()[1]) if self.sent and self.sent[-1].startswith("VEL ") else 0
             vx = commanded if self.velocity is None else self.velocity
             self.rig.samples.append((self.now, 0, 0, vx, 0))
@@ -317,6 +321,7 @@ class FurtherMotionSafetyTest(MotionSafetyTest):
         self.rig._t0 = 10
         def burst(duration):
             self.now += duration
+            self.rig.velocity_validity.update(["VEL_VALID", "1", "1"])
             for n in range(3):
                 self.rig.samples.append((self.now + n / 10000, n, 0, int(self.sent[-1].split()[1]), 0))
         self.rig.pump.side_effect = burst

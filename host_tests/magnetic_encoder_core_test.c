@@ -3,8 +3,8 @@
  * 16 ms 速度窗）
  *
  * 失败语义锚定契约：连续 ≥10 次读失败 NOT OK，一次成功恢复；
- * 速度语义锚定契约：17 样本窗位置差 × 62.5（量子 62.5 counts/s），
- * 窗口未满为 0。
+ * 本组速度样例均为严格 1 ms 间隔，验证数值结果；有效性与
+ * 非等间隔语义由 magnetic_encoder_timed_velocity_test.c 验证。
  *
  * 退出码 = 失败断言数（0 = 全过）。
  */
@@ -26,6 +26,14 @@ static int s_run = 0;
     } \
 } while (0)
 
+/* 测试时钟独立于速度窗的存储布局。每次输入推进 1 ms。 */
+static int32_t magnetic_encoder_vel_push(magnetic_encoder_vel_win_t *w, int64_t pos)
+{
+    static int64_t t;
+    t += 1000;
+    return magnetic_encoder_vel_push_at(w, pos, t, 20000).counts_per_s;
+}
+
 /* ================= 失败计数状态机 ================= */
 
 static void test_fail_init_and_healthy(void)
@@ -34,14 +42,12 @@ static void test_fail_init_and_healthy(void)
     magnetic_encoder_fail_reset(&f);
 
     CHECK_EQ(f.ok, 1);
-    CHECK_EQ(f.streak, 0);
 
     /* 持续成功：无事件、保持健康 */
     for (int i = 0; i < 100; i++) {
         CHECK_EQ(magnetic_encoder_fail_step(&f, true), 0);
     }
     CHECK_EQ(f.ok, 1);
-    CHECK_EQ(f.streak, 0);
 }
 
 static void test_fail_trip_at_limit(void)
@@ -53,20 +59,17 @@ static void test_fail_trip_at_limit(void)
     for (int i = 1; i <= 9; i++) {
         CHECK_EQ(magnetic_encoder_fail_step(&f, false), 0);
         CHECK_EQ(f.ok, 1);
-        CHECK_EQ(f.streak, i);
     }
 
     /* 第 10 次：进入 NOT OK（事件恰发生一次） */
     CHECK_EQ(magnetic_encoder_fail_step(&f, false), 1);
     CHECK_EQ(f.ok, 0);
-    CHECK_EQ(f.streak, 10);
 
     /* 第 11+ 次：仍 NOT OK 但不再触发事件 */
     for (int i = 0; i < 50; i++) {
         CHECK_EQ(magnetic_encoder_fail_step(&f, false), 0);
         CHECK_EQ(f.ok, 0);
     }
-    CHECK_EQ(f.streak, 60);
 }
 
 static void test_fail_recover(void)
@@ -82,7 +85,6 @@ static void test_fail_recover(void)
     /* 一次成功即恢复（恢复也是事件，供日志打印） */
     CHECK_EQ(magnetic_encoder_fail_step(&f, true), 1);
     CHECK_EQ(f.ok, 1);
-    CHECK_EQ(f.streak, 0);
 
     /* 恢复后继续成功：无事件 */
     CHECK_EQ(magnetic_encoder_fail_step(&f, true), 0);
@@ -99,7 +101,6 @@ static void test_fail_below_limit_no_trip(void)
     }
     CHECK_EQ(magnetic_encoder_fail_step(&f, true), 0);
     CHECK_EQ(f.ok, 1);
-    CHECK_EQ(f.streak, 0);
 
     /* streak 归零后需重新累计 10 次才触发 */
     for (int i = 0; i < 9; i++) {

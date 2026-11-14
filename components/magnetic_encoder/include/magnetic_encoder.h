@@ -28,7 +28,13 @@ typedef struct magnetic_encoder_s *magnetic_encoder_handle_t;
 /** 同一临界区内取得的采样快照；时间单位为启动后的单调微秒。 */
 typedef struct {
     int64_t position_counts;
-    int64_t sampled_at_us;       /* 最近成功样本的时间，仅 valid 时有意义 */
+    int64_t continuous_gap_us; /* 当前实例允许的连续成功采样间隔 */
+    uint32_t raw_counts;          /* 同一成功样本的单圈角度 */
+    uint8_t status;               /* 实现定义的原始器件状态，非跨型号通用枚举 */
+    int32_t velocity_counts_per_s; /* 缓存值；仅 velocity_valid 时可用 */
+    int64_t velocity_span_us;      /* 配置窗口的实际时间跨度 */
+    bool velocity_valid;          /* 满窗、最近读取成功、时钟连续且未过期 */
+    int64_t sampled_at_us;       /* 最近成功读帧完成时间，仅 valid 时有意义 */
     uint64_t sample_seq;         /* 每次成功递增 */
     uint64_t continuity_seq;     /* 成功样本间隔超过连续性上限时递增 */
     uint64_t failure_seq;        /* 每次失败递增，包括首读失败 */
@@ -44,8 +50,17 @@ struct magnetic_encoder_s {
     int64_t  (*position_counts)(magnetic_encoder_handle_t enc);
     int32_t  (*velocity_counts_per_s)(magnetic_encoder_handle_t enc);
     bool     (*is_ok)(magnetic_encoder_handle_t enc);
+    bool     (*set_continuous_gap_us)(magnetic_encoder_handle_t enc, int64_t gap_us);
     bool     (*get_sample)(magnetic_encoder_handle_t enc, magnetic_encoder_sample_t *out);
 };
+
+/** 设置连续性预算（只能收紧公共上限），变更会使连续性序列递增。 */
+static inline bool magnetic_encoder_set_continuous_gap_us(
+    magnetic_encoder_handle_t enc, int64_t gap_us)
+{
+    return enc && enc->set_continuous_gap_us
+        && enc->set_continuous_gap_us(enc, gap_us);
+}
 
 /**
  * 原子取得位置、成功时间和采样状态。返回 false 表示参数或实现不支持，
@@ -91,7 +106,11 @@ static inline int64_t magnetic_encoder_position_counts(magnetic_encoder_handle_t
     return enc->position_counts(enc);
 }
 
-/** 角速度估计（counts/s，16 窗均值）。量子 62.5 counts/s；窗口未满为 0。 */
+/**
+ * 兼容接口：最后一次有效速度缓存，首个满窗前为 0。失败、预热和过期
+ * 不清除缓存，本接口没有有效性保证；控制和停稳判断须使用 get_sample
+ * 并检查 velocity_valid。速度取17 个样本的位置差除以实际时间差。
+ */
 static inline int32_t magnetic_encoder_velocity_counts_per_s(magnetic_encoder_handle_t enc)
 {
     return enc->velocity_counts_per_s(enc);

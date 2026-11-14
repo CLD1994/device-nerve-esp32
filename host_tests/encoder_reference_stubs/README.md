@@ -1,32 +1,27 @@
-# 编码器快照和参考点单元测试替身
+# 测量组件的宿主测试
 
-这些头文件只用于 `magnetic_encoder_sample_test.c` 和
-`cartpos_reference_test.c`，不进入固件构建。测试使用可控单调时钟、
-单线程临界区和不启动硬件任务的 FreeRTOS 替身；不能验证目标平台锁、
-调度、SPI/I²C 时序或真实电机停止状态。
+这些测试在普通电脑上运行，不访问电机、串口或磁编码器。读取结果和单调时钟由测试替身
+提供，使测试可以确定地模拟预热、读失败、长时间空窗、过期和恢复。
 
 从仓库根目录运行：
 
 ```bash
-cc -std=gnu17 -Wall -Wextra -Werror \
-  -Ihost_tests/encoder_reference_stubs -Ihost_tests/stub \
-  -Icomponents/magnetic_encoder -Icomponents/magnetic_encoder/include \
-  host_tests/magnetic_encoder_sample_test.c \
-  components/magnetic_encoder/magnetic_encoder_tracker.c \
-  components/magnetic_encoder/magnetic_encoder_core.c -lm \
-  -o /tmp/magnetic_encoder_sample_test
-/tmp/magnetic_encoder_sample_test
-
-cc -std=gnu17 -Wall -Wextra -Werror \
-  -Ihost_tests/encoder_reference_stubs -Ihost_tests/stub \
-  -Icomponents/cartpos/include -Icomponents/magnetic_encoder/include \
-  -Icomponents/settings/include host_tests/cartpos_reference_test.c \
-  components/cartpos/cartpos.c -lm -o /tmp/cartpos_reference_test
-/tmp/cartpos_reference_test
+bash host_tests/test_encoder_sampling.sh
+bash host_tests/test_measurement_validity.sh
+bash host_tests/test_cartfsm_calibration.sh
 ```
 
-第一个测试直接编入采样骨架，以可控成功/失败帧推进快照，覆盖首读失败、
-位置与时间同拍、健康位恢复、失败序列和 20 ms 连续性边界。
-第二个测试通过类别接口替身验证稳定捕获、过期/无效样本、观测中断、
-失败与采样空窗、比例变更、整数定基和失效锁存。参考点捕获不驱动电机，
-调用方仍必须保证整个操作处于 DISABLED。
+脚本负责头文件路径、编译和临时产物清理，需要 C 编译器和 Bash。
+
+## 各测试的边界
+
+- 编码器采样测试通过单次采样接口注入读帧与时钟，使用公开快照检查结果。
+  纯速度估计算法测试验证有效速度、时间跨度和失败恢复，不依赖环形缓冲的内部布局。
+- 位置与摆角测试以编码器操作表作为替身边界，验证单位换算、同快照元数据、无效输出不覆盖、
+  参考点捕获和连续性失效后的重新定位。
+- 遥测组帧测试检查协议输出与心跳行为。组帧失败不能提交新的心跳状态。
+- 模式机测试通过命令分发和任务协作者验证状态变化；启动场景使用独立进程隔离单例生命周期。
+
+快照临界区在宿主侧是单线程替身，任务也不驱动真实硬件。因此这些检查不证明多核并发、
+RTOS 调度、SPI/I²C 时序、真实采样精度或电机停车距离。测量行为与调用方要求见
+[测量有效性说明](../../docs/measurement-validity.md)。

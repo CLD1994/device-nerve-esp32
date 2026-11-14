@@ -156,17 +156,13 @@ gcc -std=c11 -Wall -Wextra -Werror \
   host_tests/cartpower_adapter_test.c components/cartpower/cartpower_core.c \
   -lm -o /tmp/cartpower-adapter && /tmp/cartpower-adapter
 
-gcc -std=c11 -Wall -Wextra -Werror \
-  -Ihost_tests/power_stubs -Ihost_tests/stub \
-  -Icomponents/cartfsm/include -Icomponents/cartparams/include \
-  -Icomponents/cartpower/include -Icomponents/cartpos/include \
-  -Icomponents/cartaxis/include -Icomponents/cartproto/include \
-  -Icomponents/poleang/include -Icomponents/motor/include \
-  -Icomponents/magnetic_encoder/include -Icomponents/cartcal/include \
-  -Icomponents/settings/include \
-  host_tests/cartfsm_power_test.c components/cartfsm/cartfsm_core.c \
-  components/cartparams/params.c components/cartproto/cartproto_parse.c -o /tmp/cartfsm-power && /tmp/cartfsm-power
+bash host_tests/test_cartfsm_power.sh
 ```
+
+模式机测试正常链接生产代码，通过注册的命令回调和监督任务入口验证供电准入、
+使能瞬间掉电、故障停机、RESET 与监督交错、位置参考失效以及静止/运动时的 DISABLE。
+每个上电场景由运行脚本启动独立测试进程；测试本身仅使用内存协作者，不访问设备。
+调度替身不模拟双核并发，也不能证明真实互斥时延。
 
 必须另行在目标ESP-IDF编译，并在确认硬件额定值后做真机验收：普通5V电源不得使能；
 PD20V稳定验证之前不得使能；断线、ADC/I2C失败及重新上电不得自动运动。
