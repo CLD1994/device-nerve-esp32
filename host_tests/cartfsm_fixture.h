@@ -30,3 +30,6 @@ void supervise_once(void);
 void cmd(cart_cmd_t c);
 void velocity(int32_t v);
 void config(const char *name,long value);
+
+extern unsigned halt_calls, diag_snapshot_reads;
+extern long last_accel;

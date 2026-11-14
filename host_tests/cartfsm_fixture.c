@@ -45,12 +45,14 @@ esp_err_t cartaxis_enable(bool on) { enabled=on; return ESP_OK; }
 void cartaxis_set_position_um(long x) { command_pos=x; }
 int64_t cartaxis_cmd_position_um(void) { return command_pos; }
 void cartaxis_set_vel_mm_s(long v) { last_velocity=v; vel_writes++; }
-void cartaxis_halt(void) { }
+unsigned halt_calls;
+long last_accel;
+void cartaxis_halt(void) { halt_calls++; }
 void cartaxis_stop(void) { }
 bool cartaxis_try_stop_at_rest(void) { return true; }
 bool axis_rest=true;
 bool cartaxis_at_rest(void) { return axis_rest; }
-void cartaxis_set_accel_mm_s2(long x) { (void)x; }
+void cartaxis_set_accel_mm_s2(long x) { last_accel=x; }
 void cartaxis_set_decel_mm_s2(long x) { (void)x; }
 void cartaxis_set_wdt_ms(long x) { (void)x; }
 void cartproto_register_exec(cartproto_exec_cb_t cb) { dispatch=cb; }
@@ -63,9 +65,10 @@ bool diag_snapshot_available=true, diag_use_snapshot;
 cartpos_supervision_t diag_snapshot;
 char diag_output[8192];
 size_t diag_output_len;
-unsigned diag_raw_sends;
+unsigned diag_raw_sends, diag_snapshot_reads;
 int64_t esp_timer_get_time(void) { return ++diag_clock; }
 bool cartpos_get_supervision(cartpos_supervision_t *out) {
+    diag_snapshot_reads++;
     if (!diag_snapshot_available) return false;
     *out=diag_use_snapshot ? diag_snapshot
         : (cartpos_supervision_t){.position_um=cartpos_position_um()}; return true;

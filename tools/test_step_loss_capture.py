@@ -23,7 +23,7 @@ class CaptureTests(unittest.TestCase):
         c=Capture(); c.feed("SL1 1 VERSION 1")
         with self.assertRaises(ValueError): c.feed("SL1 1 VERSION 1")
     def test_error_and_noise(self):
-        for line in ["ERR STEPLOSS_BUSY","ERR STEPLOSS_NONE","STATE broken","SL1 1 UNKNOWN 1"]:
+        for line in ["ERR STEPLOSS_DISABLED","ERR STEPLOSS_BUSY","ERR STEPLOSS_NONE","STATE broken","SL1 1 UNKNOWN 1"]:
             with self.subTest(line=line), self.assertRaises(ValueError): Capture().feed(line)
     def test_wrong_version(self):
         c=Capture()
