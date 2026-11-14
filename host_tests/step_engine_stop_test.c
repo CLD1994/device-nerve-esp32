@@ -97,11 +97,17 @@ int main(void)
     assert(step_engine_position_steps() == position && step_engine_vel_now_q16() == 0);
 
     step_engine_vel_set_accel(1000000);
-    const int64_t limit = (int64_t)STEP_ENGINE_MAX_TARGET_HZ * 65536;
+    /* 数值来自对外约定，不能随生产常量一起漂移。 */
+    const int64_t limit = 50000LL * 65536;
+    assert(STEP_ENGINE_MAX_TARGET_HZ == 50000u);
     check_target(INT64_MAX, limit);             /* 静止启动 */
     check_target(INT64_MIN, -limit);            /* 运行中换向 */
     check_target(limit, limit);
     check_target(limit + 1, limit);
+    assert(timer.alarm - timer.now == 20); /* 理想替身下 50 kHz 周期 */
+    check_target(-limit, -limit);
+    check_target(-limit - 1, -limit);
+    assert(timer.alarm - timer.now == 20);
     check_target(-49999LL * 65536, -49999LL * 65536);
     step_engine_vel_target(0);
     reach_velocity(0);

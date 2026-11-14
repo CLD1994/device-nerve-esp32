@@ -109,3 +109,8 @@ bool fw_calib_length_valid(long l)
 {
     return l >= 100000L && l <= 1000000L;
 }
+
+long fw_params_max_value(int idx)
+{
+    return idx >= 0 && idx < ENTRY_COUNT ? s_entries[idx].max : 0;
+}

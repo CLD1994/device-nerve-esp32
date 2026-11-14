@@ -2,7 +2,7 @@
  * cartpos — 小车位置解释实现
  *
  * 机械比例（每转行程 → µm/count）的唯一权威在本层：位置与速度同源
- * 同值。每转行程非法（≤0）回退 40 mm/rev 并告警（沿袭原 as5600 行为）。
+ * 同值。每转行程非法（≤0）回退 40 mm/rev 并告警。
  */
 #include "cartpos.h"
 
@@ -21,6 +21,7 @@ static const char *TAG = "cartpos";
 #define CARTPOS_DEFAULT_UPR  40.0f  /* fallback if units_per_rev is unusable */
 
 static magnetic_encoder_handle_t s_enc;
+static double s_max_velocity_mm_s;
 
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static int64_t s_offset_um = 0;     /* 原点偏移（µm 整数） */
@@ -28,6 +29,8 @@ static double s_um_per_count = 0.0;
 static uint64_t s_scale_revision;
 static bool s_scale_valid;
 static bool s_reference_valid;
+static bool s_position_continuous;
+static uint64_t s_position_sequence;
 static cartpos_reference_t s_reference;
 
 #define CARTPOS_REFERENCE_WINDOW_US 100000
@@ -48,7 +51,16 @@ static void refresh_scale(void)
     valid = valid && cpr > 0;
     double umc = cpr > 0 ? (double)upr * 1000.0 / (double)cpr : 0.0;
 
+    /* 以装配层提供的最大速度预算，而不是当前运动命令。最多四分之一圈
+     * 留出半圈解缠边界的裕量；这是工程策略，不是硬件实测上限。 */
+    double vmax = s_max_velocity_mm_s;
+    double budget = valid && isfinite(vmax) && vmax > 0 ? floor(
+        floor(cpr / 4.0) * umc * 1000.0 / (double)vmax) : 0.0;
+    int64_t gap = budget > MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US
+        ? MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US : (int64_t)budget;
+    valid = valid && gap > 0 && magnetic_encoder_set_continuous_gap_us(s_enc, gap);
     portENTER_CRITICAL(&s_lock);
+    s_position_continuous = false;
     s_um_per_count = umc;
     s_scale_valid = valid;
     s_scale_revision++;
@@ -68,14 +80,22 @@ static void on_settings_change(int idx, float new_value)
     }
 }
 
-void cartpos_init(magnetic_encoder_handle_t enc)
+void cartpos_init(magnetic_encoder_handle_t enc, double max_velocity_mm_s)
 {
     s_enc = enc;
+    s_max_velocity_mm_s = max_velocity_mm_s;
     portENTER_CRITICAL(&s_lock);
     s_offset_um = 0;
     s_reference_valid = false;
     portEXIT_CRITICAL(&s_lock);
     refresh_scale();
+    magnetic_encoder_sample_t initial;
+    if (magnetic_encoder_get_sample(s_enc, &initial)) {
+        portENTER_CRITICAL(&s_lock);
+        s_position_sequence = initial.continuity_seq;
+        s_position_continuous = s_scale_valid;
+        portEXIT_CRITICAL(&s_lock);
+    }
     if (!settings_subscribe(on_settings_change)) {
         ESP_LOGW(TAG, "settings 订阅失败（槽满）——每转行程变更不会生效");
     }
@@ -137,7 +157,8 @@ static bool fresh_sample(magnetic_encoder_sample_t *sample)
     int64_t now = esp_timer_get_time();
     return sample->valid && sample->ok && sample->last_attempt_ok
         && sample->sampled_at_us >= 0 && sample->sampled_at_us <= now
-        && now - sample->sampled_at_us <= MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US;
+        && sample->continuous_gap_us > 0
+        && now - sample->sampled_at_us <= sample->continuous_gap_us;
 }
 
 static bool checked_raw_um(int64_t counts, double scale, int64_t *out)
@@ -234,9 +255,17 @@ bool cartpos_apply_reference(const cartpos_reference_t *ref, int64_t target_um)
         return false;
     }
     portENTER_CRITICAL(&s_lock);
-    bool accepted = s_scale_valid && s_scale_revision == ref->scale_revision;
+    /* 与本层比例/参考提交串行，再核对编码器序列。gap 若在这次原子
+     * 快照之后发生，由下一次 reference/measurement 检查拒绝，不会
+     * 因为本次重新定位而清除编码器的连续性历史。 */
+    bool accepted = s_scale_valid && s_scale_revision == ref->scale_revision
+        && fresh_sample(&current)
+        && current.failure_seq == ref->failure_seq
+        && current.continuity_seq == ref->continuity_seq;
     if (accepted) {
         s_offset_um = ref->raw_um - target_um;
+        s_position_sequence = ref->continuity_seq;
+        s_position_continuous = true;
         s_reference = *ref;
         s_reference_valid = true;
     }
@@ -247,8 +276,8 @@ bool cartpos_apply_reference(const cartpos_reference_t *ref, int64_t target_um)
 bool cartpos_reference_is_valid(void)
 {
     magnetic_encoder_sample_t current;
-    bool fresh = fresh_sample(&current);
     portENTER_CRITICAL(&s_lock);
+    bool fresh = fresh_sample(&current);
     if (s_reference_valid && (!fresh || !s_scale_valid
         || s_scale_revision != s_reference.scale_revision
         || current.failure_seq != s_reference.failure_seq
@@ -258,4 +287,57 @@ bool cartpos_reference_is_valid(void)
     bool valid = s_reference_valid;
     portEXIT_CRITICAL(&s_lock);
     return valid;
+}
+
+
+bool cartpos_get_measurement(cartpos_measurement_t *out)
+{
+    magnetic_encoder_sample_t sample;
+    if (out == NULL || !fresh_sample(&sample) || !sample.velocity_valid) return false;
+    portENTER_CRITICAL(&s_lock);
+    double scale = s_um_per_count;
+    int64_t offset = s_offset_um;
+    /* 旧的只读快照不能把并发刚建立的新参考永久置无效。序列本身
+     * 单调递增，未重新定位时不可能重新匹配。 */
+    bool valid = s_scale_valid && s_position_continuous
+        && sample.continuity_seq == s_position_sequence;
+    portEXIT_CRITICAL(&s_lock);
+    double x = (double)sample.position_counts * scale - (double)offset;
+    double v = (double)sample.velocity_counts_per_s * scale / 1000.0;
+    if (!valid || !isfinite(x) || !isfinite(v)
+        || x < INT32_MIN || x > INT32_MAX || v < INT32_MIN || v > INT32_MAX) return false;
+    *out = (cartpos_measurement_t){ .x_um = (int32_t)llround(x), .vx_mm_s = (int32_t)llround(v),
+        .sampled_at_us = sample.sampled_at_us, .sample_seq = sample.sample_seq,
+        .velocity_span_us = sample.velocity_span_us };
+    return true;
+}
+
+/* 不以速度预热或时间状态过滤监督输入；调用方维持原有参考/健康检查。 */
+bool cartpos_get_supervision(cartpos_supervision_t *out)
+{
+    if (!out || !s_enc) return false;
+    portENTER_CRITICAL(&s_lock);
+    magnetic_encoder_sample_t sample;
+    if (!magnetic_encoder_get_sample(s_enc, &sample)) {
+        portEXIT_CRITICAL(&s_lock);
+        return false;
+    }
+    double scale = s_um_per_count;
+    int64_t offset = s_offset_um;
+    portEXIT_CRITICAL(&s_lock);
+    int64_t raw;
+    if (!checked_raw_um(sample.position_counts, scale, &raw)
+        || (offset > 0 && raw < INT64_MIN + offset)
+        || (offset < 0 && raw > INT64_MAX + offset)) {
+        return false;
+    }
+    double velocity = (double)sample.velocity_counts_per_s * scale / 1000.0;
+    bool representable = isfinite(velocity) && velocity >= INT32_MIN && velocity <= INT32_MAX;
+    sample.velocity_valid = sample.velocity_valid && representable;
+    *out = (cartpos_supervision_t){
+        .position_um = raw - offset,
+        .velocity_mm_s = representable ? (int32_t)lround(velocity) : 0,
+        .sample = sample,
+    };
+    return true;
 }

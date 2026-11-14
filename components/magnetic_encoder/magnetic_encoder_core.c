@@ -5,6 +5,7 @@
 #include "magnetic_encoder_core.h"
 
 #include <math.h>
+#include <limits.h>
 #include <string.h>
 
 /* ---- 失败计数状态机 ---- */
@@ -52,25 +53,35 @@ void magnetic_encoder_vel_win_reset(magnetic_encoder_vel_win_t *w)
     w->head = -1;
 }
 
-int32_t magnetic_encoder_vel_push(magnetic_encoder_vel_win_t *w, int64_t pos)
+magnetic_encoder_velocity_t magnetic_encoder_vel_push_at(
+    magnetic_encoder_vel_win_t *w, int64_t pos, int64_t time_us,
+    int64_t max_gap_us)
 {
-    if (w == NULL) {
-        return 0;
+    magnetic_encoder_velocity_t result = {0};
+    if (w == NULL) return result;
+    if (time_us < 0 || max_gap_us <= 0) {
+        magnetic_encoder_vel_win_reset(w);
+        return result;
     }
-
+    if (w->fill && (time_us <= w->time_us[w->head]
+            || time_us - w->time_us[w->head] > max_gap_us)) {
+        magnetic_encoder_vel_win_reset(w);
+    }
     w->head = (w->head + 1) % MAGNETIC_ENCODER_HIST_LEN;
     w->hist[w->head] = pos;
-    if (w->fill < MAGNETIC_ENCODER_HIST_LEN) {
-        w->fill++;
-    }
-
-    if (w->fill < MAGNETIC_ENCODER_HIST_LEN) {
-        return 0;              /* 窗未满 */
-    }
+    w->time_us[w->head] = time_us;
+    if (w->fill < MAGNETIC_ENCODER_HIST_LEN) w->fill++;
+    if (w->fill < MAGNETIC_ENCODER_HIST_LEN) return result;
 
     int oldest = (w->head + 1) % MAGNETIC_ENCODER_HIST_LEN;
-    int64_t delta = pos - w->hist[oldest];
-    /* counts / 16 ms → counts/s（量子 62.5） */
-    return (int32_t)llround((double)delta
-                            * (1000.0 / MAGNETIC_ENCODER_SPEED_WINDOW));
+    int64_t old = w->hist[oldest];
+    result.span_us = time_us - w->time_us[oldest];
+    if (result.span_us > MAGNETIC_ENCODER_MAX_VELOCITY_SPAN_US) return result;
+    if ((old < 0 && pos > INT64_MAX + old)
+            || (old > 0 && pos < INT64_MIN + old)) return result;
+    double rate = (double)(pos - old) * 1000000.0 / (double)result.span_us;
+    if (!isfinite(rate) || rate > INT32_MAX || rate < INT32_MIN) return result;
+    result.counts_per_s = (int32_t)llround(rate);
+    result.valid = true;
+    return result;
 }

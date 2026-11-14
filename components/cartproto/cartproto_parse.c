@@ -105,6 +105,10 @@ bool cartproto_parse_line(const char *line, cart_req_t *out)
 
     /* 无参数命令 */
     if (cmd_len == len) {
+        if (streq_n(line, cmd_len, "STEPLOSS?")) {
+            out->cmd = CART_CMD_STEPLOSS_QUERY;
+            return true;
+        }
         if (streq_n(line, cmd_len, "DISABLE")) {
             out->cmd = CART_CMD_DISABLE;
             return true;

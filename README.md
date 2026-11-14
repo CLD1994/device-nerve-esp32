@@ -43,7 +43,7 @@ components/
                 + 1 kHz 监督任务（标定状态/编码器失联/
                 丢步/软限位/FAULT 次序）
   magnetic_encoder/ 磁编码器类别：契约（句柄式、原生单位 counts）
-                + 参数化多圈纯逻辑 + 采样骨架（1 kHz 任务/失败计数/
+                + 参数化多圈纯逻辑 + 采样骨架（默认 2 kHz 任务/失败计数/
                 16 ms 速度窗，实例全状态进实例结构）+ AS5600/MT6835
                 薄读层实现（rev2 组装用双 MT6835 实例，契约经操作表分发）
   motor/        步进电机类别：契约（句柄式、steps 域）+ TMC2209+
@@ -144,8 +144,8 @@ PD 供电、UART0 控制的空载相电流测量使用 `CURRENT_MEASUREMENT=ON` 
 
 ## 状态报告频率
 
-STATE 目标报告率为 500 Hz（2 ms），不改变 ASCII 字段、编码器 1 kHz
-采样或 16 ms 速度估计窗口。固件构建会拒绝不能精确表示 1 ms 的 tick
+STATE 目标报告率为 500 Hz（2 ms）；编码器默认 2 kHz 采样，速度窗口名义约 16 ms。
+采样配置与实测范围见[编码器采样与统计](docs/encoder-sampling.md)。固件构建会拒绝不能精确表示 1 ms 的 tick
 配置；项目默认 `CONFIG_FREERTOS_HZ=1000`。500 Hz 的现场稳定性仍需验证，
 不代表控制闭环或策略已经达到相同频率。
 
