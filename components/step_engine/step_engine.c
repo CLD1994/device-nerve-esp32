@@ -389,6 +389,9 @@ void step_engine_vel_set_wdt_us(uint32_t wdt_us)
 
 void step_engine_vel_target(int64_t v_q16)
 {
+    const int64_t limit_q16 = (int64_t)STEP_ENGINE_MAX_TARGET_HZ * VEL_RAMP_Q16_ONE;
+    if (v_q16 > limit_q16) v_q16 = limit_q16;
+    if (v_q16 < -limit_q16) v_q16 = -limit_q16;
     uint64_t mag;
     bool dir;
 

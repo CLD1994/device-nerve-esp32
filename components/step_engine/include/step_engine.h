@@ -22,6 +22,9 @@ extern "C" {
 
 /* ---- 公开 API ---- */
 
+/* 运动请求的最高目标频率，不表示硬件实测能力。 */
+#define STEP_ENGINE_MAX_TARGET_HZ 50000u
+
 /**
  * @brief 初始化：GPTimer @1 MHz、one-shot alarm；中断装在调用 init
  * 的核（app_main 于 CPU0 启动，CPU0 布局由此保证）。
@@ -70,8 +73,9 @@ void step_engine_vel_set_wdt_us(uint32_t wdt_us);
  * @brief 设定目标速度（带符号 Q16.16 steps/s）并喂狗。
  *
  * 目标立即生效；从静止设定非零目标会以冻结计数种子法启动定时器
- * （必要时换 DIR，含 2 µs setup）。64 位类型：注册表 VEL_MAX 上限
- * 2000 mm/s = 80000 steps/s，超出 32 位 Q16.16 表示范围。
+ * （必要时换 DIR，含 2 µs setup）。输入使用 64 位 Q16.16 类型。
+ * 输入在拆分方向前钳位至 ±STEP_ENGINE_MAX_TARGET_HZ，机械比例或
+ * VEL_MAX 配置不能绕过该目标频率上限；它不保证真实脉冲时序。
  */
 void step_engine_vel_target(int64_t v_q16);
 

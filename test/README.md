@@ -180,8 +180,9 @@ Unity测试镜像启动本身不请求20 V。只有明确选择带`[pd20]`标记
 ```bash
 gcc -std=c11 -Wall -Wextra -Werror \
   -Ihost_tests/step_engine_stubs -Ihost_tests/stub -Icomponents/step_engine/include \
-  host_tests/step_engine_stop_test.c components/step_engine/vel_ramp.c -lm \
+  host_tests/step_engine_stop_test.c components/step_engine/step_engine.c \
+  components/step_engine/vel_ramp.c -lm \
   -o /tmp/step-engine-stop-test && /tmp/step-engine-stop-test
 ```
 
-该测试直接编入生产引擎，以受接口约束的GPTimer/GPIO替身隔离硬件。覆盖精确Q16残速拒绝、零速清目标、自然停稳及挂起回调不再发步；不验证真实双核中断调度或机械停止。FSM命令测试为上述cartfsm-power，含DISABLED幂等、READY运动拒绝/停稳禁用、FAULT保留及后到VEL忽略。仍需ESP-IDF目标构建与独立低速实机验收，不以宿主结果宣称运行时电机安全已验证。
+该测试独立编译并链接生产引擎，通过公开 API 设置状态、通过注册的定时器回调推进时间，以受接口约束的GPTimer/GPIO替身隔离硬件。覆盖精确Q16残速拒绝、零速清目标、自然停稳、挂起回调不再发步，以及正负50 kHz目标钳位和64位边界输入；不验证真实双核中断调度或机械停止。FSM命令测试为上述cartfsm-power，含DISABLED幂等、READY运动拒绝/停稳禁用、FAULT保留及后到VEL忽略。仍需ESP-IDF目标构建与独立低速实机验收，不以宿主结果宣称运行时电机安全已验证。

@@ -131,8 +131,8 @@ static void test_step_loss(void)
 static void test_params_ranges(void)
 {
     const fw_params_t *p = fw_params();
-    CHECK(p->vel_max == 1000, "VEL_MAX 默认 1000");
-    CHECK(p->acc_max == 5000, "ACC_MAX 默认 5000");
+    CHECK(p->vel_max == 1250, "VEL_MAX 默认 1250");
+    CHECK(p->acc_max == 10000, "ACC_MAX 默认 10000");
     CHECK(p->wdt_ms == 100, "WDT_MS 默认 100");
     CHECK(p->wdt_dec == 5000, "WDT_DEC 默认 5000");
     CHECK(p->x_margin_um == 10000, "X_MARGIN_UM 默认 10000");
