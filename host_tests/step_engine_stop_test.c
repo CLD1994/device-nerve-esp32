@@ -112,5 +112,58 @@ int main(void)
     step_engine_vel_target(0);
     reach_velocity(0);
     assert(step_engine_try_stop_at_rest());
+    /* ISR event captured before a newer accepted target: unsigned subtraction
+     * must not turn this fresh kick into a watchdog timeout. */
+    const int64_t speed = 1000LL * 65536;
+    step_engine_vel_set_wdt_us(0);
+    step_engine_vel_set_decel(1000);
+    check_target(speed, speed);
+    step_engine_vel_set_wdt_us(100000);
+    gptimer_alarm_event_data_t stale = {
+        .alarm_value = timer.alarm, .count_value = timer.alarm
+    };
+    timer.now = stale.count_value + 50;
+    step_engine_vel_target(speed);  /* new kick while old ISR timestamp exists */
+    timer.callbacks.on_alarm(&timer, &stale, timer.context);
+    assert(step_engine_vel_now_q16() == speed);
+    assert(step_test_lock_depth == 0);
+    step_engine_diag_t diag;
+    step_engine_diag_snapshot(&diag);
+    assert(diag.v_q16 == speed && diag.target_q16 == speed);
+    assert(diag.position_steps == step_engine_position_steps());
+    assert(!diag.stopped && diag.timer_running);
+    assert(diag.wdt_stale_time_count == 1 && diag.wdt_expired_count == 0);
+    /* Same-clock equality and strict > timeout semantics are unchanged. */
+    gptimer_alarm_event_data_t boundary = {
+        .alarm_value = timer.now + 100000, .count_value = timer.now + 100000
+    };
+    timer.callbacks.on_alarm(&timer, &boundary, timer.context);
+    assert(step_engine_vel_now_q16() == speed);
+    boundary.alarm_value++;
+    boundary.count_value++;
+    timer.callbacks.on_alarm(&timer, &boundary, timer.context);
+    assert(step_engine_vel_now_q16() < speed);
+    step_engine_diag_snapshot(&diag);
+    assert(diag.wdt_stale_time_count == 1 && diag.wdt_expired_count == 1);
+    step_engine_stop();
+    step_engine_diag_snapshot(&diag);
+    assert(diag.v_q16 == 0 && diag.target_q16 == 0);
+    assert(diag.stopped && !diag.timer_running);
+    assert(diag.wdt_stale_time_count == 1 && diag.wdt_expired_count == 1);
+    /* Disabled watchdog ignores stale event timestamps and cannot increment
+     * watchdog decision counters. */
+    step_engine_vel_set_wdt_us(0);
+    check_target(-speed, -speed);
+    stale.alarm_value = timer.alarm;
+    stale.count_value = timer.alarm;
+    timer.now = stale.count_value + 50;
+    step_engine_vel_target(-speed);
+    timer.callbacks.on_alarm(&timer, &stale, timer.context);
+    step_engine_diag_snapshot(&diag);
+    assert(diag.v_q16 == -speed && diag.target_q16 == -speed);
+    assert(diag.wdt_stale_time_count == 1 && diag.wdt_expired_count == 1);
+    step_engine_diag_snapshot(NULL);
+    assert(step_test_lock_depth == 0);
+    step_engine_stop();
     puts("step_engine_stop: public-contract assertions passed");
 }

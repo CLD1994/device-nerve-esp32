@@ -63,7 +63,7 @@ void cartproto_send_mode(const char *mode,const char *reason) { (void)reason;snp
 int64_t diag_clock;
 bool diag_snapshot_available=true, diag_use_snapshot;
 cartpos_supervision_t diag_snapshot;
-char diag_output[8192];
+char diag_output[65536];
 size_t diag_output_len;
 unsigned diag_raw_sends, diag_snapshot_reads;
 int64_t esp_timer_get_time(void) { return ++diag_clock; }
@@ -101,3 +101,9 @@ void config(const char *name,long value) { cart_req_t q={.cmd=CART_CMD_CONFIG_SE
 /* 本 fixture 不发起 TMC 查询，诊断契约由 tmc_readonly_test 覆盖。 */
 bool tmc2209_read_reg(uint8_t reg, uint32_t *out) { (void)reg; (void)out; assert(!"unexpected TMC query"); return false; }
 bool cartaxis_peek_at_rest(void) { return axis_rest; }
+
+#include "step_engine.h"
+void step_engine_diag_snapshot(step_engine_diag_t *out) {
+    *out = (step_engine_diag_t){.position_steps=123,.v_q16=65536,.target_q16=131072,
+        .timer_running=true,.wdt_stale_time_count=4};
+}

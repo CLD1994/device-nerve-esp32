@@ -95,6 +95,24 @@ int64_t step_engine_vel_now_q16(void);
 
 /* ---- 遥测快照 ---- */
 
+typedef struct {
+    int64_t v_q16;          /* 带符号内部斜坡速度，Q16 steps/s */
+    int64_t target_q16;     /* 带符号最近目标，Q16 steps/s */
+    int32_t position_steps;
+    bool stopped;
+    bool timer_running;
+    uint32_t wdt_stale_time_count;
+    uint32_t wdt_expired_count;
+} step_engine_diag_t;
+
+/** 仅任务上下文读取，不访问硬件。Q16 状态及看门狗计数共用引擎锁。
+ * 位置、定时器标志还存在既有的 ISR 无锁写：这些字段是时间接近的
+ * 软件观察，不是同一时刻的原子物理快照，不证明驱动器收到了脉冲。
+ * 计数在 UINT32_MAX 饱和，仅初始化时归零；expired 统计 ISR 超时判定
+ * 次数而非独立事件，stale 统计被抑制的旧时间戳判定。
+ */
+void step_engine_diag_snapshot(step_engine_diag_t *out);
+
 /**
  * @brief 指令位置（带符号累计 steps）。32 位对齐读原子。
  */

@@ -14,10 +14,10 @@
 
 ## 记录时刻与保障边界
 
-监督任务使用 `cm_step_loss(E, C, threshold)`，即位置差绝对值
-严格大于阈值才进入STEP_LOSS。此功能不放宽阈值，也不调整运动参数。
+监督任务沿用当前配置的累计误差或窗口增长判据。`TRIGGER` 区分硬限、
+连续增长或传统阈值；诊断不修改任何阈值或运动参数。
 模式机接受故障后，先提交斜坡停车，再复制一条固定大小RAM记录。
-实时路径不格式化、不发送串口、不分配内存、不写NVS；没有故障前环形历史。
+实时路径不格式化、不发送串口、不动态分配内存、不写NVS。故障前轨迹见下节。
 同一FAULT期间不会反复覆盖首次记录；RESET保留记录，下一次被接受的
 STEP_LOSS替换它。后续POWER等故障不覆盖此记录；它不是当前MODE原因的别名。重启、烧录或断电后记录丢失，不能追溯此前故障。
 
@@ -52,7 +52,7 @@ python tools/step_loss_capture.py --port COM11 --baud 460800 --out step-loss-evi
 线协议是显式查询应答，不主动混入遥测：
 
 ```text
-SL1 <event_id> VERSION 1
+SL1 <event_id> VERSION 2
 SL1 <event_id> <field> <integer>
 ...
 SL1 <event_id> END 1
@@ -99,3 +99,39 @@ python -m unittest discover -s tools -p test_step_loss_capture.py
 模式机测试链接独立编译的生产模块，通过命令注册入口、公开状态查询和
 任务注册入口驱动行为。共享测试夹具提供存储、时钟、轴和传感器替身，
 不包含生产实现文件，也不读取或修改模式机内部变量。
+
+
+## 故障前监督轨迹与 WDT 时间顺序修复
+
+开启同一 `CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS` 后，监督任务维护128条固定内存环形记录。
+普通记录至少相隔5ms，触发拍强制追加；约覆盖最后0.64秒，但时间跨度以记录时标为准，
+不是精确采样周期。模式机接受STEP_LOSS、提交停车后，把尾段复制到独立冻结缓冲。
+两个缓冲在宿主编译布局合计30KiB（目标实际用量以构建map为准），没有实时串口流量。
+RESET及下一轮ENABLE不清冻结证据，下一次STEP_LOSS才替换；重启、烧录、断电丢失。
+
+保持停止状态，关闭其他占用COM11的程序，在Windows运行：
+
+```powershell
+& $python .\tools\step_trace_capture.py --port COM11 --baud 460800 --out $traceReport
+```
+
+`$traceReport`须为新的JSON文件路径。工具在打开前将DTR/RTS设为false，然后只发一次
+`STEPTRACE?`；这降低打开串口触发自动复位的风险，但不保证驱动不存在瞬态。
+只在停稳的FAULT或DISABLED允许读取，忙碌、缺记录和诊断关闭沿用STEPLOSS错误码。
+旧 `STEPLOSS?` 和现有SL1字段不变，新的独立命令不会给旧解析器追加未知字段。
+
+SLT1协议：`SLT1 event BEGIN count run`，依次`SLT1 event ROW index <21整数>`，
+最后`SLT1 event END count`。21列的权威顺序见
+[`step_trace_capture.py` 的 FIELDS](../tools/step_trace_capture.py)。设备端顺序与此对应。
+
+- E、sample_seq、raw_counts、sample_us来自同一编码器快照，raw_counts是实现方向处理后的单圈值。
+- C是随后读取的软件STEP累计，c_begin_us/c_end_us包住该次读取；E、C和引擎快照并不同步。
+- observed_us是准备记录的设备时间，不是引擎快照完成时间。target_mm_s是记录时固件接受的目标。
+- engine_v_q16 / engine_target_q16为有符号steps/s乘65536；engine_position_steps为软件STEP计数。
+- engine_stopped和engine_timer_running是软件标志。部分现有写路径在引擎锁外，不能把整行当原子硬件快照。
+- wdt_stale_time_count统计ISR入口时间早于后来接受的喂狗时刻的次数；修复后该拍按未超时处理。
+  wdt_expired_count统计真正超时判定次数，不是独立事件数。两者上电累计、UINT32_MAX饱和，停机不清。
+- 新守卫防止无符号时间差下溢，保留原有严格大于WDT期限的条件；没有更改超时值、制动或误差阈值。
+
+这些记录能区分软件计数、编码器序列和引擎状态变化，不等于物理STEP、DIR、驱动接收或电机失步证明。
+WDT竞态修复不等于已证明解决现场故障；原有停表/启动交错等其它问题仍需独立验证。

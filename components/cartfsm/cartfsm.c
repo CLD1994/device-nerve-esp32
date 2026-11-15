@@ -21,6 +21,7 @@
 #include "tmc2209.h"
 #include "cartfsm_step_loss_diag.h"
 #include "cartfsm_following_error.h"
+#include "step_engine.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -54,6 +55,25 @@ static bool s_started = false;
 /* 与模式转换/读出同受s_output_lock保护，RESET不清除证据。 */
 static cartfsm_step_loss_diag_t s_step_loss_diag;
 static uint32_t s_step_loss_event;
+/* 两个固定缓冲：运行环形尾段与最近故障冻结副本。无串口/分配/I2C。
+ * 5 ms是最小记录间隔，不是精确周期；以每行时间戳解释。 */
+#define STEPTRACE_CAPACITY 128
+#define STEPTRACE_PERIOD_US 5000
+typedef struct {
+    int64_t observed_us, sample_us, c_begin_us, c_end_us;
+    int64_t e_um, c_um;
+    uint64_t sample_seq;
+    uint32_t raw_counts;
+    long target_mm_s, encoder_v_mm_s;
+    bool metadata, sample_valid, last_read_ok, encoder_v_valid;
+    step_engine_diag_t engine;
+} steptrace_row_t;
+static steptrace_row_t s_trace_live[STEPTRACE_CAPACITY];
+static steptrace_row_t s_trace_frozen[STEPTRACE_CAPACITY];
+static unsigned s_trace_head, s_trace_count, s_trace_frozen_count;
+static uint32_t s_trace_run, s_trace_frozen_event, s_trace_frozen_run;
+static int64_t s_trace_last_us;
+
 #endif
 static uint32_t s_run_id;
 #ifdef CONFIG_CARTFSM_FOLLOWING_ERROR_WINDOW
@@ -298,6 +318,14 @@ static void enter_fault_record(cm_reason_t r, const cartfsm_step_loss_diag_t *ca
         s_step_loss_diag.run_at_accept = s_run_id;
         s_step_loss_diag.t_accept_us = accepted_at;
         s_step_loss_diag.target_at_accept_mm_s = target_before_stop;
+        /* 已提交停车后再复制；冻结顺序为最旧到最新，包含触发拍。 */
+        s_trace_frozen_count = s_trace_run == candidate->run_at_compare ? s_trace_count : 0;
+        s_trace_frozen_run = candidate->run_at_compare;
+        s_trace_frozen_event = s_step_loss_diag.event_id;
+        for (unsigned i = 0; i < s_trace_frozen_count; ++i) {
+            unsigned at = (s_trace_head + STEPTRACE_CAPACITY - s_trace_count + i) % STEPTRACE_CAPACITY;
+            s_trace_frozen[i] = s_trace_live[at];
+        }
     }
 #endif
     xSemaphoreGive(s_output_lock);
@@ -664,12 +692,55 @@ static void exec_steploss_query(void)
 #endif
 }
 
+/* 只在停稳后读冻结缓冲；comm_task串行派发，读期间不能处理ENABLE。
+ * 仍逐行校验event，避免将不同故障拼成一个输出。 */
+static void exec_steptrace_query(void)
+{
+#ifndef CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS
+    cartproto_send_err("STEPLOSS_DISABLED");
+#else
+    xSemaphoreTake(s_output_lock, portMAX_DELAY);
+    bool stopped = s_mode == CM_DISABLED || (s_mode == CM_FAULT && !s_fault_settling);
+    unsigned count = s_trace_frozen_count;
+    uint32_t event = s_trace_frozen_event, run = s_trace_frozen_run;
+    xSemaphoreGive(s_output_lock);
+    if (!stopped) { cartproto_send_err("STEPLOSS_BUSY"); return; }
+    if (!event) { cartproto_send_err("STEPLOSS_NONE"); return; }
+    char line[512];
+    int n = snprintf(line, sizeof(line), "SLT1 %" PRIu32 " BEGIN %u %" PRIu32 "\n", event, count, run);
+    cartproto_send_raw(line, n);
+    for (unsigned i = 0; i < count; ++i) {
+        xSemaphoreTake(s_output_lock, portMAX_DELAY);
+        if (event != s_trace_frozen_event || s_mode == CM_READY) {
+            xSemaphoreGive(s_output_lock); cartproto_send_err("STEPTRACE_CHANGED"); return;
+        }
+        steptrace_row_t r = s_trace_frozen[i];
+        xSemaphoreGive(s_output_lock);
+        n = snprintf(line, sizeof(line),
+            "SLT1 %" PRIu32 " ROW %u %" PRId64 " %" PRId64 " %" PRId64 " %" PRId64
+            " %" PRId64 " %" PRId64 " %" PRIu64 " %" PRIu32 " %ld %ld %u %u %u %u"
+            " %" PRId64 " %" PRId64 " %" PRId32 " %u %u %" PRIu32 " %" PRIu32 "\n",
+            event, i, r.observed_us, r.sample_us, r.c_begin_us, r.c_end_us,
+            r.e_um, r.c_um, r.sample_seq, r.raw_counts, r.target_mm_s, r.encoder_v_mm_s,
+            (unsigned)r.metadata, (unsigned)r.sample_valid, (unsigned)r.last_read_ok, (unsigned)r.encoder_v_valid,
+            r.engine.v_q16, r.engine.target_q16, r.engine.position_steps,
+            (unsigned)r.engine.stopped, (unsigned)r.engine.timer_running,
+            r.engine.wdt_stale_time_count, r.engine.wdt_expired_count);
+        if (n <= 0 || n >= (int)sizeof(line)) { cartproto_send_err("STEPTRACE_FORMAT"); return; }
+        cartproto_send_raw(line, n);
+    }
+    n = snprintf(line, sizeof(line), "SLT1 %" PRIu32 " END %u\n", event, count);
+    cartproto_send_raw(line, n);
+#endif
+}
+
 static void exec_cmd(const cart_req_t *req)
 {
     switch (req->cmd) {
     case CART_CMD_TMC_QUERY: exec_tmc_query(); break;
     case CART_CMD_QUERY:       exec_query(); break;
     case CART_CMD_STEPLOSS_QUERY: exec_steploss_query(); break;
+    case CART_CMD_STEPTRACE_QUERY: exec_steptrace_query(); break;
     case CART_CMD_CONFIRM_LEFT: exec_confirm_left(); break;
     case CART_CMD_CALIB_QUERY: exec_calib_query(); break;
     case CART_CMD_MARK_LEFT:   exec_mark_left(); break;
@@ -744,6 +815,33 @@ static bool supervise_step_loss(const fw_params_t *p)
         CONFIG_CARTFSM_FOLLOWING_ERROR_WINDOWS);
 #else
     trigger = cm_step_loss(e_um, c_um, threshold) ? 3 : 0;
+#endif
+#ifdef CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS
+    int64_t observed = esp_timer_get_time();
+    /* 与模式转换同锁，只记录本轮READY。E、C、引擎依次读取，不宣称同步。 */
+    xSemaphoreTake(s_output_lock, portMAX_DELAY);
+    if (s_mode == CM_READY && s_run_id == run) {
+        if (s_trace_run != run) {
+            s_trace_run = run; s_trace_head = 0; s_trace_count = 0; s_trace_last_us = 0;
+        }
+        if (!s_trace_count || observed - s_trace_last_us >= STEPTRACE_PERIOD_US || trigger) {
+            steptrace_row_t *r = &s_trace_live[s_trace_head];
+            *r = (steptrace_row_t){
+                .observed_us = observed, .sample_us = encoder.sample.sampled_at_us,
+                .c_begin_us = c_begin, .c_end_us = c_end, .e_um = sensor_e, .c_um = c_um,
+                .sample_seq = encoder.sample.sample_seq, .raw_counts = encoder.sample.raw_counts,
+                .target_mm_s = s_last_cmd_v, .encoder_v_mm_s = encoder.velocity_mm_s,
+                .metadata = metadata, .sample_valid = encoder.sample.valid,
+                .last_read_ok = encoder.sample.last_attempt_ok,
+                .encoder_v_valid = encoder.sample.velocity_valid,
+            };
+            step_engine_diag_snapshot(&r->engine);
+            s_trace_head = (s_trace_head + 1) % STEPTRACE_CAPACITY;
+            if (s_trace_count < STEPTRACE_CAPACITY) ++s_trace_count;
+            s_trace_last_us = observed;
+        }
+    }
+    xSemaphoreGive(s_output_lock);
 #endif
     if (!trigger) return false;
 #ifdef CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS

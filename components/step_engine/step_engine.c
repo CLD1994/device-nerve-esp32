@@ -71,6 +71,10 @@ static uint32_t s_accel = DEFAULT_ACCEL;     /* steps/s² */
 static uint32_t s_decel = DEFAULT_ACCEL;
 static uint32_t s_wdt_us = 0;                /* 0 = 看门狗关闭 */
 static volatile uint64_t s_last_kick_us = 0; /* 最近喂狗时刻（µs 域） */
+/* 上电以来的饱和诊断计数，受 s_spinlock 保护。
+ * expired 统计判定次数，不是独立看门狗事件数。 */
+static uint32_t s_wdt_stale_time_count;
+static uint32_t s_wdt_expired_count;
 
 /* 位置计数（带符号累计） */
 static volatile int32_t s_position = 0;
@@ -263,8 +267,17 @@ static bool gptimer_alarm_cb(gptimer_handle_t timer,
     bool     moving;
 
     portENTER_CRITICAL_ISR(&s_spinlock);
-    bool wdt_expired = (s_wdt_us > 0)
+    /* edata 在取得本锁之前已捕获，其间接受的新目标可能带来更新的喂狗
+     * 时间戳。禁止无符号相减下溢产生假超时；本次判定把更新的喂狗
+     * 时间戳按经过时间为零处理。 */
+    bool wdt_stale_time = (s_wdt_us > 0)
+                       && (edata->count_value < s_last_kick_us);
+    bool wdt_expired = (s_wdt_us > 0) && !wdt_stale_time
                     && (edata->count_value - s_last_kick_us > s_wdt_us);
+    if (wdt_stale_time && s_wdt_stale_time_count != UINT32_MAX)
+        ++s_wdt_stale_time_count;
+    if (wdt_expired && s_wdt_expired_count != UINT32_MAX)
+        ++s_wdt_expired_count;
     moving = vel_ramp_next(s_v_q16, s_dir, s_target_q16, s_target_dir,
                            s_accel, s_decel, wdt_expired,
                            &nv, &dt, &dchg);
@@ -328,6 +341,8 @@ esp_err_t step_engine_init(int step_gpio, int dir_gpio)
     s_decel = DEFAULT_ACCEL;
     s_wdt_us = 0;
     s_last_kick_us = 0;
+    s_wdt_stale_time_count = 0;
+    s_wdt_expired_count = 0;
     s_position = 0;
     s_stopped = true;
     s_timer_running = false;
@@ -503,6 +518,20 @@ bool step_engine_try_stop_at_rest(void)
     s_chain_remaining_us = 0;
     portEXIT_CRITICAL(&s_spinlock);
     return true;
+}
+
+void step_engine_diag_snapshot(step_engine_diag_t *out)
+{
+    if (out == NULL) return;
+    portENTER_CRITICAL(&s_spinlock);
+    out->v_q16 = s_dir ? (int64_t)s_v_q16 : -(int64_t)s_v_q16;
+    out->target_q16 = s_target_dir ? (int64_t)s_target_q16 : -(int64_t)s_target_q16;
+    out->position_steps = s_position;
+    out->stopped = s_stopped;
+    out->timer_running = s_timer_running;
+    out->wdt_stale_time_count = s_wdt_stale_time_count;
+    out->wdt_expired_count = s_wdt_expired_count;
+    portEXIT_CRITICAL(&s_spinlock);
 }
 
 int32_t step_engine_position_steps(void)

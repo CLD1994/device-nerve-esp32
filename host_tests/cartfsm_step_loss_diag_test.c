@@ -40,6 +40,11 @@ int main(void) {
     supervise_once(); supervise_once(); capture();
     assert(strstr(diag_output,"SL1 2 ERROR_UM -3001\n"));
     cmd(CART_CMD_RESET); cmd(CART_CMD_ENABLE);
+    command_pos=0; diag_snapshot.position_um=0;
+    for (unsigned i=1; i<=140; ++i) {
+        diag_clock += 5001; diag_snapshot.sample.sample_seq=i;
+        supervise_once(); assert(cartfsm_mode()==CM_READY);
+    }
     diag_snapshot_available=false; command_pos=0; raw=offset+4000; diag_clock=-100;
     supervise_once(); assert(cartfsm_mode()==CM_FAULT);
     supervise_once(); capture();
@@ -49,5 +54,9 @@ int main(void) {
     cart_req_t req;
     assert(cartproto_parse_line("STEPLOSS?",&req) && req.cmd==CART_CMD_STEPLOSS_QUERY);
     assert(!cartproto_parse_line("STEPLOSS? extra",&req));
+    cmd(CART_CMD_STEPTRACE_QUERY);
+    assert(strstr(diag_output, "SLT1 3 BEGIN 128 3\n"));
+    assert(strstr(diag_output, "SLT1 3 END 128\n"));
+    assert(cartproto_parse_line("STEPTRACE?", &req) && req.cmd == CART_CMD_STEPTRACE_QUERY);
     puts("step-loss diagnostic public-interface checks passed");
 }

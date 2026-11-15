@@ -40,3 +40,5 @@ bash experiments/step-frequency-isolated/tests/run.sh
 
 前者验证主机工具的协议与行为，后者验证独立STEP测量控制逻辑。
 ESP-IDF目标构建、波形和机械运动仍需在目标环境单独验证。
+
+- [故障前监督轨迹](../docs/step-loss-diagnostic.md)：`step_trace_capture.py`仅在停稳后读取冻结内存，不使能或复位。
