@@ -30,7 +30,7 @@ config CARTFSM_FOLLOWING_ERROR_WINDOW
 if CARTFSM_FOLLOWING_ERROR_WINDOW
 config CARTFSM_FOLLOWING_ERROR_HARD_UM
     int "累计误差立即停车门限（um）"
-    range 1000 20000
+    range 1000 50000
     default 6000
 config CARTFSM_FOLLOWING_ERROR_WINDOW_MS
     int "增长观察窗口（ms）"
