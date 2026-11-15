@@ -20,6 +20,7 @@
 #include "esp_timer.h"
 #include "tmc2209.h"
 #include "cartfsm_step_loss_diag.h"
+#include "cartfsm_following_error.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -53,7 +54,11 @@ static bool s_started = false;
 /* 与模式转换/读出同受s_output_lock保护，RESET不清除证据。 */
 static cartfsm_step_loss_diag_t s_step_loss_diag;
 static uint32_t s_step_loss_event;
+#endif
 static uint32_t s_run_id;
+#ifdef CONFIG_CARTFSM_FOLLOWING_ERROR_WINDOW
+/* 仅监督任务访问；run变化时更新函数清除旧窗口。 */
+static cartfsm_following_error_t s_following_error;
 #endif
 /* 串行化使能/VEL与供电急停；锁内不做I2C或NVS。 */
 static SemaphoreHandle_t s_output_lock;
@@ -463,9 +468,7 @@ static void exec_enable(void)
     }
     portENTER_CRITICAL(&s_lock);
     s_mode = CM_READY;
-#ifdef CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS
     ++s_run_id;
-#endif
     s_reason = CR_NONE;
     s_last_cmd_v = 0;
     portEXIT_CRITICAL(&s_lock);
@@ -637,7 +640,9 @@ static void exec_steploss_query(void)
     int64_t age = d.metadata_available && m->sampled_at_us >= 0
         && d.t_compare_us >= m->sampled_at_us ? d.t_compare_us - m->sampled_at_us : -1;
     const struct { const char *name; int64_t value; } fields[] = {
-        {"VERSION",1}, {"RUN_COMPARE",d.run_at_compare}, {"RUN_ACCEPT",d.run_at_accept},
+        {"VERSION",2}, {"TRIGGER",d.trigger}, {"HARD_UM",d.hard_um},
+        {"GROWTH_UM",d.growth_um}, {"WINDOW_US",d.window_elapsed_us},
+        {"GROWING_WINDOWS",d.growing_windows}, {"RUN_COMPARE",d.run_at_compare}, {"RUN_ACCEPT",d.run_at_accept},
         {"T_COMPARE_US",d.t_compare_us}, {"T_ACCEPT_US",d.t_accept_us},
         {"C_BEGIN_US",d.c_begin_us}, {"C_END_US",d.c_end_us}, {"TIME_ORDER_OK",ordered},
         {"E_SENSOR_UM",d.e_sensor_um}, {"E_COMPARED_UM",d.e_compared_um},
@@ -703,11 +708,14 @@ static void settle_fault(void)
 /* 失步检测始终运行；开启诊断时保存参与比较的E与另一次非同步读取的C。 */
 static bool supervise_step_loss(const fw_params_t *p)
 {
-#ifdef CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS
     uint32_t run;
     portENTER_CRITICAL(&s_lock);
     run = s_run_id;
     portEXIT_CRITICAL(&s_lock);
+#ifndef CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS
+    (void)run;
+#endif
+#ifdef CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS
     cartpos_supervision_t encoder = {0};
     bool metadata = cartpos_get_supervision(&encoder);
     long e_um = metadata ? (long)encoder.position_um : (long)cartpos_position_um();
@@ -726,10 +734,28 @@ static bool supervise_step_loss(const fw_params_t *p)
     int64_t c_end = esp_timer_get_time();
 #endif
     long threshold = p->step_loss_um;
-    if (!cm_step_loss(e_um, c_um, threshold)) return false;
+    int trigger = 0;
+#ifdef CONFIG_CARTFSM_FOLLOWING_ERROR_WINDOW
+    trigger = cartfsm_following_error_update(&s_following_error, run,
+        esp_timer_get_time(), (int64_t)e_um - c_um, threshold,
+        CONFIG_CARTFSM_FOLLOWING_ERROR_HARD_UM,
+        (int64_t)CONFIG_CARTFSM_FOLLOWING_ERROR_WINDOW_MS * 1000,
+        CONFIG_CARTFSM_FOLLOWING_ERROR_GROWTH_UM,
+        CONFIG_CARTFSM_FOLLOWING_ERROR_WINDOWS);
+#else
+    trigger = cm_step_loss(e_um, c_um, threshold) ? 3 : 0;
+#endif
+    if (!trigger) return false;
 #ifdef CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS
     cartfsm_step_loss_diag_t candidate = {
         .metadata_available = metadata, .run_at_compare = run,
+        .trigger = trigger,
+#ifdef CONFIG_CARTFSM_FOLLOWING_ERROR_WINDOW
+        .hard_um = CONFIG_CARTFSM_FOLLOWING_ERROR_HARD_UM,
+        .growth_um = s_following_error.growth_um,
+        .window_elapsed_us = s_following_error.window_elapsed_us,
+        .growing_windows = s_following_error.growing_windows,
+#endif
         .encoder = encoder, .e_sensor_um = sensor_e, .e_compared_um = e_um,
         .c_um = c_um, .error_um = (int64_t)e_um - (int64_t)c_um,
         .threshold_um = threshold, .c_begin_us = c_begin, .c_end_us = c_end,
@@ -776,9 +802,7 @@ static void fsm_task(void *arg)
             } else if (!m6835_ok) {
                 enter_fault(CR_MT6835);
             } else {
-                /* 丢步判定：µm 域 |E−C|（流程自测可注入 E 偏置）。
-                 * 运行中堵转由它捕获；回零后抵挡块静止属正常——
-                 * C 不前进、D 不增长，无误报 */
+                /* 累计误差与可选窗口增长判定；C始终保留实际STEP累计值。 */
                 if (supervise_step_loss(p)) {
                     /* 故障已按原路径提交；证据仅在被接受时锁存。 */
                 } else {

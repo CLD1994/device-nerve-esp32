@@ -20,4 +20,30 @@ config CARTFSM_STEP_LOSS_DIAGNOSTICS
         用 STEPLOSS? 导出。关闭时不分配快照存储、不执行快照专属采集，
         查询返回 STEPLOSS_DISABLED。失步检测和故障停车始终有效。
 
+config CARTFSM_FOLLOWING_ERROR_WINDOW
+    bool "启用实验性窗口跟随误差判定"
+    default n
+    help
+        允许有限、稳定的累计偏差；连续窗口向外增长或达到独立硬限时停车。
+        不重置STEP累计位置。参数是现场联调起点，不是经过验证的安全值。
+
+if CARTFSM_FOLLOWING_ERROR_WINDOW
+config CARTFSM_FOLLOWING_ERROR_HARD_UM
+    int "累计误差立即停车门限（um）"
+    range 1000 20000
+    default 6000
+config CARTFSM_FOLLOWING_ERROR_WINDOW_MS
+    int "增长观察窗口（ms）"
+    range 5 200
+    default 50
+config CARTFSM_FOLLOWING_ERROR_GROWTH_UM
+    int "每窗口最小向外增长（um）"
+    range 100 10000
+    default 1000
+config CARTFSM_FOLLOWING_ERROR_WINDOWS
+    int "连续增长窗口数"
+    range 2 10
+    default 2
+endif
+
 endmenu

@@ -4,6 +4,9 @@
 #include <stdint.h>
 #include "cartpos.h"
 typedef struct {
+    int trigger; /* 1=累计硬限，2=连续增长，3=传统单拍 */
+    int64_t hard_um, growth_um, window_elapsed_us;
+    unsigned growing_windows;
     bool valid;
     bool metadata_available;
     uint32_t event_id, run_at_compare, run_at_accept;
