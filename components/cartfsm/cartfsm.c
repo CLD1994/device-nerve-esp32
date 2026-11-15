@@ -563,6 +563,16 @@ static void exec_config_set(const cart_req_t *req)
     cartproto_send_ok(req->name, req->value);
 }
 
+static void exec_config_get(const cart_req_t *req)
+{
+    int idx = fw_params_find(req->name);
+    if (idx < 0) {
+        cartproto_send_err(req->name);
+        return;
+    }
+    cartproto_send_ok(fw_params_name(idx), fw_params_value(idx));
+}
+
 static void exec_config_dump(void)
 {
     for (int i = 0; i < fw_params_count(); i++) {
@@ -665,6 +675,7 @@ static void exec_cmd(const cart_req_t *req)
     case CART_CMD_VEL:         exec_vel(req->v_mm_s); break;
     case CART_CMD_CONFIG_SET:  exec_config_set(req); break;
     case CART_CMD_CONFIG_DUMP: exec_config_dump(); break;
+    case CART_CMD_CONFIG_GET:  exec_config_get(req); break;
     default:
         break;
     }

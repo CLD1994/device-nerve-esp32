@@ -84,7 +84,10 @@ RESET\n                   清除 FAULT
 QUERY\n                   查询当前模式，回答一行 MODE
 CONFIG <NAME> <value>\n   设置运行参数，回答 OK 或 ERR
 CONFIG?\n                 dump 全部参数（调试与日志记录用）
+CONFIG? <NAME>\n          只读单个参数，回答 OK <NAME> <value>
 ```
+
+`CONFIG? <NAME>` 的 NAME 与 `CONFIG` 使用相同词法 `[A-Z0-9_]{1,15}`。已登记参数仅回复一行 `OK <NAME> <value>`；词法合法但未登记的参数回复 `ERR <NAME>`；多余参数、非法名称等语法错误仍按既有规则静默丢弃。单项查询在三种模式下均只读，不修改参数、NVS、模式或运动目标，也不重置运动看门狗。无参数 `CONFIG?` 保留按注册表顺序输出全部参数的行为。主机可轮转单项查询避免全量回复突发；查询能力不保证主机控制截止或设备实际响应耗时。
 
 标定与回执原则：`MARK LEFT`/`MARK RIGHT`/`ENABLE` 仅 DISABLED 态接受；拒绝时回 `ERR MARK_LEFT`/`ERR MARK_RIGHT`/`ERR ENABLE`；ENABLE的供电条件不满足时优先回`ERR POWER`（回执名是单 token），普通参数/模式拒绝时状态保持；存储与参考失败的语义见[标定保存指南](calibration.md)。`VEL`/`RESET` 在不适用态静默忽略、无回执。标定决策表（`L = E_right − E_left` 合法窗 100000–1000000 µm，域反向得负即拒）与 ENABLE 动作次序见 `calib-spec.md`。
 
@@ -101,7 +104,7 @@ CONFIG?\n                 dump 全部参数（调试与日志记录用）
 | `CONFIRM LEFT` | 执行或 `ERR`（见标定保存指南） | `ERR` | `ERR` |
 | `CALIB?` | 接受 | 接受 | 接受 |
 | `CONFIG` | 接受 | 仅非摆角/非X_INV参数 | 拒绝（`ERR`） |
-| `CONFIG?` | 接受 | 接受 | 接受 |
+| `CONFIG?` / `CONFIG? <NAME>` | 接受 | 接受 | 接受 |
 
 `VEL` 语义：固件以不超过 `ACC_MAX` 的加速度向目标速度过渡，换向经零速；收到新 `VEL` 即更新目标并保持到下一条。非法行静默丢弃，目标不变。
 
