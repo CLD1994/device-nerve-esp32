@@ -40,3 +40,10 @@ bash experiments/step-frequency-isolated/tests/run.sh
 
 前者验证主机工具的协议与行为，后者验证独立STEP测量控制逻辑。
 ESP-IDF目标构建、波形和机械运动仍需在目标环境单独验证。
+
+## STEP_LOSS 可选诊断
+
+`step_loss_capture.py` 支持 SL1 VERSION=1/2 快照；`step_trace_capture.py`
+读取新 SLT4 事件前后软件轨迹。两者都只发查询，不使能/复位/运动。
+诊断开关、observe-only主机责任及帧定义见 [STEP_LOSS诊断](../docs/step-loss-diagnostic.md)。
+本工具不读取旧实验SLT2/3，须与固件版本匹配。

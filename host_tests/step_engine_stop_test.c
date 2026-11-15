@@ -14,6 +14,7 @@ static struct {
     gptimer_event_callbacks_t callbacks;
     void *context;
 } timer;
+static bool kick_during_pulse;
 enum { STEP_PIN = 1, DIR_PIN = 2 };
 esp_err_t gptimer_new_timer(const gptimer_config_t *c, gptimer_handle_t *t)
 { assert(c->resolution_hz == 1000000); *t = &timer; return ESP_OK; }
@@ -30,7 +31,14 @@ esp_err_t gptimer_set_alarm_action(gptimer_handle_t t, const gptimer_alarm_confi
 { assert(t == &timer); timer.alarm = a->alarm_count; return ESP_OK; }
 esp_err_t gpio_set_level(gpio_num_t pin, unsigned level)
 {
-    if (pin == STEP_PIN && level) timer.pulses++;
+    if (pin == STEP_PIN && level) {
+        timer.pulses++;
+        if (kick_during_pulse) {
+            kick_during_pulse = false;
+            timer.now++; /* 模拟另一核在 alarm 快照之后接收新目标。 */
+            step_engine_vel_target(1000LL * 65536);
+        }
+    }
     if (pin == DIR_PIN) timer.direction = level;
     return ESP_OK;
 }
@@ -112,5 +120,30 @@ int main(void)
     step_engine_vel_target(0);
     reach_velocity(0);
     assert(step_engine_try_stop_at_rest());
+    /* WDT 使用 alarm 时间快照；较新的喂狗不得被无符号减法当超时。 */
+    const int64_t cruise = 1000LL * 65536;
+    step_engine_vel_set_accel(1000000);
+    step_engine_vel_set_decel(1000000);
+    step_engine_vel_set_wdt_us(0);
+    step_engine_vel_target(cruise);
+    reach_velocity(cruise);
+    step_engine_vel_set_wdt_us(1000);
+    kick_during_pulse = true;
+    deliver_alarm();
+    assert(step_engine_vel_now_q16() == cruise);
+    assert(timer.running);
+
+    /* 恰好到期不触发；超过一微秒后仍按原语义减速。 */
+    uint64_t kick = timer.now;
+    gptimer_alarm_event_data_t event = { .alarm_value = kick + 1000,
+                                       .count_value = kick + 1000 };
+    timer.now = event.count_value;
+    timer.callbacks.on_alarm(&timer, &event, timer.context);
+    assert(step_engine_vel_now_q16() == cruise);
+    event.alarm_value = event.count_value = kick + 1001;
+    timer.now = event.count_value;
+    timer.callbacks.on_alarm(&timer, &event, timer.context);
+    assert(step_engine_vel_now_q16() < cruise);
+    step_engine_stop();
     puts("step_engine_stop: public-contract assertions passed");
 }

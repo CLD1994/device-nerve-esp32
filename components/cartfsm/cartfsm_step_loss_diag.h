@@ -9,6 +9,9 @@ typedef struct {
     uint32_t event_id, run_at_compare, run_at_accept;
     int64_t t_compare_us, t_accept_us, c_begin_us, c_end_us;
     int64_t e_sensor_um, e_compared_um, c_um, error_um, threshold_um;
+    int trigger;
+    int64_t hard_um, growth_um, window_elapsed_us;
+    unsigned growing_windows;
     long target_at_accept_mm_s;
     cartpos_supervision_t encoder;
 } cartfsm_step_loss_diag_t;

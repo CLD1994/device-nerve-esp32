@@ -11,8 +11,9 @@ C_BEGIN_US C_END_US TIME_ORDER_OK E_SENSOR_UM E_COMPARED_UM C_UM ERROR_UM
 THRESHOLD_UM TARGET_ACCEPT_MM_S META_AVAILABLE ENC_V_MM_S ENC_V_VALID ENC_SPAN_US
 SAMPLE_US AGE_US SAMPLE_SEQ FAILURE_SEQ CONTINUITY_SEQ GAP_US SAMPLE_VALID
 LAST_READ_OK""".split())
+WINDOW_FIELDS = frozenset("TRIGGER HARD_UM GROWTH_UM WINDOW_US GROWING_WINDOWS".split())
 SL = re.compile(r"SL1 ([0-9]+) ([A-Z_]+) (-?[0-9]+)")
-BACKGROUND = re.compile(r"(?:STATE -?[0-9]+ -?[0-9]+ -?[0-9]+ -?[0-9]+|VEL_VALID [01] [01]|MODE [A-Z_]+ [A-Z_]+)")
+BACKGROUND = re.compile(r"(?:STATE -?[0-9]+ -?[0-9]+ -?[0-9]+ -?[0-9]+|VEL_VALID [01] [01]|MODE [A-Z_]+ [A-Z_]+|EVENT STEP_LOSS [0-9]+ [0-9]+ [0-9]+)")
 
 class Capture:
     def __init__(self):
@@ -36,11 +37,13 @@ class Capture:
         if event != self.event_id:
             raise ValueError("诊断event_id改变，不拼接不同事件")
         if name == "END":
-            if value != 1 or self.fields.keys() != FIELDS or self.fields.get("VERSION") != 1:
+            version = self.fields.get("VERSION")
+            expected = FIELDS if version == 1 else FIELDS | WINDOW_FIELDS
+            if value != 1 or version not in (1, 2) or self.fields.keys() != expected:
                 raise ValueError("证据字段缺失、版本不支持或结束标记无效")
             self.done = True
             return {"event_id": self.event_id, **self.fields}
-        if name not in FIELDS or name in self.fields:
+        if name not in FIELDS | WINDOW_FIELDS or name in self.fields:
             raise ValueError(f"未知或重复证据字段：{name}")
         self.fields[name] = value
         return None

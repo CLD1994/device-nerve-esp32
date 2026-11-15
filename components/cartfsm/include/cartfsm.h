@@ -34,6 +34,13 @@ cm_mode_t cartfsm_mode(void);
 /** 当前原因（枚举原子读；流程自测核对 reason 用）。 */
 cm_reason_t cartfsm_reason(void);
 
+typedef struct {
+    uint32_t event_id, run_id;
+    int64_t device_us;
+} cartfsm_step_loss_notice_t;
+/** Nonblocking single-event mailbox; optional diagnostics/observe-only builds. */
+bool cartfsm_take_step_loss_notice(cartfsm_step_loss_notice_t *out);
+
 /** 当前标定状态（READY 进入前提是 CAL_DONE）。 */
 calib_state_t cartfsm_calib(void);
 

@@ -63,7 +63,7 @@ void cartproto_send_mode(const char *mode,const char *reason) { (void)reason;snp
 int64_t diag_clock;
 bool diag_snapshot_available=true, diag_use_snapshot;
 cartpos_supervision_t diag_snapshot;
-char diag_output[8192];
+char diag_output[65536];
 size_t diag_output_len;
 unsigned diag_raw_sends, diag_snapshot_reads;
 int64_t esp_timer_get_time(void) { return ++diag_clock; }

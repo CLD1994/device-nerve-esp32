@@ -19,3 +19,10 @@ for hz in 0 100 500 1024; do
     grep -q 'telemetry requires ticks that exactly represent 1 ms' "$tmp/error"
 done
 echo 'telemetry timing: valid and invalid tick configurations passed'
+
+# Compile the task as well as the pure formatting/timing helpers.
+includes=()
+while IFS= read -r path; do includes+=("-I$path"); done < <(find components -type d -name include)
+"${CC:-cc}" -std=c11 -Wall -Wextra -Werror -DconfigTICK_RATE_HZ=1000 \
+  -Ihost_tests/power_stubs -Icomponents/cartfsm/host_stub -Ihost_tests/stub \
+  "${includes[@]}" -fsyntax-only components/telemetry/telemetry.c
