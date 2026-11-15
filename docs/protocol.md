@@ -261,7 +261,11 @@ EVENT STEP_LOSS <event_id> <run_id> <device_us>\n
 这是一次观察通知，不是 MODE 状态转换；READY 仍接收 VEL。正式故障路径仍使用
 `MODE FAULT STEP_LOSS`，其停车及使能行为不变。
 
-每次上电仅发送一次，无ACK或重放；RESET/ENABLE不重发。主机应先监听再ENABLE，
-按事件和运行编号辨识；排队可能延迟，device_us不是发送时间，不能与主机时钟直接比较。
+每次成功ENABLE运行仅发送一次，无ACK或重放；RESET不重新布防，成功ENABLE重新布防。主机先监听再ENABLE，
+随后用RUN?取得当前运行编号，只接受匹配run_id的事件；排队可能延迟，device_us不是发送时间，不能与主机时钟直接比较。
 没有收到不证明没有命中。完整证据与停稳后查询见[诊断说明](step-loss-diagnostic.md)。
+
+`RUN?`只读回复`RUN <run_id>\n`，编号在每次成功ENABLE递增（上电未ENABLE时为0）。
+查询不改变MODE、电机目标或冻结证据。成功ENABLE不清除旧冻结证据，新run首次命中才将事件与轨迹整体替换。
+成功ENABLE会清除尚未发送的旧通知邮箱；已取出的旧通知可能晚到，主机必须按run_id拒绝。
 

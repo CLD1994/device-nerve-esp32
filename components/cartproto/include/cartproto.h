@@ -65,6 +65,7 @@ typedef enum {
     CART_CMD_ENABLE,
     CART_CMD_RESET,
     CART_CMD_QUERY,
+    CART_CMD_RUN_QUERY, /* RUN?：当前成功ENABLE运行编号，不改变状态 */
     CART_CMD_CONFIG_SET,     /* CONFIG <NAME> <value> */
     CART_CMD_CONFIRM_LEFT,   /* CONFIRM LEFT */
     CART_CMD_CALIB_QUERY,    /* CALIB? */

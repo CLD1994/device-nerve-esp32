@@ -26,9 +26,9 @@ config CARTFSM_STEP_LOSS_OBSERVE_ONLY
     depends on CARTFSM_STEP_LOSS_DIAGNOSTICS
     default n
     help
-        开启后 STEP_LOSS 判据只锁存本次上电的第一次命中及诊断缓冲，
-        不进入 FAULT、不改变目标速度或加速度、不禁用驱动。RESET和
-        新运行均不覆盖首份证据；停车后可用 STEPLOSS?/STEPTRACE? 读取。
+        开启后 STEP_LOSS 判据只锁存本次成功ENABLE运行的第一次命中及诊断缓冲，
+        不进入 FAULT、不改变目标速度或加速度、不禁用驱动。新运行首次命中
+        才覆盖旧证据，成功ENABLE重新布防；停车后可用 STEPLOSS?/STEPTRACE? 读取。
         READY 中仍拒绝诊断查询。供电、编码器故障、软限位和命令看门狗
         保持原行为。本选项暂时移除了跟随误差停车能力，只用于有人在场、
         可独立断电的现场排查；不是正式运行或安全验收配置。

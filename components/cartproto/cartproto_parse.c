@@ -125,6 +125,10 @@ bool cartproto_parse_line(const char *line, cart_req_t *out)
             out->cmd = CART_CMD_RESET;
             return true;
         }
+        if (streq_n(line, cmd_len, "RUN?")) {
+            out->cmd = CART_CMD_RUN_QUERY;
+            return true;
+        }
         if (streq_n(line, cmd_len, "QUERY")) {
             out->cmd = CART_CMD_QUERY;
             return true;
