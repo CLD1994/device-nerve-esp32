@@ -31,11 +31,11 @@ class ProbeLink(Link):
             self.target = int(command.split()[1])
 
 
-def run_motion(link, bound):
+def run_motion(link, bound, acceleration):
     if abs(link.fresh()[2]) > 1:
         raise Abort('起步前小车未静止')
     link.velocity_validity.active = True
-    for key, value in CONFIG.items():
+    for key, value in {**CONFIG, 'ACC_MAX': acceleration}.items():
         reply = link.query('CONFIG %s %d' % (key, value), [key])
         if reply[key] != value:
             raise Abort('配置回执不匹配: ' + key)
@@ -100,11 +100,11 @@ def execute(link, args):
         cal, cfg, bound = preflight(link, args)
         link.record('preflight', {'calibration': cal, 'config': cfg})
         print('8段×250ms，共2秒；目标(mm/s): ' + ', '.join(map(str, TARGETS)))
-        print('run设置VEL_MAX=20 ACC_MAX=100 WDT_MS=100 WDT_DEC=100，不恢复旧高值。')
+        print('run设置VEL_MAX=20 ACC_MAX=%d WDT_MS=100 WDT_DEC=100，退出保留这些值。' % args.acceleration)
         print('无自动回中；保留两端余量、起点±30mm预算。需人工核实20V、两侧净空及独立断电。')
         if args.command == 'plan':
             return
-        run_motion(link, bound)
+        run_motion(link, bound, args.acceleration)
     finally:
         if args.command == 'run':
             stop_and_disable(link)
@@ -117,6 +117,8 @@ def main():
     parser.add_argument('--out', required=True, help='新建JSONL日志，不覆盖已有文件')
     parser.add_argument('command', choices=['plan', 'run'])
     parser.add_argument('--confirm-motion', action='store_true')
+    parser.add_argument('--acceleration', type=int, choices=(100, 10000), default=100,
+                        help='ACC_MAX (mm/s²)，默认100；10000用于对照快速目标变化')
     args = parser.parse_args()
     if args.command == 'run' and not args.confirm_motion:
         parser.error('run必须明确提供--confirm-motion；现场先READY，不自动ENABLE')
