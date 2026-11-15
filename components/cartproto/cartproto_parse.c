@@ -178,6 +178,17 @@ bool cartproto_parse_line(const char *line, cart_req_t *out)
         return true;
     }
 
+    if (streq_n(line, cmd_len, "CONFIG?")) {
+        size_t name_len = len - rest;
+        if (!valid_name(&line[rest], name_len)) {
+            return false;
+        }
+        out->cmd = CART_CMD_CONFIG_GET;
+        memcpy(out->name, &line[rest], name_len);
+        out->name[name_len] = '\0';
+        return true;
+    }
+
     if (streq_n(line, cmd_len, "CONFIG")) {
         /* CONFIG NAME value：NAME 与 value 以单空格分隔 */
         const char *args = &line[rest];

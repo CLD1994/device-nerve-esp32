@@ -72,13 +72,14 @@ typedef enum {
     CART_CMD_TMC_QUERY, /* TMC?：仅禁用时只读寄存器 */
     CART_CMD_STEPLOSS_QUERY, /* STEPLOSS?：停稳后只读故障证据 */
     CART_CMD_DISABLE,        /* DISABLE */
+    CART_CMD_CONFIG_GET,     /* CONFIG? <NAME>：单项只读 */
 } cart_cmd_t;
 
 typedef struct {
     cart_cmd_t cmd;
     int32_t v_mm_s;          /* VEL：整数 mm/s；|v| > 32767 判非法丢弃
                               *（防溢出，正常钳位 ±VEL_MAX 在 cartfsm） */
-    char name[16];           /* CONFIG：NAME ∈ [A-Z0-9_]{1,15} */
+    char name[16];           /* CONFIG / CONFIG?：NAME ∈ [A-Z0-9_]{1,15} */
     long value;              /* CONFIG：十进制 long */
 } cart_req_t;
 
