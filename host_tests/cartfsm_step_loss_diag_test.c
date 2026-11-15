@@ -16,6 +16,9 @@ int main(void) {
     diag_snapshot=(cartpos_supervision_t){.position_um=13000,.velocity_mm_s=812,
         .sample={.valid=true,.velocity_valid=true,.sampled_at_us=1,.sample_seq=42,
             .continuous_gap_us=5000,.continuity_seq=7,.velocity_span_us=16000}};
+    diag_snapshot.sample.status=7;
+    diag_snapshot.sample.frame_valid=true;
+    for (unsigned i=0; i<6; ++i) diag_snapshot.sample.frame_rx[i]=10+i;
     supervise_once(); assert(cartfsm_mode()==CM_READY); /* Equality does not fault. */
     raw=offset+13000; velocity(100); raw=999999; diag_snapshot.position_um=13001; axis_rest=false;
     supervise_once(); assert(cartfsm_mode()==CM_FAULT && cartfsm_reason()==CR_STEP_LOSS);
@@ -31,6 +34,10 @@ int main(void) {
     assert(strstr(diag_output," SAMPLE_SEQ 42\n"));
     assert(strstr(diag_output," ENC_V_MM_S 812\n"));
     assert(strstr(diag_output," TARGET_ACCEPT_MM_S 100\n"));
+    diag_output_len=0; diag_output[0]=0;
+    cmd(CART_CMD_STEPTRACE_QUERY);
+    assert(strstr(diag_output," 7 1 10 11 12 13 14 15\n"));
+    capture();
     power_ready=false; supervise_once(); assert(cartfsm_reason()==CR_POWER);
     power_ready=true; cmd(CART_CMD_RESET); assert(cartfsm_mode()==CM_DISABLED);
     capture(); assert(strstr(diag_output,"SL1 1 E_COMPARED_UM 13001\n"));
@@ -55,8 +62,8 @@ int main(void) {
     assert(cartproto_parse_line("STEPLOSS?",&req) && req.cmd==CART_CMD_STEPLOSS_QUERY);
     assert(!cartproto_parse_line("STEPLOSS? extra",&req));
     cmd(CART_CMD_STEPTRACE_QUERY);
-    assert(strstr(diag_output, "SLT2 3 BEGIN 128 3\n"));
-    assert(strstr(diag_output, "SLT2 3 END 128\n"));
+    assert(strstr(diag_output, "SLT3 3 BEGIN 128 3\n"));
+    assert(strstr(diag_output, "SLT3 3 END 128\n"));
     assert(cartproto_parse_line("STEPTRACE?", &req) && req.cmd == CART_CMD_STEPTRACE_QUERY);
     puts("step-loss diagnostic public-interface checks passed");
 }

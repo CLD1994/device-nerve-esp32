@@ -63,7 +63,7 @@ static void fail_desc(void *ctx, char *buf, size_t len)
              k, frame[0], frame[1], frame[2], frame[3], frame[4], frame[5]);
 }
 
-/* STATUS 位变化告警（bit0 过速 bit1 磁场弱 bit2 欠压；仅记录，不上报协议） */
+/* STATUS 位变化告警（bit0 过速 bit1 磁场弱 bit2 欠压；仅记录，诊断快照可读） */
 static void on_sample(void *ctx, uint8_t status)
 {
     me_mt6835_inst_t *me = ctx;
@@ -74,7 +74,16 @@ static void on_sample(void *ctx, uint8_t status)
     me->last_status = status;
 }
 
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+static bool copy_success_frame(void *ctx, uint8_t rx[6])
+{
+    return mt6835_hw_copy_success_frame(((me_mt6835_inst_t *)ctx)->hw, rx);
+}
+#endif
 static const magnetic_encoder_impl_t s_impl = {
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    .copy_success_frame = copy_success_frame,
+#endif
     .read_frame    = read_frame,
     .counts_per_rev = counts_per_rev,
     .fail_desc     = fail_desc,

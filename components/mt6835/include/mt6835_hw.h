@@ -15,6 +15,10 @@
  */
 
 #pragma once
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -72,6 +76,10 @@ void mt6835_hw_last_failure(mt6835_hw_handle_t h,
                             mt6835_hw_fail_t *kind,
                             uint8_t frame[MT6835_HW_FRAME_BYTES]);
 
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+/* 仅单采样调用者在 read_raw 成功后取帧，不执行 SPI。 */
+bool mt6835_hw_copy_success_frame(mt6835_hw_handle_t h, uint8_t rx[MT6835_HW_FRAME_BYTES]);
+#endif
 #ifdef __cplusplus
 }
 #endif

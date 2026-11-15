@@ -13,6 +13,8 @@ FIELDS = ('observed_us sample_us c_begin_us c_end_us e_um c_um sample_seq raw_co
 FIELDS_V2 = FIELDS + ('pcnt_count pcnt_valid pcnt_init_error pcnt_read_error '
                       'pcnt_overflow_invalid pcnt_begin_us pcnt_end_us en_level en_read_error').split()
 
+FIELDS_V3 = FIELDS_V2 + ('encoder_status frame_valid spi_rx0 spi_rx1 spi_rx2 spi_rx3 spi_rx4 spi_rx5').split()
+
 def collect(ser, timeout=8.0):
     request = b'STEPTRACE?\n'
     if ser.write(request) != len(request):
@@ -24,13 +26,13 @@ def collect(ser, timeout=8.0):
         line = ser.readline().decode('ascii', errors='replace').strip()
         if line.startswith('ERR '):
             raise RuntimeError(line)
-        if not line.startswith(('SLT1 ', 'SLT2 ')):
+        if not line.startswith(('SLT1 ', 'SLT2 ', 'SLT3 ')):
             continue
         parts = line.split()
         if len(parts) < 4:
             raise ValueError('truncated STEPTRACE line')
         version = int(parts[0][-1])
-        fields = FIELDS_V2 if version == 2 else FIELDS
+        fields = {1: FIELDS, 2: FIELDS_V2, 3: FIELDS_V3}[version]
         event = int(parts[1])
         if parts[2] == 'BEGIN':
             if record is not None or len(parts) != 5:

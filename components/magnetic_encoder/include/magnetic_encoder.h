@@ -12,6 +12,10 @@
  * 语义：docs/superpowers/specs/2026-10-14-device-category-abstraction.md。
  */
 #pragma once
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -27,6 +31,10 @@ typedef struct magnetic_encoder_s *magnetic_encoder_handle_t;
 
 /** 同一临界区内取得的采样快照；时间单位为启动后的单调微秒。 */
 typedef struct {
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    uint8_t frame_rx[6]; /* 最近成功 SPI 帧原文，不是由角度重建 */
+    bool frame_valid;    /* 此实现提供同一成功样本的 SPI 帧 */
+#endif
     int64_t position_counts;
     int64_t continuous_gap_us; /* 当前实例允许的连续成功采样间隔 */
     uint32_t raw_counts;          /* 同一成功样本的单圈角度 */

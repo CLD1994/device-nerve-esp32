@@ -7,7 +7,7 @@
  *     RX: [2]=ANGLE[20:13]  [3]=ANGLE[12:5]
  *         [4]=ANGLE[4:0]<<3 | STATUS[2:0]  [5]=CRC8
  *   raw21 = (rx[2]<<13) | (rx[3]<<5) | (rx[4]>>3)
- *   STATUS：bit0 过速、bit1 磁场弱、bit2 欠压（仅记录，不上报协议）。
+ *   STATUS：bit0 过速、bit1 磁场弱、bit2 欠压（仅记录，诊断快照可读）。
  *   CRC8（poly 0x07、init 0x00）与器件回传寄存器 0x006 比较。
  *   帧校验：拔线时 MISO 悬空常读全零——CRC 与全零帧一并拒绝，
  *   失败帧原文留存（mt6835_hw_last_failure）供设备组件分诊。
@@ -31,6 +31,10 @@ struct mt6835_hw_dev_t {
     spi_device_handle_t dev;
     mt6835_hw_fail_t    last_fail;
     uint8_t             last_frame[MT6835_HW_FRAME_BYTES];
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    uint8_t success_frame[MT6835_HW_FRAME_BYTES];
+    bool success_frame_valid;
+#endif
 };
 
 /* ================================================================
@@ -117,6 +121,10 @@ bool mt6835_hw_read_raw(mt6835_hw_handle_t h, uint32_t *raw_out, uint8_t *status
         goto fail;
     }
 
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    for (int i = 0; i < MT6835_HW_FRAME_BYTES; ++i) h->success_frame[i] = rx[i];
+    h->success_frame_valid = true;
+#endif
     *raw_out = raw;
     *status_out = status;
     return true;
@@ -149,3 +157,13 @@ void mt6835_hw_last_failure(mt6835_hw_handle_t h,
         }
     }
 }
+
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+/* 单采样调用者专用：无 SPI、无并发读接口；失败不替换最近成功帧。 */
+bool mt6835_hw_copy_success_frame(mt6835_hw_handle_t h, uint8_t rx[MT6835_HW_FRAME_BYTES])
+{
+    if (!h || !rx || !h->success_frame_valid) return false;
+    for (int i = 0; i < MT6835_HW_FRAME_BYTES; ++i) rx[i] = h->success_frame[i];
+    return true;
+}
+#endif

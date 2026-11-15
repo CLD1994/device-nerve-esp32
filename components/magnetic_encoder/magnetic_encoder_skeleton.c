@@ -33,6 +33,11 @@ static bool publish_sample(magnetic_encoder_inst_t *inst,
                            uint32_t raw, uint8_t status)
 {
     int64_t now_us = inst->now_us(inst->clock_ctx);
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    uint8_t frame[6] = {0};
+    bool frame_valid = inst->impl->copy_success_frame &&
+        inst->impl->copy_success_frame(inst->impl_ctx, frame);
+#endif
     portENTER_CRITICAL(&inst->lock);
     bool recovered = magnetic_encoder_fail_step(&inst->fail, true);
 
@@ -54,6 +59,10 @@ static bool publish_sample(magnetic_encoder_inst_t *inst,
     inst->pos_counts = pos;
     inst->last_raw = raw;
     inst->status = status;
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    memcpy(inst->frame_rx, frame, sizeof(frame));
+    inst->frame_valid = frame_valid;
+#endif
     magnetic_encoder_velocity_t velocity = magnetic_encoder_vel_push_at(
         &inst->vel, pos, now_us, inst->continuous_gap_us);
     inst->velocity_valid = velocity.valid;
@@ -317,6 +326,10 @@ bool magnetic_encoder_inst_get_sample(magnetic_encoder_handle_t enc,
         .last_attempt_ok = inst->last_attempt_ok,
         .ok = inst->fail.ok,
     };
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    memcpy(out->frame_rx, inst->frame_rx, sizeof(out->frame_rx));
+    out->frame_valid = inst->frame_valid;
+#endif
     portEXIT_CRITICAL(&inst->lock);
     return true;
 }

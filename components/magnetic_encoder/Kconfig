@@ -1,3 +1,7 @@
+config MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    bool
+    default n
+
 menu "magnetic_encoder - 磁编码器类别"
 
 config MAGNETIC_ENCODER_AS5600

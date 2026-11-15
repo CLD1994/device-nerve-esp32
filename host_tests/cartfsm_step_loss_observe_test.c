@@ -31,8 +31,8 @@ int main(void)
     axis_rest=true; velocity(0); cmd(CART_CMD_DISABLE);
     capture(1); assert(strstr(diag_output," ERROR_UM 3001\n"));
     cmd(CART_CMD_STEPTRACE_QUERY);
-    assert(strstr(diag_output,"SLT2 1 BEGIN 1 1\n"));
-    assert(strstr(diag_output,"SLT2 1 END 1\n"));
+    assert(strstr(diag_output,"SLT3 1 BEGIN 1 1\n"));
+    assert(strstr(diag_output,"SLT3 1 END 1\n"));
     cmd(CART_CMD_ENABLE); raw=offset; velocity(120);
     diag_output_len=0; diag_output[0]=0; cmd(CART_CMD_RUN_QUERY);
     assert(!strcmp(diag_output,"RUN 2\n"));
@@ -50,7 +50,7 @@ int main(void)
     power_ready=true; cmd(CART_CMD_RESET); capture(2);
     assert(strstr(diag_output," RUN_ACCEPT 2\n"));
     cmd(CART_CMD_STEPTRACE_QUERY);
-    assert(strstr(diag_output,"SLT2 2 BEGIN 1 2\n"));
+    assert(strstr(diag_output,"SLT3 2 BEGIN 1 2\n"));
     raw=offset; cmd(CART_CMD_ENABLE); supervise_once();
     assert(cartfsm_mode()==CM_READY);
     healthy=false; supervise_once();

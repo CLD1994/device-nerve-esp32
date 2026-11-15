@@ -269,3 +269,23 @@ EVENT STEP_LOSS <event_id> <run_id> <device_us>\n
 查询不改变MODE、电机目标或冻结证据。成功ENABLE不清除旧冻结证据，新run首次命中才将事件与轨迹整体替换。
 成功ENABLE会清除尚未发送的旧通知邮箱；已取出的旧通知可能晚到，主机必须按run_id拒绝。
 
+
+### SLT3：同一成功采样的 SPI 原文
+
+新固件 `STEPTRACE?` 输出 `SLT3`，前三十列保持 SLT2 顺序，末尾追加：
+`encoder_status frame_valid spi_rx0 spi_rx1 spi_rx2 spi_rx3 spi_rx4 spi_rx5`（十进制）。
+现有 `sample_us` 是成功读帧后的单调软件时间，不是传感器内部转换时间；
+原始帧、raw_counts、status、sample_seq 和该时间在同一采样锁内发布。
+`frame_valid=1` 表示这是实际接收并通过既有 SPI/CRC 校验的最近成功帧，
+不代表传感器健康或内部角度已刷新。失败后保留最近成功帧，需结合
+`last_read_ok`、样本时间与序号；不支持此诊断的实现输出 frame_valid=0。
+MT6835 的 rx[2..4] 为角度/状态，rx[5] 是器件 CRC，rx[0..1] 为命令阶段返回字节，
+不应拿它们判断角度。status bit0=过速，bit1=磁场弱，bit2=欠压，置位只记录，
+不改变现有故障保护策略。状态为零也不证明采样更新正常。
+
+STEP_LOSS_DIAGNOSTICS 自动选中隐藏 FRAME_DIAGNOSTICS：在原有单次采样后复制
+固定 6 字节，不增加 SPI 事务、不改 2 kHz 配置/任务/优先级，不在采样路径发送串口。
+诊断开启存在少量固定复制开销，未测定目标板最坏执行时间；关闭时这些复制和存储编译掉。
+冻结环形尾段仍固定128行，首次事件规则、RUN?、PCNT 和其他保护不变。
+采集工具兼容 SLT1/2/3；旧采集工具不认识 SLT3，需同时更新工具。
+本轮仅宿主单元验证，ESP-IDF 目标构建和实机时序需现场验证。

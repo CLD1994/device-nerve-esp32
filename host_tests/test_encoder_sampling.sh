@@ -4,7 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-cc -std=gnu17 -Wall -Wextra -Werror \
+for frame_flags in "" "-DCONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS=1"; do
+cc $frame_flags -std=gnu17 -Wall -Wextra -Werror \
   -Ihost_tests/encoder_reference_stubs -Ihost_tests/stub \
   -Icomponents/magnetic_encoder -Icomponents/magnetic_encoder/include \
   host_tests/magnetic_encoder_sample_test.c \
@@ -12,6 +13,7 @@ cc -std=gnu17 -Wall -Wextra -Werror \
   components/magnetic_encoder/magnetic_encoder_tracker.c \
   components/magnetic_encoder/magnetic_encoder_core.c -lm -o "$tmp/sample"
 "$tmp/sample"
+done
 for test in magnetic_encoder_core_test magnetic_encoder_timed_velocity_test; do
   cc -std=c11 -Wall -Wextra -Werror -Icomponents/magnetic_encoder \
     "host_tests/${test}.c" components/magnetic_encoder/magnetic_encoder_core.c \

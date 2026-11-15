@@ -49,6 +49,10 @@ typedef struct {
      * 任务上下文调用，publish 之后。
      */
     void (*on_sample)(void *ctx, uint8_t status);
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    /* 仅采样调用者在成功读取后调用；复制已接收数据，不执行总线事务。 */
+    bool (*copy_success_frame)(void *ctx, uint8_t rx[6]);
+#endif
 } magnetic_encoder_impl_t;
 
 /** 骨架实例：契约操作表为首成员（句柄即其地址），余为骨架状态。 */
@@ -83,6 +87,10 @@ typedef struct magnetic_encoder_inst_s {
     int64_t                      velocity_span_us;
     bool                         velocity_valid;
     uint32_t                     last_raw;  /* 最新单圈绝对角（类别契约与器件自测面） */
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    uint8_t frame_rx[6]; /* 最近成功 SPI 帧原文，不是由角度重建 */
+    bool frame_valid;    /* 此实现提供同一成功样本的 SPI 帧 */
+#endif
     uint8_t                      status;    /* 最新 STATUS（器件自测面） */
     magnetic_encoder_fail_t      fail;      /* 失败计数与健康位 */
 } magnetic_encoder_inst_t;

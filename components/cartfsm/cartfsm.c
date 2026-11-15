@@ -66,6 +66,8 @@ typedef struct {
     uint32_t raw_counts;
     long target_mm_s, encoder_v_mm_s;
     bool metadata, sample_valid, last_read_ok, encoder_v_valid;
+    uint8_t encoder_status, frame_rx[6];
+    bool frame_valid;
     step_engine_diag_t engine;
 } steptrace_row_t;
 static steptrace_row_t s_trace_live[STEPTRACE_CAPACITY];
@@ -770,7 +772,7 @@ static void exec_steptrace_query(void)
     if (!stopped) { cartproto_send_err("STEPLOSS_BUSY"); return; }
     if (!event) { cartproto_send_err("STEPLOSS_NONE"); return; }
     char line[768];
-    int n = snprintf(line, sizeof(line), "SLT2 %" PRIu32 " BEGIN %u %" PRIu32 "\n", event, count, run);
+    int n = snprintf(line, sizeof(line), "SLT3 %" PRIu32 " BEGIN %u %" PRIu32 "\n", event, count, run);
     cartproto_send_raw(line, n);
     for (unsigned i = 0; i < count; ++i) {
         xSemaphoreTake(s_output_lock, portMAX_DELAY);
@@ -780,11 +782,11 @@ static void exec_steptrace_query(void)
         steptrace_row_t r = s_trace_frozen[i];
         xSemaphoreGive(s_output_lock);
         n = snprintf(line, sizeof(line),
-            "SLT2 %" PRIu32 " ROW %u %" PRId64 " %" PRId64 " %" PRId64 " %" PRId64
+            "SLT3 %" PRIu32 " ROW %u %" PRId64 " %" PRId64 " %" PRId64 " %" PRId64
             " %" PRId64 " %" PRId64 " %" PRIu64 " %" PRIu32 " %ld %ld %u %u %u %u"
             " %" PRId64 " %" PRId64 " %" PRId32 " %u %u %" PRIu32 " %" PRIu32
             " %" PRId32 " %u %" PRId32 " %" PRId32 " %u %" PRId64 " %" PRId64
-            " %" PRId32 " %" PRId32 "\n",
+            " %" PRId32 " %" PRId32 " %u %u %u %u %u %u %u %u\n",
             event, i, r.observed_us, r.sample_us, r.c_begin_us, r.c_end_us,
             r.e_um, r.c_um, r.sample_seq, r.raw_counts, r.target_mm_s, r.encoder_v_mm_s,
             (unsigned)r.metadata, (unsigned)r.sample_valid, (unsigned)r.last_read_ok, (unsigned)r.encoder_v_valid,
@@ -794,11 +796,14 @@ static void exec_steptrace_query(void)
             r.engine.pcnt_count, (unsigned)r.engine.pcnt_valid,
             r.engine.pcnt_init_error, r.engine.pcnt_read_error,
             (unsigned)r.engine.pcnt_overflow_invalid, r.engine.pcnt_begin_us,
-            r.engine.pcnt_end_us, r.engine.en_level, r.engine.en_read_error);
+            r.engine.pcnt_end_us, r.engine.en_level, r.engine.en_read_error,
+            (unsigned)r.encoder_status, (unsigned)r.frame_valid,
+            (unsigned)r.frame_rx[0], (unsigned)r.frame_rx[1], (unsigned)r.frame_rx[2],
+            (unsigned)r.frame_rx[3], (unsigned)r.frame_rx[4], (unsigned)r.frame_rx[5]);
         if (n <= 0 || n >= (int)sizeof(line)) { cartproto_send_err("STEPTRACE_FORMAT"); return; }
         cartproto_send_raw(line, n);
     }
-    n = snprintf(line, sizeof(line), "SLT2 %" PRIu32 " END %u\n", event, count);
+    n = snprintf(line, sizeof(line), "SLT3 %" PRIu32 " END %u\n", event, count);
     cartproto_send_raw(line, n);
 #endif
 }
@@ -918,6 +923,11 @@ static bool supervise_step_loss(const fw_params_t *p)
                 .last_read_ok = encoder.sample.last_attempt_ok,
                 .encoder_v_valid = encoder.sample.velocity_valid,
             };
+            r->encoder_status = encoder.sample.status;
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+            r->frame_valid = encoder.sample.frame_valid;
+            memcpy(r->frame_rx, encoder.sample.frame_rx, sizeof(r->frame_rx));
+#endif
             step_engine_diag_snapshot(&r->engine);
             s_trace_head = (s_trace_head + 1) % STEPTRACE_CAPACITY;
             if (s_trace_count < STEPTRACE_CAPACITY) ++s_trace_count;

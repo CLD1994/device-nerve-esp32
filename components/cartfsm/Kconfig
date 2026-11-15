@@ -13,6 +13,7 @@ config CARTFSM_TEST_HOOKS
         注入接口。正式固件保持关闭。
 
 config CARTFSM_STEP_LOSS_DIAGNOSTICS
+    select MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
     bool "启用 STEP_LOSS 故障快照（调试诊断）"
     default n
     help

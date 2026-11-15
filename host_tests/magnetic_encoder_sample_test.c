@@ -18,6 +18,15 @@ static bool read_frame(void *ctx, uint32_t *raw, uint8_t *status)
     return true;
 }
 
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+static bool copy_frame(void *ctx, uint8_t rx[6])
+{
+    (void)ctx;
+    for (int i = 0; i < 6; ++i) rx[i] = (uint8_t)(frame.raw + i);
+    return true;
+}
+#endif
+
 /* 驱动替身提供成功帧或错误；只从服务入口推进一次实际读取。 */
 static void sample(magnetic_encoder_inst_t *inst, uint32_t raw, uint8_t status)
 {
@@ -35,6 +44,9 @@ int main(void)
     magnetic_encoder_inst_t inst;
     magnetic_encoder_impl_t impl = {
         .counts_per_rev = cpr, .read_frame = read_frame,
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+        .copy_success_frame = copy_frame,
+#endif
     };
     assert(magnetic_encoder_sampler_init(&inst, &impl, NULL, "sample", clock_now, &now) == ESP_OK);
     magnetic_encoder_handle_t enc = (magnetic_encoder_handle_t)&inst;
@@ -63,6 +75,10 @@ int main(void)
     assert(magnetic_encoder_get_sample(enc, &s));
     assert(s.valid && !s.ok && !s.last_attempt_ok);
     assert(s.failure_seq == 11);
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    assert(s.frame_valid && s.raw_counts == 12);
+    for (int i = 0; i < 6; ++i) assert(s.frame_rx[i] == 12+i);
+#endif
     assert(s.sampled_at_us == 2000 && s.position_counts == 2);
 
     /* 恢复不能抹去失败历史或过长的采样空窗。 */
@@ -158,6 +174,15 @@ int main(void)
     assert(s.continuity_seq == old_seq+1); /* 恢复不能抹去丢圈历史。 */
     now += 5001;
     assert(magnetic_encoder_get_sample(enc, &s) && !s.velocity_valid);
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    sample(&inst, 23, 7);
+    assert(magnetic_encoder_get_sample(enc, &s));
+    assert(s.status == 7 && s.raw_counts == 23 && s.sampled_at_us == now);
+    for (int i = 0; i < 6; ++i) assert(s.frame_rx[i] == 23+i);
+    impl.copy_success_frame = NULL;
+    sample(&inst, 24, 0);
+    assert(magnetic_encoder_get_sample(enc, &s) && !s.frame_valid);
+#endif
     puts("sample snapshot checks passed");
     return 0;
 }
