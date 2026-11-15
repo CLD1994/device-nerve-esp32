@@ -286,6 +286,42 @@ static void enter_power_fault(void)
     if (changed) push_mode(CM_FAULT, CR_POWER);
 }
 
+#ifdef CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS
+/* 调用者持有输出锁。仅复制固定大小证据，不操作电机、串口或NVS。 */
+static void record_step_loss_locked(const cartfsm_step_loss_diag_t *candidate,
+                                    int64_t accepted_at, long target_before_stop)
+{
+    s_step_loss_diag = *candidate;
+    s_step_loss_diag.valid = true;
+    s_step_loss_diag.event_id = ++s_step_loss_event;
+    s_step_loss_diag.run_at_accept = s_run_id;
+    s_step_loss_diag.t_accept_us = accepted_at;
+    s_step_loss_diag.target_at_accept_mm_s = target_before_stop;
+    /* 冻结顺序为最旧到最新，包含触发拍；本函数不控制电机。 */
+    s_trace_frozen_count = s_trace_run == candidate->run_at_compare ? s_trace_count : 0;
+    s_trace_frozen_run = candidate->run_at_compare;
+    s_trace_frozen_event = s_step_loss_diag.event_id;
+    for (unsigned i = 0; i < s_trace_frozen_count; ++i) {
+        unsigned at = (s_trace_head + STEPTRACE_CAPACITY - s_trace_count + i) % STEPTRACE_CAPACITY;
+        s_trace_frozen[i] = s_trace_live[at];
+    }
+}
+#endif
+
+#ifdef CONFIG_CARTFSM_STEP_LOSS_OBSERVE_ONLY
+/* 临时观察模式：每次上电只保存第一次有效命中；RESET和新运行不覆盖。
+ * 独立于故障停车路径，不修改模式、目标、加速度或驱动使能。 */
+static void observe_step_loss_record(const cartfsm_step_loss_diag_t *candidate)
+{
+    xSemaphoreTake(s_output_lock, portMAX_DELAY);
+    if (s_mode == CM_READY && candidate->run_at_compare == s_run_id
+        && !s_step_loss_diag.valid) {
+        record_step_loss_locked(candidate, esp_timer_get_time(), s_last_cmd_v);
+    }
+    xSemaphoreGive(s_output_lock);
+}
+#endif
+
 static void enter_fault_record(cm_reason_t r, const cartfsm_step_loss_diag_t *candidate)
 {
     xSemaphoreTake(s_output_lock, portMAX_DELAY);
@@ -312,20 +348,7 @@ static void enter_fault_record(cm_reason_t r, const cartfsm_step_loss_diag_t *ca
 #ifdef CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS
     /* 安全停车先提交。固定大小复制，无格式化/串口/NVS或动态分配。 */
     if (r == CR_STEP_LOSS && candidate) {
-        s_step_loss_diag = *candidate;
-        s_step_loss_diag.valid = true;
-        s_step_loss_diag.event_id = ++s_step_loss_event;
-        s_step_loss_diag.run_at_accept = s_run_id;
-        s_step_loss_diag.t_accept_us = accepted_at;
-        s_step_loss_diag.target_at_accept_mm_s = target_before_stop;
-        /* 已提交停车后再复制；冻结顺序为最旧到最新，包含触发拍。 */
-        s_trace_frozen_count = s_trace_run == candidate->run_at_compare ? s_trace_count : 0;
-        s_trace_frozen_run = candidate->run_at_compare;
-        s_trace_frozen_event = s_step_loss_diag.event_id;
-        for (unsigned i = 0; i < s_trace_frozen_count; ++i) {
-            unsigned at = (s_trace_head + STEPTRACE_CAPACITY - s_trace_count + i) % STEPTRACE_CAPACITY;
-            s_trace_frozen[i] = s_trace_live[at];
-        }
+        record_step_loss_locked(candidate, accepted_at, target_before_stop);
     }
 #endif
     xSemaphoreGive(s_output_lock);
@@ -826,7 +849,12 @@ static bool supervise_step_loss(const fw_params_t *p)
     int64_t observed = esp_timer_get_time();
     /* 与模式转换同锁，只记录本轮READY。E、C、引擎依次读取，不宣称同步。 */
     xSemaphoreTake(s_output_lock, portMAX_DELAY);
-    if (s_mode == CM_READY && s_run_id == run) {
+    bool collect_trace = true;
+#ifdef CONFIG_CARTFSM_STEP_LOSS_OBSERVE_ONLY
+    /* 首份证据已冻结后不再逐拍采集PCNT；其余监督仍正常进行。 */
+    collect_trace = !s_step_loss_diag.valid;
+#endif
+    if (collect_trace && s_mode == CM_READY && s_run_id == run) {
         if (s_trace_run != run) {
             s_trace_run = run; s_trace_head = 0; s_trace_count = 0; s_trace_last_us = 0;
         }
@@ -865,7 +893,13 @@ static bool supervise_step_loss(const fw_params_t *p)
         .threshold_um = threshold, .c_begin_us = c_begin, .c_end_us = c_end,
         .t_compare_us = esp_timer_get_time(),
     };
+#ifdef CONFIG_CARTFSM_STEP_LOSS_OBSERVE_ONLY
+    observe_step_loss_record(&candidate);
+    /* 本拍仍须继续监督软限位，不能把观察命中当已停车。 */
+    return false;
+#else
     enter_fault_record(CR_STEP_LOSS, &candidate);
+#endif
 #else
     enter_fault(CR_STEP_LOSS);
 #endif
@@ -1014,6 +1048,9 @@ esp_err_t cartfsm_start(void)
     }
 
     s_started = true;
+#ifdef CONFIG_CARTFSM_STEP_LOSS_OBSERVE_ONLY
+    ESP_LOGW(TAG, "STEP_LOSS 仅观察模式已启用：跟随误差不会停车；仅保存本次上电首次证据，需现场独立断电");
+#endif
     ESP_LOGI(TAG, "模式机已启动：1 kHz，优先级 %d，CPU%d，上电 DISABLED",
              FSM_TASK_PRIO, FSM_TASK_CORE);
     return ESP_OK;

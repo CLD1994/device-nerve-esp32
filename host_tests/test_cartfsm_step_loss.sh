@@ -20,3 +20,12 @@ while IFS= read -r path; do includes+=("-I$path"); done < <(find components -typ
     components/cartfsm/cartfsm_core.c components/cartparams/params.c components/cartproto/cartproto_parse.c \
     -lm -o "$build/cartfsm-step-loss-disabled-test"
 "$build/cartfsm-step-loss-disabled-test"
+
+"${CC:-cc}" -DCONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS=1 -DCONFIG_CARTFSM_STEP_LOSS_OBSERVE_ONLY=1 \
+    -std=c11 -Wall -Wextra -Werror \
+    -Ihost_tests/power_stubs -Icomponents/cartfsm/host_stub \
+    -Icomponents/cartcal/host_stub -Ihost_tests/stub "${includes[@]}" \
+    host_tests/cartfsm_step_loss_observe_test.c host_tests/cartfsm_fixture.c components/cartfsm/cartfsm.c \
+    components/cartfsm/cartfsm_core.c components/cartparams/params.c components/cartproto/cartproto_parse.c \
+    -lm -o "$build/cartfsm-step-loss-observe-test"
+"$build/cartfsm-step-loss-observe-test"
