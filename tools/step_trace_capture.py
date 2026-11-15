@@ -10,6 +10,8 @@ FIELDS = ('observed_us sample_us c_begin_us c_end_us e_um c_um sample_seq raw_co
           'engine_v_q16 engine_target_q16 engine_position_steps engine_stopped '
           'engine_timer_running wdt_stale_time_count wdt_expired_count').split()
 
+FIELDS_V2 = FIELDS + ('pcnt_count pcnt_valid pcnt_init_error pcnt_read_error '
+                      'pcnt_overflow_invalid pcnt_begin_us pcnt_end_us en_level en_read_error').split()
 
 def collect(ser, timeout=8.0):
     request = b'STEPTRACE?\n'
@@ -22,11 +24,13 @@ def collect(ser, timeout=8.0):
         line = ser.readline().decode('ascii', errors='replace').strip()
         if line.startswith('ERR '):
             raise RuntimeError(line)
-        if not line.startswith('SLT1 '):
+        if not line.startswith(('SLT1 ', 'SLT2 ')):
             continue
         parts = line.split()
         if len(parts) < 4:
             raise ValueError('truncated STEPTRACE line')
+        version = int(parts[0][-1])
+        fields = FIELDS_V2 if version == 2 else FIELDS
         event = int(parts[1])
         if parts[2] == 'BEGIN':
             if record is not None or len(parts) != 5:
@@ -34,15 +38,15 @@ def collect(ser, timeout=8.0):
             count, run = map(int, parts[3:])
             if not 0 <= count <= 128:
                 raise ValueError('invalid sample count')
-            record = dict(version=1, event_id=event, run_id=run, samples=[])
-        elif record is None or event != record['event_id']:
+            record = dict(version=version, event_id=event, run_id=run, samples=[])
+        elif record is None or event != record['event_id'] or version != record['version']:
             raise ValueError('missing BEGIN or mixed event')
         elif parts[2] == 'ROW':
-            if len(parts) != 4 + len(FIELDS) or int(parts[3]) != len(record['samples']):
+            if len(parts) != 4 + len(fields) or int(parts[3]) != len(record['samples']):
                 raise ValueError('invalid row length/index')
             if len(record['samples']) >= count:
                 raise ValueError('excess rows')
-            record['samples'].append(dict(zip(FIELDS, map(int, parts[4:]))))
+            record['samples'].append(dict(zip(fields, map(int, parts[4:]))))
         elif parts[2] == 'END':
             if len(parts) != 4 or int(parts[3]) != count or len(record['samples']) != count:
                 raise ValueError('incomplete trace')
@@ -74,7 +78,7 @@ def main():
         json.dump(record, f, ensure_ascii=False, indent=2)
         f.write('\n')
     print(f"已保存事件 {record['event_id']} 的 {len(record['samples'])} 条监督轨迹：{args.out}")
-    print('E/C/引擎不是同步采样；软件STEP累计和timer标志不证明物理脉冲。')
+    print('E/C/引擎/PCNT异步采样；PCNT仅MCU引脚输入路径计数，不证明驱动器接收或脉宽。')
 
 
 if __name__ == '__main__':

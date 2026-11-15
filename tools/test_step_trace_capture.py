@@ -19,6 +19,16 @@ class TraceTest(unittest.TestCase):
         self.assertEqual(port.writes, [b'STEPTRACE?\n'])
         self.assertEqual(result['samples'][0]['wdt_expired_count'], 20)
         self.assertEqual(result['event_id'], 7)
+    def test_v2_hardware_fields(self):
+        row = 'SLT2 8 ROW 0 ' + ' '.join(str(i) for i in range(30)) + '\n'
+        port = Serial([b'SLT2 8 BEGIN 1 4\n', row.encode(), b'SLT2 8 END 1\n'])
+        result = capture.collect(port)
+        self.assertEqual(result['version'], 2)
+        self.assertEqual(result['samples'][0]['pcnt_count'], 21)
+        self.assertEqual(result['samples'][0]['en_level'], 28)
+    def test_mixed_versions_rejected(self):
+        with self.assertRaises(ValueError):
+            capture.collect(Serial([b'SLT2 8 BEGIN 1 4\n', b'SLT1 8 END 1\n']))
     def test_incomplete(self):
         with self.assertRaises(ValueError):
             capture.collect(Serial([b'SLT1 7 BEGIN 1 3\n', b'SLT1 7 END 1\n']))

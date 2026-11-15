@@ -706,8 +706,8 @@ static void exec_steptrace_query(void)
     xSemaphoreGive(s_output_lock);
     if (!stopped) { cartproto_send_err("STEPLOSS_BUSY"); return; }
     if (!event) { cartproto_send_err("STEPLOSS_NONE"); return; }
-    char line[512];
-    int n = snprintf(line, sizeof(line), "SLT1 %" PRIu32 " BEGIN %u %" PRIu32 "\n", event, count, run);
+    char line[768];
+    int n = snprintf(line, sizeof(line), "SLT2 %" PRIu32 " BEGIN %u %" PRIu32 "\n", event, count, run);
     cartproto_send_raw(line, n);
     for (unsigned i = 0; i < count; ++i) {
         xSemaphoreTake(s_output_lock, portMAX_DELAY);
@@ -717,19 +717,25 @@ static void exec_steptrace_query(void)
         steptrace_row_t r = s_trace_frozen[i];
         xSemaphoreGive(s_output_lock);
         n = snprintf(line, sizeof(line),
-            "SLT1 %" PRIu32 " ROW %u %" PRId64 " %" PRId64 " %" PRId64 " %" PRId64
+            "SLT2 %" PRIu32 " ROW %u %" PRId64 " %" PRId64 " %" PRId64 " %" PRId64
             " %" PRId64 " %" PRId64 " %" PRIu64 " %" PRIu32 " %ld %ld %u %u %u %u"
-            " %" PRId64 " %" PRId64 " %" PRId32 " %u %u %" PRIu32 " %" PRIu32 "\n",
+            " %" PRId64 " %" PRId64 " %" PRId32 " %u %u %" PRIu32 " %" PRIu32
+            " %" PRId32 " %u %" PRId32 " %" PRId32 " %u %" PRId64 " %" PRId64
+            " %" PRId32 " %" PRId32 "\n",
             event, i, r.observed_us, r.sample_us, r.c_begin_us, r.c_end_us,
             r.e_um, r.c_um, r.sample_seq, r.raw_counts, r.target_mm_s, r.encoder_v_mm_s,
             (unsigned)r.metadata, (unsigned)r.sample_valid, (unsigned)r.last_read_ok, (unsigned)r.encoder_v_valid,
             r.engine.v_q16, r.engine.target_q16, r.engine.position_steps,
             (unsigned)r.engine.stopped, (unsigned)r.engine.timer_running,
-            r.engine.wdt_stale_time_count, r.engine.wdt_expired_count);
+            r.engine.wdt_stale_time_count, r.engine.wdt_expired_count,
+            r.engine.pcnt_count, (unsigned)r.engine.pcnt_valid,
+            r.engine.pcnt_init_error, r.engine.pcnt_read_error,
+            (unsigned)r.engine.pcnt_overflow_invalid, r.engine.pcnt_begin_us,
+            r.engine.pcnt_end_us, r.engine.en_level, r.engine.en_read_error);
         if (n <= 0 || n >= (int)sizeof(line)) { cartproto_send_err("STEPTRACE_FORMAT"); return; }
         cartproto_send_raw(line, n);
     }
-    n = snprintf(line, sizeof(line), "SLT1 %" PRIu32 " END %u\n", event, count);
+    n = snprintf(line, sizeof(line), "SLT2 %" PRIu32 " END %u\n", event, count);
     cartproto_send_raw(line, n);
 #endif
 }

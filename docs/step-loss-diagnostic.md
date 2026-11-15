@@ -120,7 +120,7 @@ RESET及下一轮ENABLE不清冻结证据，下一次STEP_LOSS才替换；重启
 只在停稳的FAULT或DISABLED允许读取，忙碌、缺记录和诊断关闭沿用STEPLOSS错误码。
 旧 `STEPLOSS?` 和现有SL1字段不变，新的独立命令不会给旧解析器追加未知字段。
 
-SLT1协议：`SLT1 event BEGIN count run`，依次`SLT1 event ROW index <21整数>`，
+旧版 SLT1 协议（85c9fa2）：`SLT1 event BEGIN count run`，依次`SLT1 event ROW index <21整数>`，
 最后`SLT1 event END count`。21列的权威顺序见
 [`step_trace_capture.py` 的 FIELDS](../tools/step_trace_capture.py)。设备端顺序与此对应。
 
@@ -135,3 +135,18 @@ SLT1协议：`SLT1 event BEGIN count run`，依次`SLT1 event ROW index <21整�
 
 这些记录能区分软件计数、编码器序列和引擎状态变化，不等于物理STEP、DIR、驱动接收或电机失步证明。
 WDT竞态修复不等于已证明解决现场故障；原有停表/启动交错等其它问题仍需独立验证。
+
+### SLT2：STEP 输入路径与 EN 读回
+
+`STEPTRACE?` 现在返回 `SLT2`，保留原 21 列并追加以下 9 列：
+`pcnt_count pcnt_valid pcnt_init_error pcnt_read_error pcnt_overflow_invalid pcnt_begin_us pcnt_end_us en_level en_read_error`。
+新版 `tools/step_trace_capture.py` 同时读取 SLT1/SLT2；旧脚本不支持 SLT2，请同步工具。
+
+诊断开启时使用一个 PCNT 单元、一个通道，STEP GPIO5 上升沿计数，DIR GPIO6 高时正计数、低时负计数；不启用毛刺滤波。保持输出功能并打开输入路径。EN GPIO21 读回（低有效），仅表征 MCU 引脚输入电平，不等于驱动器内部使能或电机电流。
+PCNT 使用 ±30000 硬件限值和溢出累计；软件计数是 32 位：按现有最高 50 kHz，启动后最多一小时有效（单向 1.8 亿步）；计数绝对值达到 INT32_MAX/2 或寿命到期会永久失效并停止观察计数，需重启恢复。任意外部高频输入超出此界限的证明范围。失效时不得将零/旧计数理解为“没有脉冲”。初始化/读取失败单独记录，不改变运动、安全门限或启动条件。
+
+PCNT 是独立的启动后净计数，**不随左标定或软件位置重定基清零**。比较同一有效时间段的 PCNT 增量与 `engine_position_steps` 增量，不比较绝对值。各字段异步读取，以 `pcnt_begin_us/pcnt_end_us` 识别时间窗；邻近边沿允许一两步读数差。PCNT 正负边沿可能抵消，净计数不是总边沿数。
+
+该计数只能证明 MCU 输入矩阵看到了 STEP 边沿，不能证明引脚外连线、TMC 接收、脉宽、驱动电流或机械位移。若软件与 PCNT 同步增长而编码器停住，排查范围转向驱动器/接线/机械及编码器证据；若 PCNT 不增长，先检查有效性、初始化错误和引脚路由，再判断 STEP 输出链。EN 必须看故障前冻结数据，不能将故障后的正常禁用误判为原因。
+
+PCNT 溢出累计由 ESP-IDF 内置中断处理：每单向 30000 步发生一次（50 kHz 时约 0.6 秒）。未修改 STEP ISR、速度设定或门限，但新增 PCNT 中断及约 5 ms 一次诊断读取仍可能造成测量扰动；须现场确认时序，不能宣称零开销。诊断初始化失败不会阻止原运动控制，应先看 `pcnt_init_error`，不要把未工作的诊断当作输出故障。

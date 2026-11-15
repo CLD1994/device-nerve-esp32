@@ -103,9 +103,19 @@ typedef struct {
     bool timer_running;
     uint32_t wdt_stale_time_count;
     uint32_t wdt_expired_count;
+    int32_t pcnt_count;
+    bool pcnt_valid;
+    int32_t pcnt_init_error;
+    int32_t pcnt_read_error;
+    bool pcnt_overflow_invalid;
+    int64_t pcnt_begin_us;
+    int64_t pcnt_end_us;
+    int32_t en_level;          /* GPIO21 电平；-1 表示输入使能失败/诊断关闭 */
+    int32_t en_read_error;
 } step_engine_diag_t;
 
-/** 仅任务上下文读取，不访问硬件。Q16 状态及看门狗计数共用引擎锁。
+/** 仅监督任务读取。Q16 状态及看门狗计数共用引擎锁；诊断开启时另读
+ * PCNT 和 GPIO21。PCNT 独立原点不随软件位置重定基，应比较相邻差值。
  * 位置、定时器标志还存在既有的 ISR 无锁写：这些字段是时间接近的
  * 软件观察，不是同一时刻的原子物理快照，不证明驱动器收到了脉冲。
  * 计数在 UINT32_MAX 饱和，仅初始化时归零；expired 统计 ISR 超时判定

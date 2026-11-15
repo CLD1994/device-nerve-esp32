@@ -55,8 +55,8 @@ int main(void) {
     assert(cartproto_parse_line("STEPLOSS?",&req) && req.cmd==CART_CMD_STEPLOSS_QUERY);
     assert(!cartproto_parse_line("STEPLOSS? extra",&req));
     cmd(CART_CMD_STEPTRACE_QUERY);
-    assert(strstr(diag_output, "SLT1 3 BEGIN 128 3\n"));
-    assert(strstr(diag_output, "SLT1 3 END 128\n"));
+    assert(strstr(diag_output, "SLT2 3 BEGIN 128 3\n"));
+    assert(strstr(diag_output, "SLT2 3 END 128\n"));
     assert(cartproto_parse_line("STEPTRACE?", &req) && req.cmd == CART_CMD_STEPTRACE_QUERY);
     puts("step-loss diagnostic public-interface checks passed");
 }

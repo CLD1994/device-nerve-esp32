@@ -165,5 +165,9 @@ int main(void)
     step_engine_diag_snapshot(NULL);
     assert(step_test_lock_depth == 0);
     step_engine_stop();
+#ifdef CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS
+    extern void step_pcnt_fake_verify(void);
+    step_pcnt_fake_verify();
+#endif
     puts("step_engine_stop: public-contract assertions passed");
 }

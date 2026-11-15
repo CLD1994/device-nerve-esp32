@@ -24,6 +24,10 @@
 #include "esp_log.h"
 #include "driver/gpio.h"
 #include "driver/gptimer.h"
+#ifdef CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS
+#include "driver/pulse_cnt.h"
+#include "esp_timer.h"
+#endif
 #include "esp_rom_sys.h"
 #include "esp_cpu.h"
 #include "freertos/FreeRTOS.h"
@@ -97,6 +101,118 @@ static uint64_t s_cb_guard_floor = 0;
 static portMUX_TYPE s_spinlock = portMUX_INITIALIZER_UNLOCKED;
 
 static bool s_initialized = false;
+
+#ifdef CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS
+/* 只观察现有输出；不改变 STEP/DIR/EN 输出模式或运动控制。PCNT 原点
+ * 独立于软件位置重定基，使用相邻采样差值比较，不比较绝对位置。 */
+#define DIAG_EN_GPIO 21
+#define PCNT_DIAG_LIMIT 30000
+#define PCNT_DIAG_LIFETIME_US (3600LL * 1000000)
+static pcnt_unit_handle_t s_pcnt_unit;
+static pcnt_channel_handle_t s_pcnt_channel;
+static esp_err_t s_pcnt_init_error = ESP_ERR_INVALID_STATE;
+static esp_err_t s_en_read_error = ESP_ERR_INVALID_STATE;
+static bool s_pcnt_overflow_invalid;
+static bool s_pcnt_started;
+static int64_t s_pcnt_start_us;
+
+static void step_diag_init(void)
+{
+    /* input_enable 保留已有 output_enable；禁止 gpio_config 重配输出。 */
+    s_en_read_error = gpio_input_enable((gpio_num_t)DIAG_EN_GPIO);
+    pcnt_unit_config_t unit_cfg = {
+        .low_limit = -PCNT_DIAG_LIMIT,
+        .high_limit = PCNT_DIAG_LIMIT,
+        .flags = { .accum_count = true },
+    };
+    pcnt_chan_config_t channel_cfg = {
+        .edge_gpio_num = s_step_gpio,
+        .level_gpio_num = s_dir_gpio,
+    };
+    bool enabled = false;
+    esp_err_t err = pcnt_new_unit(&unit_cfg, &s_pcnt_unit);
+    if (err != ESP_OK) goto failed;
+    err = pcnt_new_channel(s_pcnt_unit, &channel_cfg, &s_pcnt_channel);
+    if (err != ESP_OK) goto failed;
+    /* 上升沿 +1，下降沿不计；DIR 高保持，低反向。不开毛刺滤波。 */
+    err = pcnt_channel_set_edge_action(s_pcnt_channel,
+                                      PCNT_CHANNEL_EDGE_ACTION_INCREASE,
+                                      PCNT_CHANNEL_EDGE_ACTION_HOLD);
+    if (err != ESP_OK) goto failed;
+    err = pcnt_channel_set_level_action(s_pcnt_channel,
+                                       PCNT_CHANNEL_LEVEL_ACTION_KEEP,
+                                       PCNT_CHANNEL_LEVEL_ACTION_INVERSE);
+    if (err != ESP_OK) goto failed;
+    err = pcnt_unit_add_watch_point(s_pcnt_unit, -PCNT_DIAG_LIMIT);
+    if (err != ESP_OK) goto failed;
+    err = pcnt_unit_add_watch_point(s_pcnt_unit, PCNT_DIAG_LIMIT);
+    if (err != ESP_OK) goto failed;
+    err = pcnt_unit_clear_count(s_pcnt_unit);
+    if (err != ESP_OK) goto failed;
+    err = pcnt_unit_enable(s_pcnt_unit);
+    if (err != ESP_OK) goto failed;
+    enabled = true;
+    s_pcnt_start_us = esp_timer_get_time();
+    err = pcnt_unit_start(s_pcnt_unit);
+    if (err != ESP_OK) goto failed;
+    s_pcnt_started = true;
+    s_pcnt_init_error = ESP_OK;
+    return;
+failed:
+    s_pcnt_init_error = err;
+    if (enabled) (void)pcnt_unit_disable(s_pcnt_unit);
+    if (s_pcnt_channel) {
+        (void)pcnt_del_channel(s_pcnt_channel);
+        s_pcnt_channel = NULL;
+    }
+    if (s_pcnt_unit) {
+        (void)pcnt_del_unit(s_pcnt_unit);
+        s_pcnt_unit = NULL;
+    }
+    ESP_LOGW(TAG, "PCNT 诊断初始化失败: %d，运动控制保持原行为", (int)err);
+}
+
+/* 由监督任务采样。PCNT 读取与软件计数、编码器并非同时采样；时间括号
+ * 只包围本次 PCNT/EN 读取，不证明电机驱动器端的波形或机械运动。 */
+static void step_diag_read(step_engine_diag_t *out)
+{
+    out->pcnt_begin_us = esp_timer_get_time();
+    out->pcnt_init_error = s_pcnt_init_error;
+    out->pcnt_read_error = ESP_ERR_INVALID_STATE;
+    out->pcnt_count = 0;
+    out->pcnt_valid = false;
+    out->en_read_error = s_en_read_error;
+    out->en_level = s_en_read_error == ESP_OK
+                  ? gpio_get_level((gpio_num_t)DIAG_EN_GPIO) : -1;
+    /* 按最高 50 kHz 连续单向输入，一小时最多 1.8 亿脉冲，远小于
+     * int32 上限。寿命到期即永久失效，不允许回绕后的值重新变有效。
+     * 这依赖既有输入频率上限；外部任意高频/长时间停止采样不在证明内。 */
+    if (s_pcnt_init_error == ESP_OK && !s_pcnt_overflow_invalid) {
+        int64_t age = out->pcnt_begin_us - s_pcnt_start_us;
+        if (age < 0 || age >= PCNT_DIAG_LIFETIME_US) {
+            s_pcnt_overflow_invalid = true;
+        } else {
+            int count = 0;
+            out->pcnt_read_error = pcnt_unit_get_count(s_pcnt_unit, &count);
+            if (out->pcnt_read_error == ESP_OK) {
+                out->pcnt_count = count;
+                if (count >= INT32_MAX / 2 || count <= -(INT32_MAX / 2))
+                    s_pcnt_overflow_invalid = true;
+                else
+                    out->pcnt_valid = true;
+            }
+        }
+    }
+    if (s_pcnt_overflow_invalid && s_pcnt_started) {
+        esp_err_t err = pcnt_unit_stop(s_pcnt_unit);
+        if (err == ESP_OK) s_pcnt_started = false;
+        else out->pcnt_read_error = err;
+    }
+    out->pcnt_overflow_invalid = s_pcnt_overflow_invalid;
+    out->pcnt_end_us = esp_timer_get_time();
+}
+#endif
+
 
 /* ================================================================
  * 自测钩子（仅 CONFIG_STEP_ENGINE_TEST_HOOKS=y）
@@ -377,6 +493,9 @@ esp_err_t step_engine_init(int step_gpio, int dir_gpio)
     ESP_LOGI(TAG, "step engine 已初始化（STEP=GPIO%d，DIR=GPIO%d，定时器 1MHz）",
              step_gpio, dir_gpio);
 
+#ifdef CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS
+    step_diag_init();
+#endif
     s_initialized = true;
     return ESP_OK;
 }
@@ -532,6 +651,18 @@ void step_engine_diag_snapshot(step_engine_diag_t *out)
     out->wdt_stale_time_count = s_wdt_stale_time_count;
     out->wdt_expired_count = s_wdt_expired_count;
     portEXIT_CRITICAL(&s_spinlock);
+#ifdef CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS
+    step_diag_read(out);
+#else
+    out->pcnt_count = 0;
+    out->pcnt_valid = false;
+    out->pcnt_init_error = ESP_ERR_NOT_SUPPORTED;
+    out->pcnt_read_error = ESP_ERR_NOT_SUPPORTED;
+    out->pcnt_overflow_invalid = false;
+    out->pcnt_begin_us = out->pcnt_end_us = 0;
+    out->en_level = -1;
+    out->en_read_error = ESP_ERR_NOT_SUPPORTED;
+#endif
 }
 
 int32_t step_engine_position_steps(void)

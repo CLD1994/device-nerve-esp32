@@ -42,3 +42,5 @@ bash experiments/step-frequency-isolated/tests/run.sh
 ESP-IDF目标构建、波形和机械运动仍需在目标环境单独验证。
 
 - [故障前监督轨迹](../docs/step-loss-diagnostic.md)：`step_trace_capture.py`仅在停稳后读取冻结内存，不使能或复位。
+
+STEPTRACE 增强固件使用 SLT2（追加 PCNT/EN 诊断列）。请同步 `step_trace_capture.py`；新版兼容 SLT1。PCNT 是独立原点的带符号累计，比较增量；`pcnt_valid=0` 时不能拿计数下结论。它不证明驱动器收到了有效脉冲。完整字段和限制见 `docs/step-loss-diagnostic.md`。
