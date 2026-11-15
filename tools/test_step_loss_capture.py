@@ -1,5 +1,5 @@
 import unittest
-from step_loss_capture import Capture, FIELDS, collect
+from step_loss_capture import Capture, FIELDS, WINDOW_FIELDS, collect
 from unittest.mock import patch
 
 class CaptureTests(unittest.TestCase):
@@ -14,6 +14,11 @@ class CaptureTests(unittest.TestCase):
         result=self.complete(c)
         self.assertEqual(result['event_id'],1)
         self.assertEqual(result['E_COMPARED_UM'],-10)
+    def test_version2_window_fields(self):
+        c=Capture()
+        for name in FIELDS | WINDOW_FIELDS:
+            c.feed(f"SL1 1 {name} {2 if name=='VERSION' else 0}")
+        self.assertEqual(c.feed("SL1 1 END 1")['VERSION'],2)
     def test_partial_rejected(self):
         with self.assertRaises(ValueError): Capture().feed("SL1 1 END 1")
     def test_mixed_event_rejected(self):

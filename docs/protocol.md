@@ -248,3 +248,16 @@ READY或仍减速时回`ERR STEPLOSS_BUSY`，无记录回`ERR STEPLOSS_NONE`。
 应答采用`SL1 <event_id> <field> <integer>`逐字段输出并以`END 1`结束。
 记录是设备固定RAM中的触发拍，不是MODE输出时的状态，不改变原故障判断。
 字段、工具、生命周期及非同步限制见[STEP_LOSS诊断](step-loss-diagnostic.md)。
+
+### 可选 STEP_LOSS 事件与处置
+
+`CONFIG_CARTFSM_STEP_LOSS_EVENTS` 提供 `RUN?` 与
+`EVENT STEP_LOSS <event_id> <run_id> <device_us>`，每个成功ENABLE运行只报告首次触发。
+事件无ACK/重放，晚到事件须核对run_id。
+`CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS` 增加停稳后 `STEPTRACE?` 的SLT4软件轨迹。
+显式 `CONFIG_CARTFSM_STEP_LOSS_OBSERVE_ONLY` 取消上表中由STEP_LOSS导致的FAULT，
+保留READY及VEL控制，由上位机处置；不取消其他故障与WDT/软限位。
+三项均默认关闭，observe-only不依赖轨迹诊断。
+可选连续增长/硬限判据与传统STEP_LOSS_UM即时判据见
+[跟随误差](following-error-window.md)；完整字段和兼容范围见
+[诊断说明](step-loss-diagnostic.md)。

@@ -1,101 +1,83 @@
-# STEP_LOSS 故障快照
+# STEP_LOSS：可选事件、诊断与上位机处置
 
-## 何时开启
+## 三个独立配置
 
-这是排查失步原因的可选诊断功能，默认关闭。需要采集触发证据时，在
-`idf.py menuconfig` 的 `cartfsm - 模式机` 中开启
-`CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS`，重新构建并烧录。排查完成后关闭此项。
+| Kconfig | 默认 | 功能 |
+|---|---|---|
+| `CARTFSM_STEP_LOSS_EVENTS` | n | 首次事件通知、运行身份查询；小型邮箱，无轨迹 |
+| `CARTFSM_STEP_LOSS_DIAGNOSTICS` | n | 触发快照和事件前后软件轨迹，自动选择 EVENTS |
+| `CARTFSM_STEP_LOSS_OBSERVE_ONLY` | n | 放弃固件 STEP_LOSS 停车，交由上位机处理；自动选择 EVENTS，但不选择 DIAGNOSTICS |
 
-关闭时仍执行失步检测和故障停车，但不分配快照记录、不读取快照专属元数据、
-不采集比较时间或维护诊断会话号；`STEPLOSS?` 在任何模式均返回
-`ERR STEPLOSS_DISABLED`。关闭期间的故障不能在日后开启诊断后补采。
+诊断开关不改变失步判据或停车，后两者分别由窗口判据和 OBSERVE_ONLY 控制。
+全部关闭时沿用原主线检测与停车，不分配轨迹/快照，不做诊断时间戳或附加快照读取。
 
-以下记录与导出行为仅适用于开启诊断的固件。
+OBSERVE_ONLY 打开后，命中 STEP_LOSS 不改 READY、目标速度/加速度、驱动使能；
+之后仍接受 VEL。上位机必须自行决定继续或停车。这不是自动恢复或消除误差，
+不会重置编码器或软件 STEP 位置。供电故障、编码器失效、命令看门狗和软限位不变。
 
-## 记录时刻与保障边界
+## 事件和运行身份
 
-监督任务使用 `cm_step_loss(E, C, threshold)`，即位置差绝对值
-严格大于阈值才进入STEP_LOSS。此功能不放宽阈值，也不调整运动参数。
-模式机接受故障后，先提交斜坡停车，再复制一条固定大小RAM记录。
-实时路径不格式化、不发送串口、不分配内存、不写NVS；没有故障前环形历史。
-同一FAULT期间不会反复覆盖首次记录；RESET保留记录，下一次被接受的
-STEP_LOSS替换它。后续POWER等故障不覆盖此记录；它不是当前MODE原因的别名。重启、烧录或断电后记录丢失，不能追溯此前故障。
-
-E位置与编码器时间、序列、速度来自同一次快照，这个E实际参与本次比较。
-C读取发生在之后，记录读取前后时间包络，**不声称E/C同时采样**。
-C是固件软件STEP累计位置，不是外部逻辑分析仪测到的实际脉冲或机械位置。
-MODE FAULT输出在故障停车完成后发生，不能用它的主机接收时间代替触发时间。
-
-诊断元数据不可取得时使用标量位置读取执行相同阈值判断，并记录
-`META_AVAILABLE=0`。时钟顺序异常同样不屏蔽故障，只在读出时报告
-`TIME_ORDER_OK=0`。元数据缺失时编码器附加字段的零值不是有效测量。
-开启诊断后，同快照读取与设备时间采集仍有执行成本，需要真机验证，不能
-由宿主测试断言对监督时序零影响。
-
-## 只读导出
-
-仅在DISABLED或FAULT已完成停车时执行，READY或FAULT仍在减速时返回
-`ERR STEPLOSS_BUSY`；没有记录返回`ERR STEPLOSS_NONE`。诊断不会自行停机、
-复位、清故障、配置或使能。请勿同时运行其他占用控制串口的工具。
-
-```powershell
-python tools/step_loss_capture.py --port COM11 --baud 460800 --out step-loss-evidence.json
-```
-
-工具只发送`STEPLOSS?`，检查完整写入，不调用可能无限等待驱动排空的`flush`。
-接收期限从写入返回后开始计算，串口读取本身仍有短超时；这不是整个程序
-或文件写入严格3秒完成的保证。收到完整同一事件后才保存新文件，不覆盖已有文件。
-若当前正处READY，先使用既有安全停机流程处理；不要为读取记录发送RESET
-来掩盖尚未确认的现场状态。记录只能说明触发时比较了什么，不能单独证明
-物理失步、皮带打滑、接线正确或实际STEP波形正确。
-
-线协议是显式查询应答，不主动混入遥测：
+每次成功 ENABLE 增加设备启动期内 `run_id`，重新布防；每轮只锁存首次命中。
+RESET 不清除已保存证据。新运行首次命中才替换旧证据。
 
 ```text
-SL1 <event_id> VERSION 1
-SL1 <event_id> <field> <integer>
-...
-SL1 <event_id> END 1
+RUN?                          -> OK RUN <run_id>
+EVENT STEP_LOSS <event_id> <run_id> <device_us>
 ```
 
-STATE、VEL_VALID等常规行可在应答之间出现，专用工具只忽略完整合法的
-这些背景行；拒绝不同event_id拼接、重复字段、未知字段、缺失字段和超时。
-未实现SL1解析的工具，不应在查询期间同时读取串口。
+事件在监督路径内只写固定邮箱；遥测任务异步格式化并发送，不令监督任务等待 UART。
+事件没有 ACK/重放，新 ENABLE 会清理尚未发送的旧邮箱；已取出的事件仍可能稍晚发出。
+因此上位机必须按 RUN? 身份校验，不能把旧运行事件套到当前会话。设备重启后 ID 重新开始。
+关闭 EVENTS/DIAGNOSTICS/OBSERVE_ONLY 时 `RUN?` 返回 `ERR RUN_DISABLED`。
+事件可丢失、可延迟，不是有保证的停机信号。正常停车构建也可选事件，但它不会替代 MODE。
 
-## 字段语义
+## SL1 触发快照
 
-- `RUN_COMPARE`、`RUN_ACCEPT`：比较开始时与模式机接受时的使能会话编号。
-  两者不同表示中间发生会话切换，不能直接用于同一次运动归因。
-- `T_COMPARE_US`：位置差判定成立后的设备单调时间；`T_ACCEPT_US`是进入
-  故障转换锁后接受故障的时间，不是UART输出时间。
-- `C_BEGIN_US`、`C_END_US`：C读取时间包络；`TIME_ORDER_OK`检查这些设备时标顺序；为0时不能按这些时标直接归因运动时序。
-- `E_SENSOR_UM`：传感器快照转换位置；`E_COMPARED_UM`是实际比较输入。
-  构建启用测试注入时，两者可能不同；不能将注入后的E称作实测。
-- `C_UM`、`ERROR_UM`、`THRESHOLD_UM`：本次使用的C、带符号E−C和阈值。
-- `TARGET_ACCEPT_MM_S`：故障被接受时、停车修改前的目标速度，不是实测车速。
-- `META_AVAILABLE`：是否取得同一编码器快照。0时其余编码器附加字段不可用于推断。
-- `ENC_V_MM_S`、`ENC_V_VALID`、`ENC_SPAN_US`：滤波速度、有效位和实际窗口跨度。
-- `SAMPLE_US`、`AGE_US`、`SAMPLE_SEQ`：成功读帧完成时间、比较时样本年龄和序列。
-  年龄无法计算时为−1；有效位与年龄不能由日志传输速度替代。
-- `FAILURE_SEQ`、`CONTINUITY_SEQ`、`GAP_US`：读取失败历史、连续性历史、实例预算。
-- `SAMPLE_VALID`、`LAST_READ_OK`：是否已有成功样本、最近一次读帧是否成功。
+`STEPLOSS?` 只允许 DISABLED 或 FAULT 已停稳；READY/仍减速返回 `ERR STEPLOSS_BUSY`。
+诊断未编入返回 `ERR STEPLOSS_DISABLED`；没有事件返回 `ERR STEPLOSS_NONE`。
 
-## 离线验证
+格式 `SL1 <event_id> <field> <integer>`，以 `SL1 <event_id> END 1` 完成。
+VERSION=2 保留原字段，增加 TRIGGER、HARD_UM、GROWTH_UM、WINDOW_US、GROWING_WINDOWS，
+见[窗口判据](following-error-window.md)。工具同时支持原 VERSION=1。
 
-宿主运行脚本分别编译诊断开启和关闭两种配置。关闭配置验证正负方向失步检测、
-阈值边界、故障斜坡停车与停稳禁用、查询拒绝，以及不读取诊断元数据或时钟。
-`host_tests/cartfsm_step_loss_diag_test.c`使用隔离替身测试3000/3001µm边界、
-正负方向、同一比较输入、故障停车期间不打印、首次记录保持、RESET保持、
-元数据/时钟异常仍故障、停稳导出及解析命令。`tools/test_step_loss_capture.py`
-覆盖完整应答、事件混合、字段重复/缺失、未知行和拒绝应答。测试不操作设备。
+字段包括参与判断的 E/C、比较和接受时间、运行ID、接受前目标速度、缓存编码器
+样本时间/序号/有效性、失败和连续性序号。E 与 C 非同时读取；C 为软件指令位置，
+不是物理脉冲或实际电机位置。CRC/有效性也不是传感器真实运动的证明。
 
-```bash
-bash host_tests/test_cartfsm_step_loss.sh
-bash host_tests/test_cartfsm_calibration.sh
-bash host_tests/test_measurement_validity.sh
-python -m unittest discover -s tools -p test_step_loss_capture.py
+## SLT4 事件前后软件轨迹
+
+`STEPTRACE?` 使用与快照相同的停稳门限；后段尚未收完时也返回 `ERR STEPTRACE_BUSY`。
+
+- 最多128条触发前/附近记录、32条触发后记录；每条最小间隔5ms，不是精确采样频率。
+- 两个固定160条缓冲在触发时 O(1) 交换，不复制整条轨迹。只读现有缓存及软件计数，
+  无额外 SPI、PCNT、GPIO、动态分配或日志输出。
+- 后段有界，约160ms以上，实际以时间戳为准；新 ENABLE 可提前结束旧后段，保留实际数量。
+- 本版不包含实验 SLT2/3 的 PCNT/EN/SPI 原始帧，也不包含4秒B/S读取对照。
+  不可用旧 SLT3 解析器读取，需同步本仓库 `step_trace_capture.py`。
+
+```text
+SLT4 HEADER <event> <run> <count> <post_count> <complete>
+SLT4 ROW <event> <index> <observed_us> <sample_us> <c_begin_us> <c_end_us> <e_um> <c_um> <sample_seq> <target_mm_s> <encoder_v_mm_s> <metadata> <sample_valid> <velocity_valid> <last_read_ok>
+SLT4 END <event> <count>
 ```
 
-模式机测试链接独立编译的生产模块，通过命令注册入口、公开状态查询和
-任务注册入口驱动行为。共享测试夹具提供存储、时钟、轴和传感器替身，
-不包含生产实现文件，也不读取或修改模式机内部变量。
+complete=1，行顺序为最旧到最新；最后post_count条为触发后的记录。
+最早一条到触发点不一定覆盖完整640ms，例如刚使能就触发。样本时刻和传输时刻不能混用。
+取证不会证明编码器、传动比或电机运动正确，也不应以软件轨迹替代独立物理测量。
+
+## 主机只读取证
+
+设备停稳后运行（不自动使能、复位、配置或发送运动）：
+
+```powershell
+& $python .\tools\step_loss_capture.py --port COM11 --baud 460800 --out .\step-loss-new.json
+& $python .\tools\step_trace_capture.py --port COM11 --baud 460800 --out .\step-trace-new.json
+```
+
+每次使用新文件名，不覆盖已有证据。未完整收到END不得当作成功报告。
+
+## 验证范围
+
+宿主替身覆盖诊断关闭、事件单独、诊断、observe-only单独及组合；覆盖首次触发、
+重新ENABLE、128+32界限、查询门限、窗口软/硬边界与 WDT 新喂狗竞态。
+这些不是 ESP32-S3 实时开销、UART 负载或真机验收；目标构建和现场验证单独记录。

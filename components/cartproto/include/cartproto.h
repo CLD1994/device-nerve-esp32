@@ -72,6 +72,8 @@ typedef enum {
     CART_CMD_TMC_QUERY, /* TMC?：仅禁用时只读寄存器 */
     CART_CMD_STEPLOSS_QUERY, /* STEPLOSS?：停稳后只读故障证据 */
     CART_CMD_DISABLE,        /* DISABLE */
+    CART_CMD_STEPTRACE_QUERY,
+    CART_CMD_RUN_QUERY,
     CART_CMD_CONFIG_GET,     /* CONFIG? <NAME>：单项只读 */
 } cart_cmd_t;
 

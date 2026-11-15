@@ -5,6 +5,8 @@
 #include "telemetry.h"
 
 #include <math.h>
+#include <stdio.h>
+#include <inttypes.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -16,6 +18,7 @@
 #include "cartpos.h"
 #include "poleang.h"
 #include "cartproto.h"
+#include "cartfsm.h"
 
 static const char *TAG = "telemetry";
 
@@ -40,6 +43,15 @@ static void telemetry_task(void *arg)
     }
 
     for (;;) {
+        /* The supervisor only enqueues; UART formatting is off its control path. */
+        cartfsm_step_loss_notice_t notice;
+        if (cartfsm_take_step_loss_notice(&notice)) {
+            int event_n = snprintf(buf, sizeof(buf),
+                "EVENT STEP_LOSS %" PRIu32 " %" PRIu32 " %" PRId64 "\n",
+                notice.event_id, notice.run_id, notice.device_us);
+            if (event_n > 0 && event_n < (int)sizeof(buf))
+                cartproto_send_raw(buf, event_n);
+        }
         cartpos_measurement_t cart = {0};
         poleang_measurement_t pole = {0};
         bool cart_valid = cartpos_get_measurement(&cart);

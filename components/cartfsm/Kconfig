@@ -12,12 +12,59 @@ config CARTFSM_TEST_HOOKS
         与历史 FLOW_TEST 选项不同：本项不自动运行任何测试，仅暴露
         注入接口。正式固件保持关闭。
 
-config CARTFSM_STEP_LOSS_DIAGNOSTICS
-    bool "启用 STEP_LOSS 故障快照（调试诊断）"
+config CARTFSM_STEP_LOSS_EVENTS
+    bool "STEP_LOSS 事件通知与运行身份"
     default n
     help
-        开启后记录失步触发时的位置、时间和编码器元数据，可在停车后
-        用 STEPLOSS? 导出。关闭时不分配快照存储、不执行快照专属采集，
-        查询返回 STEPLOSS_DISABLED。失步检测和故障停车始终有效。
+        每次成功 ENABLE 分配新运行 ID；每轮第一次 STEP_LOSS 发布 EVENT。
+        仅使用小型事件邮箱，不分配轨迹缓冲、不额外读取编码器。
+        通知由遥测任务发送，无 ACK/重放，不是可靠停机指令。
+
+config CARTFSM_STEP_LOSS_DIAGNOSTICS
+    bool "STEP_LOSS 快照及事件前后软件轨迹"
+    default n
+    select CARTFSM_STEP_LOSS_EVENTS
+    help
+        独立诊断模块；默认关闭。开启后保存触发快照、最多128条触发前
+        和32条触发后记录（留样最小间隔5ms）。两个固定缓冲O(1)交换，
+        不在监督路径格式化、发送UART、分配内存或另读SPI。
+        仅停稳后用 STEPLOSS?/STEPTRACE? 读取。不是物理脉冲或运动证明。
+
+config CARTFSM_STEP_LOSS_OBSERVE_ONLY
+    bool "由上位机处置 STEP_LOSS（固件不因丢步停车）"
+    default n
+    select CARTFSM_STEP_LOSS_EVENTS
+    help
+        显式放弃固件 STEP_LOSS 停车：事件触发后保持 READY、目标速度、
+        加速度与使能不变，由上位机决定继续、减速或停止。
+        不依赖轨迹诊断；供电、编码器失效、软限位和命令看门狗不变。
+        主机必须理解该模式，EVENT可能丢失，不能当作有保证的停机通知。
+
+config CARTFSM_FOLLOWING_ERROR_WINDOW
+    bool "使用连续增长窗口与独立硬限判定跟随误差"
+    default n
+    help
+        开启后允许有限稳定偏差，以持续向外增长或独立硬限触发STEP_LOSS。
+        不重置STEP累计位置。关闭保持原 STEP_LOSS_UM 立即触发判据。
+        判定与处置解耦：是否停车由上面的上位机处置开关选择。
+
+if CARTFSM_FOLLOWING_ERROR_WINDOW
+config CARTFSM_FOLLOWING_ERROR_HARD_UM
+    int "累计误差硬限（um）"
+    range 1000 50000
+    default 6000
+config CARTFSM_FOLLOWING_ERROR_WINDOW_MS
+    int "增长观察窗口（ms）"
+    range 5 200
+    default 50
+config CARTFSM_FOLLOWING_ERROR_GROWTH_UM
+    int "每窗口最小向外增长（um）"
+    range 100 10000
+    default 1000
+config CARTFSM_FOLLOWING_ERROR_WINDOWS
+    int "连续增长窗口数"
+    range 2 10
+    default 2
+endif
 
 endmenu

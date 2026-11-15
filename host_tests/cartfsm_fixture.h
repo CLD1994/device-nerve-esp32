@@ -22,7 +22,7 @@ extern char reply[32];
 extern int64_t diag_clock;
 extern bool diag_snapshot_available,diag_use_snapshot;
 extern cartpos_supervision_t diag_snapshot;
-extern char diag_output[8192];
+extern char diag_output[65536];
 extern size_t diag_output_len;
 extern unsigned diag_raw_sends;
 void boot(void);

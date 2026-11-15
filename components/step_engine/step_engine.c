@@ -263,7 +263,9 @@ static bool gptimer_alarm_cb(gptimer_handle_t timer,
     bool     moving;
 
     portENTER_CRITICAL_ISR(&s_spinlock);
+    /* alarm 快照可能早于另一核最新喂狗，先比较时间顺序，避免差值下溢。 */
     bool wdt_expired = (s_wdt_us > 0)
+                    && (edata->count_value >= s_last_kick_us)
                     && (edata->count_value - s_last_kick_us > s_wdt_us);
     moving = vel_ramp_next(s_v_q16, s_dir, s_target_q16, s_target_dir,
                            s_accel, s_decel, wdt_expired,
