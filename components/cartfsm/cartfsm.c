@@ -75,6 +75,30 @@ static uint32_t s_trace_run, s_trace_frozen_event, s_trace_frozen_run;
 static int64_t s_trace_last_us;
 
 #endif
+#ifdef CONFIG_CARTFSM_STEP_LOSS_OBSERVE_ONLY
+/* 单生产者首次邮箱；所有访问使用s_lock，不让遥测持有输出锁。 */
+static cartfsm_step_loss_notice_t s_step_loss_notice;
+static bool s_step_loss_notice_pending;
+#endif
+
+bool cartfsm_take_step_loss_notice(cartfsm_step_loss_notice_t *out)
+{
+#ifdef CONFIG_CARTFSM_STEP_LOSS_OBSERVE_ONLY
+    if (out == NULL) return false;
+    portENTER_CRITICAL(&s_lock);
+    bool pending = s_step_loss_notice_pending;
+    if (pending) {
+        *out = s_step_loss_notice;
+        s_step_loss_notice_pending = false;
+    }
+    portEXIT_CRITICAL(&s_lock);
+    return pending;
+#else
+    (void)out;
+    return false;
+#endif
+}
+
 static uint32_t s_run_id;
 #ifdef CONFIG_CARTFSM_FOLLOWING_ERROR_WINDOW
 /* 仅监督任务访问；run变化时更新函数清除旧窗口。 */
@@ -317,6 +341,14 @@ static void observe_step_loss_record(const cartfsm_step_loss_diag_t *candidate)
     if (s_mode == CM_READY && candidate->run_at_compare == s_run_id
         && !s_step_loss_diag.valid) {
         record_step_loss_locked(candidate, esp_timer_get_time(), s_last_cmd_v);
+        portENTER_CRITICAL(&s_lock);
+        s_step_loss_notice = (cartfsm_step_loss_notice_t){
+            .event_id = s_step_loss_diag.event_id,
+            .run_id = s_step_loss_diag.run_at_accept,
+            .device_us = s_step_loss_diag.t_accept_us,
+        };
+        s_step_loss_notice_pending = true;
+        portEXIT_CRITICAL(&s_lock);
     }
     xSemaphoreGive(s_output_lock);
 }

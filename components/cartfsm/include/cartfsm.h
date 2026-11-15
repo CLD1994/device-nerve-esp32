@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include <stdint.h>
+#include <stdbool.h>
 #include "esp_err.h"
 #include "cartfsm_core.h"
 #include "params.h"
@@ -36,6 +38,17 @@ cm_reason_t cartfsm_reason(void);
 
 /** 当前标定状态（READY 进入前提是 CAL_DONE）。 */
 calib_state_t cartfsm_calib(void);
+
+/** 观察模式首次命中的单次通知；device_us 为设备锁存时刻，不是发送时刻。 */
+typedef struct {
+    uint32_t event_id, run_id;
+    int64_t device_us;
+} cartfsm_step_loss_notice_t;
+
+/** 遥测任务取走待发通知。只做短临界区复制，不等待输出锁、不执行串口IO。
+ * 无待发或观察模式关闭时返回false；发送/接收失败不会自动重放。
+ */
+bool cartfsm_take_step_loss_notice(cartfsm_step_loss_notice_t *out);
 
 /* ---- 流程测试注入钩子（CONFIG_CARTFSM_TEST_HOOKS，测试工程启用） ---- */
 #ifdef CONFIG_CARTFSM_TEST_HOOKS

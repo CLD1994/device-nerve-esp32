@@ -248,3 +248,20 @@ READY或仍减速时回`ERR STEPLOSS_BUSY`，无记录回`ERR STEPLOSS_NONE`。
 应答采用`SL1 <event_id> <field> <integer>`逐字段输出并以`END 1`结束。
 记录是设备固定RAM中的触发拍，不是MODE输出时的状态，不改变原故障判断。
 字段、工具、生命周期及非同步限制见[STEP_LOSS诊断](step-loss-diagnostic.md)。
+
+### 观察模式的 STEP_LOSS 短通知
+
+仅 `CONFIG_CARTFSM_STEP_LOSS_OBSERVE_ONLY=y` 时，首次命中后遥测任务发送：
+
+```text
+EVENT STEP_LOSS <event_id> <run_id> <device_us>\n
+```
+
+三个十进制字段分别为冻结事件编号、触发运行编号、设备锁存时间（微秒）。
+这是一次观察通知，不是 MODE 状态转换；READY 仍接收 VEL。正式故障路径仍使用
+`MODE FAULT STEP_LOSS`，其停车及使能行为不变。
+
+每次上电仅发送一次，无ACK或重放；RESET/ENABLE不重发。主机应先监听再ENABLE，
+按事件和运行编号辨识；排队可能延迟，device_us不是发送时间，不能与主机时钟直接比较。
+没有收到不证明没有命中。完整证据与停稳后查询见[诊断说明](step-loss-diagnostic.md)。
+
