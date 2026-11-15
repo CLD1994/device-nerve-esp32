@@ -86,6 +86,10 @@ bool cartpos_reference_is_valid(void);
 
 /** 声明当前位置为 new_pos_mm（纯偏移建立，不产生运动）。 */
 void cartpos_set_origin_mm(float new_pos_mm);
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+/* 仅模式机DISABLED诊断使用，不转移采样/SPI所有权。 */
+magnetic_encoder_handle_t cartpos_diagnostic_encoder(void);
+#endif
 
 #ifdef __cplusplus
 }

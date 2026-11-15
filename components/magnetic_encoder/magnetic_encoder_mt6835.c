@@ -25,15 +25,113 @@ typedef struct {
     magnetic_encoder_inst_t skel;      /* 骨架实例（首成员，句柄即其地址） */
     mt6835_hw_handle_t      hw;
     const char             *name;      /* 日志标签（任务名） */
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    magnetic_encoder_read_test_state_t test;
+    magnetic_encoder_read_test_row_t test_rows[MAGNETIC_ENCODER_READ_TEST_CAPACITY];
+    bool test_cancel, read_was_single;
+    int64_t test_start_us, test_last_record_us;
+    unsigned test_last_phase;
+#endif
     uint8_t                 last_status;
 } me_mt6835_inst_t;
+
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+static bool read_test_start(magnetic_encoder_handle_t enc)
+{
+    me_mt6835_inst_t *me=(me_mt6835_inst_t *)enc;
+    portENTER_CRITICAL(&me->skel.lock);
+    bool ok=!me->test.busy;
+    if (ok) {
+        me->test=(magnetic_encoder_read_test_state_t){.busy=true};
+        me->test_cancel=false; me->test_start_us=0; me->test_last_record_us=0;
+        me->test_last_phase=255;
+    }
+    portEXIT_CRITICAL(&me->skel.lock);
+    return ok;
+}
+static void read_test_cancel(magnetic_encoder_handle_t enc)
+{
+    me_mt6835_inst_t *me=(me_mt6835_inst_t *)enc;
+    portENTER_CRITICAL(&me->skel.lock);
+    if (me->test.busy) me->test_cancel=true;
+    portEXIT_CRITICAL(&me->skel.lock);
+}
+static bool read_test_state(magnetic_encoder_handle_t enc, magnetic_encoder_read_test_state_t *out)
+{
+    if (!out) return false;
+    me_mt6835_inst_t *me=(me_mt6835_inst_t *)enc;
+    portENTER_CRITICAL(&me->skel.lock); *out=me->test; portEXIT_CRITICAL(&me->skel.lock);
+    return true;
+}
+static bool read_test_row(magnetic_encoder_handle_t enc, unsigned i, magnetic_encoder_read_test_row_t *out)
+{
+    if (!out) return false;
+    me_mt6835_inst_t *me=(me_mt6835_inst_t *)enc;
+    portENTER_CRITICAL(&me->skel.lock);
+    bool ok=!me->test.busy && i<me->test.count;
+    if (ok) *out=me->test_rows[i];
+    portEXIT_CRITICAL(&me->skel.lock);
+    return ok;
+}
+/* 仅采样任务执行；所有SPI均在锁外，配置/结果提交共用实例锁。 */
+static bool diagnostic_read(me_mt6835_inst_t *me, uint32_t *raw, uint8_t *status)
+{
+    int64_t begin=esp_timer_get_time();
+    portENTER_CRITICAL(&me->skel.lock);
+    bool active=me->test.busy;
+    if (active && !me->test_start_us) me->test_start_us=begin;
+    int64_t elapsed=begin-me->test_start_us;
+    if (active && (me->test_cancel || elapsed<0 || elapsed>=4000000)) {
+        me->test.busy=false; me->test.done=true;
+        me->test.canceled=me->test_cancel || elapsed<0;
+        active=false;
+    }
+    unsigned phase=active ? (unsigned)(elapsed/1000000) : 0;
+    portEXIT_CRITICAL(&me->skel.lock);
+    me->read_was_single=active && (phase&1);
+    uint8_t data[4]={0};
+    bool ok;
+    if (me->read_was_single) ok=mt6835_hw_read_single_group(me->hw,raw,status,data);
+    else {
+        ok=mt6835_hw_read_raw(me->hw,raw,status);
+        if (active) {
+            uint8_t frame[6]={0};
+            if (ok) mt6835_hw_copy_success_frame(me->hw,frame);
+            else mt6835_hw_last_failure(me->hw,NULL,frame);
+            for (unsigned i=0;i<4;++i) data[i]=frame[i+2];
+        }
+    }
+    int64_t end=esp_timer_get_time();
+    if (active) {
+        uint32_t decoded=((uint32_t)data[0]<<13)|((uint32_t)data[1]<<5)|(data[2]>>3);
+        portENTER_CRITICAL(&me->skel.lock);
+        bool first=me->test_last_phase!=phase;
+        if ((first || begin-me->test_last_record_us>=5000) &&
+                me->test.count<MAGNETIC_ENCODER_READ_TEST_CAPACITY) {
+            magnetic_encoder_read_test_row_t *r=&me->test_rows[me->test.count++];
+            *r=(magnetic_encoder_read_test_row_t){.begin_us=begin,.end_us=end,
+                .phase=phase,.raw_counts=decoded,.status=data[2]&7,.crc=data[3],
+                .crc_expected=mt6835_crc8(decoded,data[2]&7),.valid=ok,.first_in_phase=first};
+            for (unsigned i=0;i<4;++i) r->bytes[i]=data[i];
+            me->test_last_record_us=begin;
+        }
+        me->test_last_phase=phase;
+        portEXIT_CRITICAL(&me->skel.lock);
+    }
+    return ok;
+}
+#endif
 
 /* ---- 实现回调（ctx = me_mt6835_inst_t*） ---- */
 
 static bool read_frame(void *ctx, uint32_t *raw, uint8_t *status)
 {
     me_mt6835_inst_t *me = ctx;
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    return diagnostic_read(me,raw,status);
+#else
     return mt6835_hw_read_raw(me->hw, raw, status);
+#endif
 }
 
 static int32_t counts_per_rev(void *ctx)
@@ -77,7 +175,8 @@ static void on_sample(void *ctx, uint8_t status)
 #ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
 static bool copy_success_frame(void *ctx, uint8_t rx[6])
 {
-    return mt6835_hw_copy_success_frame(((me_mt6835_inst_t *)ctx)->hw, rx);
+    me_mt6835_inst_t *me=ctx;
+    return !me->read_was_single && mt6835_hw_copy_success_frame(me->hw, rx);
 }
 #endif
 static const magnetic_encoder_impl_t s_impl = {
@@ -144,6 +243,12 @@ esp_err_t magnetic_encoder_mt6835_init(const magnetic_encoder_mt6835_config_t *c
         return err;
     }
 
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    me->skel.ops.read_test_start=read_test_start;
+    me->skel.ops.read_test_cancel=read_test_cancel;
+    me->skel.ops.read_test_state=read_test_state;
+    me->skel.ops.read_test_row=read_test_row;
+#endif
     *handle_out = (magnetic_encoder_handle_t)&me->skel;
     return ESP_OK;
 }

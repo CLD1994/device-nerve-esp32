@@ -202,3 +202,40 @@ STEP_LOSS_DIAGNOSTICS 自动选中隐藏 FRAME_DIAGNOSTICS：在原有单次采�
 冻结环形尾段仍固定128行，首次事件规则、RUN?、PCNT 和其他保护不变。
 采集工具兼容 SLT1/2/3；旧采集工具不认识 SLT3，需同时更新工具。
 本轮仅宿主单元验证，ESP-IDF 目标构建和实机时序需现场验证。
+
+### DISABLED 下 B/S/B/S 读角对照（不启动运动）
+
+`ENCODERTEST?` 仅在 DISABLED 受理。固件在原小车编码器采样任务中，
+按实际单调时间进行 B/S/B/S 四段，每段约1秒，总计4秒；B是现有48bit burst，
+S是依次对0x003、0x004、0x005、0x006执行四个24bit读寄存器事务（opcode 0011）。
+不写寄存器、不改SPI模式/时钟、不启用电机、不另开任务访问总线。
+依据 [MagnTek Rev1.3 §7.6.4/7.6.8/7.6.9](https://www.magntek.com.cn/upload/pdf/202407/MT6835_Rev.1.3.pdf)，
+四角度寄存器读全才释放内部锁存；S首帧可能只是释放已有影子，必须比较后续帧。
+
+运行前保持DISABLED，手准备缓慢推动小车；使用：
+```powershell
+& $python "$fwRoot\tools\encoder_read_compare.py" --port COM11 --baud 460800 --out $encoderCompareReport
+```
+`$fwRoot` 指更新后的固件仓库目录，报告路径必须是新文件。看到“开始4秒采样”后，
+缓慢手动往返，远离轨道端点。工具只发送ENCODERTEST?，不自动ENABLE/RESET/标定。
+结束后仍保持禁用；若诊断使采样不连续而参考失效，需要确认参考状态，不能自动重定位。
+
+协议：`ERT1 START 4000`，完成后 `ERT1 BEGIN <count>`、若干
+`ERT1 ROW <index> <phase> <begin_us> <end_us> <raw_counts> <status> <crc> <crc_expected> <valid> <first_in_phase> <reg003> <reg004> <reg005> <reg006>`，
+最后 `ERT1 END <count>`。phase=0/2为B，1/3为S；字节十进制。
+valid同时要求SPI成功、既有非全零校验和CRC通过。无效行的raw是原字节解码，
+不可当有效位置。S期间正常采样快照frame_valid=false，避免把旧burst帧冒充S组原文。
+
+每5ms至少间隔留一行及每段首行；固定810行上限，通常约800行，不是所有2kHz采样。
+begin/end是该读组软件时间，可计算留样耗时及间隔，不能冒充全部采样最坏耗时。
+诊断编译开启时每个MT6835实例增加约32KiB固定有界存储，两实例约64KiB；不在每拍分配内存。
+S每拍四事务会增加耗时并可能丢采样通知；这正是对照的干扰项，不应解释成零开销诊断。
+B/S各段不是同一时刻重放，不能把手推速度变化或S首帧差异直接判定为burst缺陷。
+
+采样任务在4秒结束或取消后回到burst；命令等待4.5秒后请求取消，额外等待最多0.5秒。
+取消没有确认时ENABLE仍被采样器busy挡住，不强行并发切换SPI。
+命令等待/输出会占用comm_task，但不持模式输出锁，等待期间喂任务看门狗。
+诊断期间命令任务被占用；额外发来的命令可能排队到测试结束后执行，不是自动丢弃。
+请勿混用控制脚本或发送ENABLE/VEL。READY/FAULT拒绝此测试。
+默认未编译诊断时返回ENCODERTEST_DISABLED，原生产采样保持原逻辑。
+本功能仅宿主替身测试，目标ESP-IDF构建/内存和实际时间需现场验证。

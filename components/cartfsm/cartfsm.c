@@ -521,6 +521,18 @@ static void exec_calib_query(void)
     cartproto_send_ok("CAL_STORAGE", s_storage_status);
 }
 
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+/* comm_task串行执行；busy在输出锁下设置，采样器busy覆盖超时取消未确认窗口。 */
+static bool s_encoder_test_busy;
+static bool encoder_test_busy(void)
+{
+    magnetic_encoder_handle_t e=cartpos_diagnostic_encoder();
+    magnetic_encoder_read_test_state_t state={0};
+    return s_encoder_test_busy || (e && e->read_test_state &&
+        e->read_test_state(e,&state) && state.busy);
+}
+#endif
+
 static void exec_enable(void)
 {
     xSemaphoreTake(s_output_lock, portMAX_DELAY);
@@ -528,6 +540,11 @@ static void exec_enable(void)
         xSemaphoreGive(s_output_lock);
         return;
     }
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    if (encoder_test_busy()) {
+        xSemaphoreGive(s_output_lock); cartproto_send_err("ENCODERTEST_BUSY"); return;
+    }
+#endif
     if (!cartpower_ready()) {
         xSemaphoreGive(s_output_lock);
         cartproto_send_err("POWER");
@@ -808,6 +825,71 @@ static void exec_steptrace_query(void)
 #endif
 }
 
+static void exec_encoder_test(void)
+{
+#ifndef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    cartproto_send_err("ENCODERTEST_DISABLED");
+#else
+    magnetic_encoder_handle_t e=cartpos_diagnostic_encoder();
+    xSemaphoreTake(s_output_lock,portMAX_DELAY);
+    if (s_mode!=CM_DISABLED || encoder_test_busy()) {
+        xSemaphoreGive(s_output_lock); cartproto_send_err("ENCODERTEST_BUSY"); return;
+    }
+    if (!e || !e->read_test_start || !e->read_test_state || !e->read_test_cancel || !e->read_test_row) {
+        xSemaphoreGive(s_output_lock); cartproto_send_err("ENCODERTEST_UNSUPPORTED"); return;
+    }
+    s_encoder_test_busy=true;
+    bool started=e->read_test_start(e);
+    xSemaphoreGive(s_output_lock);
+    if (!started) {
+        xSemaphoreTake(s_output_lock,portMAX_DELAY); s_encoder_test_busy=false;
+        xSemaphoreGive(s_output_lock); cartproto_send_err("ENCODERTEST_BUSY"); return;
+    }
+    cartproto_send_raw("ERT1 START 4000\n",16);
+    int64_t started_us=esp_timer_get_time();
+    magnetic_encoder_read_test_state_t state={0};
+    bool timeout=false;
+    do {
+        esp_task_wdt_reset();
+        vTaskDelay(pdMS_TO_TICKS(10));
+        e->read_test_state(e,&state);
+        int64_t now=esp_timer_get_time();
+        if (now<started_us || now-started_us>4500000 || s_mode!=CM_DISABLED) {
+            timeout=true; e->read_test_cancel(e); break;
+        }
+    } while (state.busy);
+    if (timeout) {
+        /* 只请求取消，绝不并发切总线模式。ENABLE继续被采样器busy挡住直到确认。 */
+        for (unsigned i=0;i<50 && state.busy;++i) {
+            esp_task_wdt_reset();
+            vTaskDelay(pdMS_TO_TICKS(10)); e->read_test_state(e,&state);
+        }
+        cartproto_send_err("ENCODERTEST_TIMEOUT");
+    } else if (!state.done || state.canceled) cartproto_send_err("ENCODERTEST_CANCELED");
+    else {
+        char line[256];
+        int n=snprintf(line,sizeof(line),"ERT1 BEGIN %u\n",state.count);
+        cartproto_send_raw(line,n);
+        for (unsigned i=0;i<state.count;++i) {
+            esp_task_wdt_reset();
+            magnetic_encoder_read_test_row_t r;
+            if (!e->read_test_row(e,i,&r)) {cartproto_send_err("ENCODERTEST_CHANGED");break;}
+            n=snprintf(line,sizeof(line),
+                "ERT1 ROW %u %u %" PRId64 " %" PRId64 " %" PRIu32 " %u %u %u %u %u %u %u %u %u\n",
+                i,(unsigned)r.phase,r.begin_us,r.end_us,r.raw_counts,(unsigned)r.status,
+                (unsigned)r.crc,(unsigned)r.crc_expected,(unsigned)r.valid,(unsigned)r.first_in_phase,
+                (unsigned)r.bytes[0],(unsigned)r.bytes[1],(unsigned)r.bytes[2],(unsigned)r.bytes[3]);
+            if (n<=0 || n>=(int)sizeof(line)) {cartproto_send_err("ENCODERTEST_FORMAT");break;}
+            cartproto_send_raw(line,n);
+        }
+        n=snprintf(line,sizeof(line),"ERT1 END %u\n",state.count);
+        cartproto_send_raw(line,n);
+    }
+    xSemaphoreTake(s_output_lock,portMAX_DELAY); s_encoder_test_busy=false;
+    xSemaphoreGive(s_output_lock);
+#endif
+}
+
 static void exec_cmd(const cart_req_t *req)
 {
     switch (req->cmd) {
@@ -823,6 +905,7 @@ static void exec_cmd(const cart_req_t *req)
         break;
     }
     case CART_CMD_STEPLOSS_QUERY: exec_steploss_query(); break;
+    case CART_CMD_ENCODER_TEST: exec_encoder_test(); break;
     case CART_CMD_STEPTRACE_QUERY: exec_steptrace_query(); break;
     case CART_CMD_CONFIRM_LEFT: exec_confirm_left(); break;
     case CART_CMD_CALIB_QUERY: exec_calib_query(); break;

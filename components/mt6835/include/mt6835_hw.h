@@ -77,6 +77,9 @@ void mt6835_hw_last_failure(mt6835_hw_handle_t h,
                             uint8_t frame[MT6835_HW_FRAME_BYTES]);
 
 #ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+/* 仅诊断，单采样调用者依次读取003..006，保留四字节返回数据。 */
+bool mt6835_hw_read_single_group(mt6835_hw_handle_t h, uint32_t *raw_out,
+                                uint8_t *status_out, uint8_t data[4]);
 /* 仅单采样调用者在 read_raw 成功后取帧，不执行 SPI。 */
 bool mt6835_hw_copy_success_frame(mt6835_hw_handle_t h, uint8_t rx[MT6835_HW_FRAME_BYTES]);
 #endif

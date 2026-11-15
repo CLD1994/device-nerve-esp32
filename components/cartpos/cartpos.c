@@ -341,3 +341,7 @@ bool cartpos_get_supervision(cartpos_supervision_t *out)
     };
     return true;
 }
+
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+magnetic_encoder_handle_t cartpos_diagnostic_encoder(void) { return s_enc; }
+#endif

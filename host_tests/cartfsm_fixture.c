@@ -107,3 +107,9 @@ void step_engine_diag_snapshot(step_engine_diag_t *out) {
     *out = (step_engine_diag_t){.position_steps=123,.v_q16=65536,.target_q16=131072,
         .timer_running=true,.wdt_stale_time_count=4};
 }
+
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+magnetic_encoder_handle_t test_encoder;
+magnetic_encoder_handle_t cartpos_diagnostic_encoder(void) { return test_encoder; }
+#endif
+void vTaskDelay(TickType_t ticks) { diag_clock+=(int64_t)ticks*1000; }

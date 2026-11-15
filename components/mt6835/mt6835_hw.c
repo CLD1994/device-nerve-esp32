@@ -167,3 +167,30 @@ bool mt6835_hw_copy_success_frame(mt6835_hw_handle_t h, uint8_t rx[MT6835_HW_FRA
     return true;
 }
 #endif
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+/* 仅原采样调用者。四个独立CS读完003..006；失败也继续余下读以尝试释放影子。 */
+bool mt6835_hw_read_single_group(mt6835_hw_handle_t h, uint32_t *raw_out,
+                                uint8_t *status_out, uint8_t data[4])
+{
+    if (!h || !data || !raw_out || !status_out) return false;
+    bool spi_ok = true;
+    for (unsigned i = 0; i < 4; ++i) {
+        uint8_t tx[3] = {0x30, (uint8_t)(3+i), 0};
+        _Alignas(4) uint8_t rx[4] = {0};
+        spi_transaction_t t = {.length=24, .tx_buffer=tx, .rx_buffer=rx};
+        if (spi_device_polling_transmit(h->dev, &t) != ESP_OK) spi_ok=false;
+        data[i]=rx[2];
+    }
+    uint32_t raw=((uint32_t)data[0]<<13)|((uint32_t)data[1]<<5)|(data[2]>>3);
+    uint8_t status=data[2]&7;
+    bool ok=spi_ok && (raw || status || data[3]) && mt6835_crc8(raw,status)==data[3];
+    if (ok) { *raw_out=raw; *status_out=status; }
+    else {
+        h->last_fail=!spi_ok ? MT6835_HW_FAIL_SPI_ERR :
+            (!(raw || status || data[3]) ? MT6835_HW_FAIL_ALL_ZERO : MT6835_HW_FAIL_CRC);
+        h->last_frame[0]=h->last_frame[1]=0; /* S组无单个6字节原帧，前两字节占位 */
+        for (unsigned i=0;i<4;++i) h->last_frame[2+i]=data[i];
+    }
+    return ok;
+}
+#endif

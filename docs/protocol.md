@@ -289,3 +289,11 @@ STEP_LOSS_DIAGNOSTICS 自动选中隐藏 FRAME_DIAGNOSTICS：在原有单次采�
 冻结环形尾段仍固定128行，首次事件规则、RUN?、PCNT 和其他保护不变。
 采集工具兼容 SLT1/2/3；旧采集工具不认识 SLT3，需同时更新工具。
 本轮仅宿主单元验证，ESP-IDF 目标构建和实机时序需现场验证。
+
+#### ENCODERTEST?（仅诊断 / DISABLED）
+
+4秒 B/S/B/S 读角对照，每段1秒，由原编码器采样任务独占执行；不产生运动。
+响应 ERT1 START/BEGIN/ROW/END，详见 [STEP_LOSS诊断说明](step-loss-diagnostic.md)。
+运行中ENABLE被busy门拒绝；仅正常采样任务确认取消后解除该门。
+ERR ENCODERTEST_DISABLED/BUSY/UNSUPPORTED/TIMEOUT/CANCELED 表示本次未完成。
+使用 tools/encoder_read_compare.py 只读采集，不与控制脚本同时运行。

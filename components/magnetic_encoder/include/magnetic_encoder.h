@@ -25,6 +25,21 @@ extern "C" {
 #endif
 
 typedef struct magnetic_encoder_s *magnetic_encoder_handle_t;
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+#define MAGNETIC_ENCODER_READ_TEST_CAPACITY 810
+/* 诊断只在原采样任务读总线；0=Burst，1=四次单寄存器读取。 */
+typedef struct {
+    int64_t begin_us, end_us;
+    uint32_t raw_counts;
+    uint8_t phase, status, crc, crc_expected, bytes[4];
+    bool valid, first_in_phase;
+} magnetic_encoder_read_test_row_t;
+typedef struct {
+    bool busy, done, canceled;
+    unsigned count;
+} magnetic_encoder_read_test_state_t;
+#endif
+
 
 /** 连续采样允许的最大成功样本间隔，微秒。 */
 #define MAGNETIC_ENCODER_MAX_CONTINUOUS_GAP_US 20000
@@ -53,6 +68,12 @@ typedef struct {
 
 /** 操作表：实现填写类别函数指针；必须作为实例结构的首成员。 */
 struct magnetic_encoder_s {
+#ifdef CONFIG_MAGNETIC_ENCODER_FRAME_DIAGNOSTICS
+    bool (*read_test_start)(magnetic_encoder_handle_t enc);
+    void (*read_test_cancel)(magnetic_encoder_handle_t enc);
+    bool (*read_test_state)(magnetic_encoder_handle_t enc, magnetic_encoder_read_test_state_t *out);
+    bool (*read_test_row)(magnetic_encoder_handle_t enc, unsigned index, magnetic_encoder_read_test_row_t *out);
+#endif
     int32_t (*counts_per_rev)(magnetic_encoder_handle_t enc);
     uint32_t (*angle_counts)(magnetic_encoder_handle_t enc);
     int64_t  (*position_counts)(magnetic_encoder_handle_t enc);
