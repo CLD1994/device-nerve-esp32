@@ -14,8 +14,10 @@
 观察起步，后续变化需另选触发位置或扩大可用采集窗口。一次短记录不代表全程。
 
 `run` 要求 READY NONE，标定有效，起步速度绝对值≤1 mm/s。
-它设置 VEL_MAX=20、ACC_MAX=100、WDT_MS=100、WDT_DEC=100；退出后保持这些低值，
-不会恢复旧高值。运行前后无需修改 STEP_LOSS 判据。
+它设置 VEL_MAX=20、ACC_MAX=所选加速度、WDT_MS=100、WDT_DEC=100；退出后保持这些值。
+加速度默认100 mm/s²，显式传入 `--acceleration 10000` 可使用10000 mm/s²，
+仅改变 ACC_MAX；速度、时长、位置预算、看门狗减速度及其他门控均不变。
+10000使换向更急，可能增加机械冲击；WDT_DEC仍为100，不随正常加速度提升。运行前后无需修改 STEP_LOSS 判据。
 
 非零目标最多发到2秒截止点，每25ms重发；主机迟到超过50ms、状态失效或固件
 故障则中止。每个收到的位置检查轨道边界和起点±30mm预算。边界沿用预检：
@@ -36,7 +38,7 @@ $log = Join-Path $env:TEMP ('low-reversal-' + [guid]::NewGuid().ToString('N') + 
 # & $python .\tools\low_speed_reversal.py --port COM11 --baud 460800 --out $log plan
 & $python .\tools\cartpole_host.py --port COM11 --baud 460800 enable
 if ($LASTEXITCODE -eq 0) {
-    & $python .\tools\low_speed_reversal.py --port COM11 --baud 460800 --out $log run --confirm-motion
+    & $python .\tools\low_speed_reversal.py --port COM11 --baud 460800 --out $log run --confirm-motion --acceleration 10000
     "探针退出码：$LASTEXITCODE"
 }
 & $python .\tools\cartpole_host.py --port COM11 --baud 460800 query
