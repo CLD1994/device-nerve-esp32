@@ -47,6 +47,8 @@ static const char *TAG = "cartfsm";
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static volatile cm_mode_t   s_mode = CM_DISABLED;
 static volatile cm_reason_t s_reason = CR_NONE;
+static long s_accel_request = 0; /* 0: legacy ACC_MAX; else transient VELA */
+static bool s_protective_stop = false;
 static volatile long s_last_cmd_v = 0;     /* 最近有效目标（软限位持续钳制） */
 static volatile bool s_fault_settling = false;  /* FAULT 斜坡停机进行中 */
 static bool s_started = false;
@@ -147,7 +149,7 @@ static void params_apply_engine(void)
 /* 软限位钳制收口：读当前位置、按窗口钳制 v、持锁提交 s_last_cmd_v、
  * 锁外下发电机。exec_vel 与 VEL_MAX 运行中收紧共用。
  * 电机调用在 s_lock 之外（不与电机实现内部的锁嵌套）。 */
-static void clamp_and_commit_velocity(long v_mm_s)
+static void clamp_and_commit_velocity(long v_mm_s, long accel_request)
 {
     xSemaphoreTake(s_output_lock, portMAX_DELAY);
     if (s_mode != CM_READY || !cartpower_ready()
@@ -161,11 +163,18 @@ static void clamp_and_commit_velocity(long v_mm_s)
     long eff = cm_soft_limit_clamp((long)cartpos_position_um(),
                                    xmin, xmax, v_mm_s);
 
+    bool protection_pending = s_protective_stop && !cartaxis_peek_at_rest();
+    if (protection_pending) eff = 0;
     portENTER_CRITICAL(&s_lock);
     s_last_cmd_v = eff;
     portEXIT_CRITICAL(&s_lock);
 
-    cartaxis_set_vel_mm_s(eff);
+    s_accel_request = accel_request;
+    s_protective_stop = protection_pending || (eff != v_mm_s);
+    long accel = accel_request > 0 && accel_request < p->acc_max
+        ? accel_request : p->acc_max;
+    if (s_protective_stop) accel = p->wdt_dec;
+    cartaxis_set_vel_accel(eff, accel);
     xSemaphoreGive(s_output_lock);
 }
 
@@ -196,10 +205,12 @@ static void supervise_soft_limit(const fw_params_t *p)
         bool still_old = (s_last_cmd_v == cmd);
         if (still_old) {
             s_last_cmd_v = 0;
+            s_accel_request = 0;
         }
         portEXIT_CRITICAL(&s_lock);
         if (still_old) {
-            cartaxis_halt();
+            s_protective_stop = true;
+            cartaxis_halt_accel(p->wdt_dec);
         }
     }
     xSemaphoreGive(s_output_lock);
@@ -210,10 +221,17 @@ static void params_apply_one(const char *name)
     const fw_params_t *p = fw_params();
     switch (fw_params_find(name)) {
     case FP_ACC_MAX:
-        cartaxis_set_accel_mm_s2(p->acc_max);
+        xSemaphoreTake(s_output_lock, portMAX_DELAY);
+        cartaxis_set_accel_mm_s2(s_protective_stop ? p->wdt_dec :
+            (s_accel_request > 0 && s_accel_request < p->acc_max
+             ? s_accel_request : p->acc_max));
+        xSemaphoreGive(s_output_lock);
         break;
     case FP_WDT_DEC:
+        xSemaphoreTake(s_output_lock, portMAX_DELAY);
         cartaxis_set_decel_mm_s2(p->wdt_dec);
+        if (s_protective_stop) cartaxis_halt_accel(p->wdt_dec);
+        xSemaphoreGive(s_output_lock);
         break;
     case FP_WDT_MS:
         cartaxis_set_wdt_ms(p->wdt_ms);
@@ -225,7 +243,7 @@ static void params_apply_one(const char *name)
         portEXIT_CRITICAL(&s_lock);
         if (cur > p->vel_max || cur < -p->vel_max) {
             long v = (cur > 0) ? p->vel_max : -p->vel_max;
-            clamp_and_commit_velocity(v);
+            clamp_and_commit_velocity(v, s_accel_request);
         }
         break;
     default:
@@ -247,6 +265,7 @@ static void power_stop_locked(void)
     s_mode = CM_FAULT;
     s_reason = CR_POWER;
     s_last_cmd_v = 0;
+    s_accel_request = 0;
     s_fault_settling = false;
     portEXIT_CRITICAL(&s_lock);
     cartaxis_stop();
@@ -287,8 +306,8 @@ static void enter_fault_record(cm_reason_t r, const cartfsm_step_loss_diag_t *ca
 
     /* 次序 ①：目标斜坡置 0，以 WDT_DEC 档减速 */
     const fw_params_t *p = fw_params();
-    cartaxis_set_accel_mm_s2(p->wdt_dec);
-    cartaxis_halt();
+    s_protective_stop = true;
+    cartaxis_halt_accel(p->wdt_dec);
 #ifdef CONFIG_CARTFSM_STEP_LOSS_DIAGNOSTICS
     /* 安全停车先提交。固定大小复制，无格式化/串口/NVS或动态分配。 */
     if (r == CR_STEP_LOSS && candidate) {
@@ -458,6 +477,9 @@ static void exec_enable(void)
         cartproto_send_err("ENABLE");
         return;
     }
+    s_accel_request = 0;
+    s_protective_stop = false;
+    params_apply_engine();
     cartaxis_enable(true);
     /* 覆盖检查与开启间缓存失效的窗口；下个监督拍仍持续检查。 */
     if (!cartpower_ready()) {
@@ -471,6 +493,7 @@ static void exec_enable(void)
     ++s_run_id;
     s_reason = CR_NONE;
     s_last_cmd_v = 0;
+    s_accel_request = 0;
     portEXIT_CRITICAL(&s_lock);
     xSemaphoreGive(s_output_lock);
     push_mode(CM_READY, CR_NONE);
@@ -490,6 +513,7 @@ static void exec_disable(void)
         cartaxis_enable(false);
         portENTER_CRITICAL(&s_lock);
         s_last_cmd_v = 0;
+        s_accel_request = 0;
         s_fault_settling = false;
         s_mode = CM_DISABLED;
         s_reason = CR_NONE;
@@ -515,17 +539,19 @@ static void exec_reset(void)
     s_reason = CR_NONE;
     s_fault_settling = false;
     s_last_cmd_v = 0;
+    s_accel_request = 0;
     portEXIT_CRITICAL(&s_lock);
 
     cartaxis_stop();               /* 斜坡未完也立即急停 */
     cartaxis_enable(false);
     check_reference();
+    s_protective_stop = false;
     params_apply_engine();       /* 恢复 ACC_MAX 档等 */
     xSemaphoreGive(s_output_lock);
     push_mode(CM_DISABLED, CR_NONE);
 }
 
-static void exec_vel(int32_t v_mm_s)
+static void exec_vel(int32_t v_mm_s, long accel_request)
 {
     portENTER_CRITICAL(&s_lock);
     cm_mode_t cur = s_mode;
@@ -540,7 +566,7 @@ static void exec_vel(int32_t v_mm_s)
     } else if (v < -p->vel_max) {
         v = -p->vel_max;
     }
-    clamp_and_commit_velocity(v);
+    clamp_and_commit_velocity(v, accel_request);
 }
 
 static void exec_config_set(const cart_req_t *req)
@@ -677,7 +703,9 @@ static void exec_cmd(const cart_req_t *req)
     case CART_CMD_ENABLE:      exec_enable(); break;
     case CART_CMD_RESET:       exec_reset(); break;
     case CART_CMD_DISABLE:     exec_disable(); break;
-    case CART_CMD_VEL:         exec_vel(req->v_mm_s); break;
+    case CART_CMD_VELA_QUERY: cartproto_send_ok("VELA", 1); break;
+    case CART_CMD_VELA:        exec_vel(req->v_mm_s, req->a_mm_s2); break;
+    case CART_CMD_VEL:         exec_vel(req->v_mm_s, 0); break;
     case CART_CMD_CONFIG_SET:  exec_config_set(req); break;
     case CART_CMD_CONFIG_DUMP: exec_config_dump(); break;
     case CART_CMD_CONFIG_GET:  exec_config_get(req); break;
@@ -693,7 +721,8 @@ static void settle_fault(void)
     cm_reason_t reason = CR_NONE;
     xSemaphoreTake(s_output_lock, portMAX_DELAY);
     if (s_mode == CM_FAULT && s_fault_settling) {
-        cartaxis_halt();
+        s_protective_stop = true;
+        cartaxis_halt_accel(fw_params()->wdt_dec);
         if (cartaxis_at_rest()) {
             cartaxis_enable(false);
             s_fault_settling = false;

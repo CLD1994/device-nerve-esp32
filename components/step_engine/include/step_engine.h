@@ -78,6 +78,9 @@ void step_engine_vel_set_wdt_us(uint32_t wdt_us);
  * VEL_MAX 配置不能绕过该目标频率上限；它不保证真实脉冲时序。
  */
 void step_engine_vel_target(int64_t v_q16);
+/* 同一引擎临界区提交，速度参考不重置。 */
+void step_engine_vel_target_accel(int64_t v_q16, uint32_t accel_steps_s2);
+void step_engine_vel_halt_accel(uint32_t accel_steps_s2);
 
 /**
  * @brief 目标清 0（斜坡停，非急停）。不喂狗。

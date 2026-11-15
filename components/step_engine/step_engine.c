@@ -387,7 +387,7 @@ void step_engine_vel_set_wdt_us(uint32_t wdt_us)
     portEXIT_CRITICAL(&s_spinlock);
 }
 
-void step_engine_vel_target(int64_t v_q16)
+void step_engine_vel_target_accel(int64_t v_q16, uint32_t accel_steps_s2)
 {
     const int64_t limit_q16 = (int64_t)STEP_ENGINE_MAX_TARGET_HZ * VEL_RAMP_Q16_ONE;
     if (v_q16 > limit_q16) v_q16 = limit_q16;
@@ -404,6 +404,8 @@ void step_engine_vel_target(int64_t v_q16)
     }
 
     portENTER_CRITICAL(&s_spinlock);
+
+    if (accel_steps_s2) s_accel = accel_steps_s2;
 
     /* 喂狗：时间戳取定时器原始计数（µs 域，自由运行） */
     uint64_t now = 0;
@@ -441,6 +443,19 @@ void step_engine_vel_target(int64_t v_q16)
         }
     }
 
+    portEXIT_CRITICAL(&s_spinlock);
+}
+
+void step_engine_vel_target(int64_t v_q16)
+{
+    step_engine_vel_target_accel(v_q16, 0);
+}
+
+void step_engine_vel_halt_accel(uint32_t accel_steps_s2)
+{
+    portENTER_CRITICAL(&s_spinlock);
+    s_accel = accel_steps_s2 ? accel_steps_s2 : 1;
+    s_target_q16 = 0;
     portEXIT_CRITICAL(&s_spinlock);
 }
 

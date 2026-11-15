@@ -59,6 +59,8 @@ void cartproto_send_raw(const char *data, int len);
  * ================================================================ */
 
 typedef enum {
+    CART_CMD_VELA,           /* VELA <v_mm_s> <a_mm_s2> */
+    CART_CMD_VELA_QUERY,     /* VELA? */
     CART_CMD_VEL,            /* VEL <v_mm_s> */
     CART_CMD_MARK_LEFT,      /* MARK LEFT */
     CART_CMD_MARK_RIGHT,     /* MARK RIGHT */
@@ -79,6 +81,7 @@ typedef struct {
     cart_cmd_t cmd;
     int32_t v_mm_s;          /* VEL：整数 mm/s；|v| > 32767 判非法丢弃
                               *（防溢出，正常钳位 ±VEL_MAX 在 cartfsm） */
+    int32_t a_mm_s2;         /* VELA: 100..9000 */
     char name[16];           /* CONFIG / CONFIG?：NAME ∈ [A-Z0-9_]{1,15} */
     long value;              /* CONFIG：十进制 long */
 } cart_req_t;

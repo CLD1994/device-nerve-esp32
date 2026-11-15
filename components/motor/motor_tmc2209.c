@@ -6,6 +6,7 @@
  * 功能层（含 VSENSE 分档）。
  */
 #include "motor.h"
+#include <stddef.h>
 #include "motor_tmc2209.h"
 
 #include "tmc2209.h"
@@ -43,6 +44,18 @@ void motor_set_vel(motor_handle_t m, long steps_per_s)
 {
     (void)m;
     step_engine_vel_target((int64_t)steps_per_s * 65536);
+}
+
+void motor_set_vel_accel(motor_handle_t m, long v, uint32_t a)
+{
+    (void)m;
+    step_engine_vel_target_accel((int64_t)v * 65536, a);
+}
+
+void motor_halt_accel(motor_handle_t m, uint32_t a)
+{
+    (void)m;
+    step_engine_vel_halt_accel(a);
 }
 
 void motor_halt(motor_handle_t m)

@@ -103,6 +103,11 @@ bool cartproto_parse_line(const char *line, cart_req_t *out)
         cmd_len++;
     }
 
+    if (streq_n(line, len, "VELA?")) {
+        out->cmd = CART_CMD_VELA_QUERY;
+        return true;
+    }
+
     /* 无参数命令 */
     if (cmd_len == len) {
         if (streq_n(line, cmd_len, "TMC?")) {
@@ -144,6 +149,19 @@ bool cartproto_parse_line(const char *line, cart_req_t *out)
     size_t rest = cmd_len + 1;
     if (rest >= len) {
         return false;   /* 命令词后直接结束（如 "VEL "）——行尾空白已剥 */
+    }
+
+    if (streq_n(line, cmd_len, "VELA")) {
+        size_t sep = rest;
+        while (sep < len && line[sep] != ' ') ++sep;
+        long v, a;
+        if (sep == len || !parse_long(line + rest, sep - rest, &v)
+            || !parse_long(line + sep + 1, len - sep - 1, &a)
+            || v < -32767 || v > 32767 || a < 100 || a > 9000) return false;
+        out->cmd = CART_CMD_VELA;
+        out->v_mm_s = (int32_t)v;
+        out->a_mm_s2 = (int32_t)a;
+        return true;
     }
 
     if (streq_n(line, cmd_len, "CONFIRM") && streq_n(&line[rest], len - rest, "LEFT")) {

@@ -23,6 +23,9 @@ void cartaxis_init(motor_handle_t m);
 /** 以下签名与语义同旧 motor.h 业务面（消费方 cartfsm / flowtest 只改名）。 */
 esp_err_t cartaxis_enable(bool en);
 void cartaxis_set_vel_mm_s(long v_mm_s);
+/* 同一引擎临界区提交，速度参考不重置。 */
+void cartaxis_set_vel_accel(long v_mm_s, long a_mm_s2);
+void cartaxis_halt_accel(long a_mm_s2);
 void cartaxis_halt(void);
 void cartaxis_stop(void);
 bool cartaxis_at_rest(void);

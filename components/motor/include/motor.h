@@ -24,6 +24,9 @@ esp_err_t motor_enable(motor_handle_t m, bool en);
 /** 设定带符号目标速度（steps/s）并喂命令看门狗；引擎内部定点递推
  *  平滑逼近，换向经零速。 */
 void motor_set_vel(motor_handle_t m, long steps_per_s);
+/* 同一引擎临界区提交，速度参考不重置。 */
+void motor_set_vel_accel(motor_handle_t m, long steps_per_s, uint32_t accel_steps_s2);
+void motor_halt_accel(motor_handle_t m, uint32_t accel_steps_s2);
 
 /** 目标清 0 斜坡停；不喂看门狗。 */
 void motor_halt(motor_handle_t m);

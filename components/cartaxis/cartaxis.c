@@ -132,6 +132,19 @@ void cartaxis_set_vel_mm_s(long v_mm_s)
     motor_set_vel(s_m, sgn() * cartaxis_mmps_to_steps(v_mm_s, spm()));
 }
 
+void cartaxis_set_vel_accel(long v_mm_s, long a_mm_s2)
+{
+    maybe_apply_pending();
+    float scale = spm();
+    motor_set_vel_accel(s_m, sgn() * cartaxis_mmps_to_steps(v_mm_s, scale),
+                       cartaxis_accel_to_steps(a_mm_s2, scale));
+}
+
+void cartaxis_halt_accel(long a_mm_s2)
+{
+    motor_halt_accel(s_m, cartaxis_accel_to_steps(a_mm_s2, spm()));
+}
+
 void cartaxis_halt(void)
 {
     maybe_apply_pending();
