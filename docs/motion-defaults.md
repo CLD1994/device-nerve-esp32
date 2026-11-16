@@ -29,3 +29,45 @@
 50 kHz 是引擎接受的目标频率上限，不是引脚实测频率保证，也不代表电机在所有负载下都能达到相应速度。软件步数计数不能独自验证引脚脉宽、抖动、失步或皮带打滑。
 
 宿主单元测试验证目标钳位与停车接口行为。ESP-IDF 目标构建、示波器测量和带载运动验证分别检验编译兼容性、电气波形和机械表现，不能互相替代。
+
+## 可选的启动运行电流请求覆盖
+
+`CONFIG_SETTINGS_STARTUP_RUN_CURRENT_OVERRIDE` 默认关闭。它只用于启动组装阶段，
+在 `bsp_early_init()` 已禁用 EN、`settings_init()` 载入有效设置之后，以及 BSP、
+电机和参数订阅初始化之前运行。此时 FSM 尚未启动，不能把 EN 禁用表述为已经确认
+`MODE DISABLED`。此功能不是串口运行期调流接口。
+
+启用时，`CONFIG_SETTINGS_STARTUP_RUN_CURRENT_MA` 指定目标运行电流请求，单位为
+mA RMS，默认 1000，允许 1–2000。每次启动打印原有效运行请求、目标和保持请求：
+
+- 保持请求不改变。保持请求高于目标，或目标不符合 settings 校验时，打印 INVALID，
+  不写 NVS，也不继续设备初始化或使能。
+- 原有效运行请求等于目标时不写 NVS。该原值可能来自 NVS，也可能是缺键时的默认值，
+  不能称为已读取的 NVS 保存值。
+- 不同时，仅调用 `settings_set(SET_RUN_MA, target)` 持久化运行请求。
+  STORAGE 与 INVALID 失败单独记录，由启动入口的 `ESP_ERROR_CHECK` 中止初始化。
+- 写入成功只证明 settings/NVS 请求处理成功，不证明 TMC ACK、寄存器回读或实测相电流。
+  后续电机初始化使用这个请求值；如果之后的设备初始化失败，不回滚已经成功保存的 NVS 值。
+
+**关闭覆盖选项不会恢复以前的 NVS 电流。** 若要再次修改，应显式设置新的目标并构建烧录，
+不能以关闭选项或普通 `idf.py flash` 代替恢复参数。此功能不修改保持电流、采样频率、
+速度或加速度，也不主动清除标定。
+
+在已激活 ESP-IDF 的固件目录执行：
+
+```bash
+idf.py menuconfig
+# Component config → settings - 启动电流请求
+# 启用“启动时覆盖运行电流请求并持久保存到NVS”，填写目标mA RMS并保存。
+idf.py build
+idf.py flash
+```
+
+保存后核对 `sdkconfig` 中的覆盖开关和目标值。以上步骤不包含运动命令。
+观察 USB 启动日志中的 `startup_current` 结果；需要对比真实电流时仍需独立测量。
+当前电机铭牌值与 RMS/峰值口径、驱动请求和实测值应分别核实，不能仅凭铭牌自动调流。
+
+该辅助函数的宿主单元测试见
+[`test_settings_startup_current.sh`](../host_tests/test_settings_startup_current.sh)，
+隔离 settings/NVS 协作者，覆盖关闭、无变化、变更、保持电流约束及存储失败；不替代
+ESP-IDF 目标构建、真实 NVS 写入、启动失败路径或电机电流验收。
