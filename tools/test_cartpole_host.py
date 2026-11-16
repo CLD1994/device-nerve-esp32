@@ -283,3 +283,35 @@ class StepLossEventTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TravelReceiveTest(unittest.TestCase):
+    def test_split_frames_and_each_state_callback(self):
+        rig,port,_,_=session(host.Rig)
+        seen=[]
+        rig.state_observer=lambda:seen.append(int(rig.last_state[0]))
+        rig._consume(b'STATE 1 0 0')
+        rig._consume(b' 0\nSTATE 2 0 0 0\n')
+        self.assertEqual(seen,[1,2])
+    def test_poll_restores_timeout_after_error(self):
+        rig,port,_,_=session(host.Rig)
+        port.timeout=.2
+        port.in_waiting=0
+        rig.poll_available()
+        self.assertEqual(port.timeout,.2)
+        with patch.object(rig,'_consume',side_effect=RuntimeError('bad')):
+            with self.assertRaises(RuntimeError): rig.poll_available()
+        self.assertEqual(port.timeout,.2)
+    def test_cli_rejects_conflicting_modes_before_port(self):
+        for argv in (['--to-limit','--hold','1'],['--to-limit','--max-seconds','nan'],['--plan']):
+            with patch.object(host.sys,'argv',['tool','--port','X','vel','600']+argv), patch.object(host,'Rig') as factory, contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit): host.main()
+                factory.assert_not_called()
+
+class TravelMessageObserverTest(unittest.TestCase):
+    def test_observer_sees_each_line_before_overwrite(self):
+        rig,port,_,_=session(host.Rig)
+        seen=[];rig.message_observer=seen.append
+        rig._consume(b'MODE FAULT STEP_LOSS\nMODE READY NONE\nERR BUSY\nOK VEL 0\n')
+        self.assertEqual(seen,['MODE FAULT STEP_LOSS','MODE READY NONE','ERR BUSY','OK VEL 0'])
+        self.assertEqual(rig.last_mode,('READY','NONE'))
+        self.assertEqual(rig.last_reply,('OK','VEL',0))

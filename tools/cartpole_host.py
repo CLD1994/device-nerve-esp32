@@ -56,6 +56,8 @@ class Rig:
         self.last_reply = None     # (kind, name, value)
         self.replies = {}          # 本次请求的命名 OK 回执
         self.state_count = 0
+        self.state_observer = None
+        self.message_observer = None
         self.unknown_count = 0
         # 跨 pump 调用持久的接收缓冲：未凑齐的半行必须留到下次继续，
         # 不得随窗口丢弃——STATE 流近乎连续，0.2 s 窗口边界几乎必然
@@ -98,15 +100,33 @@ class Rig:
             chunk = self.ser.read(256)
             if not chunk:
                 continue
-            self._rx_buf += chunk
-            while b"\n" in self._rx_buf:
-                raw, self._rx_buf = self._rx_buf.split(b"\n", 1)
-                line = raw.decode("ascii", "replace").strip()
-                if not line:
-                    continue
-                self._dispatch(line)
-                if self.velocity_validity.active and self.velocity_validity.failed:
-                    raise RuntimeError("活动会话收到失效或损坏数据；停止运动")
+            self._consume(chunk)
+
+    def _consume(self, chunk):
+        self._rx_buf += chunk
+        if len(self._rx_buf) > 65536:
+            self.velocity_validity.failed = True
+            raise RuntimeError("接收缓冲超过上限")
+        while b"\n" in self._rx_buf:
+            raw, self._rx_buf = self._rx_buf.split(b"\n", 1)
+            line = raw.decode("ascii", "replace").strip()
+            if not line:
+                continue
+            if self.message_observer is not None:
+                self.message_observer(line)
+            self._dispatch(line)
+            if self.velocity_validity.active and self.velocity_validity.failed:
+                raise RuntimeError("活动会话收到失效或损坏数据；停止运动")
+
+    def poll_available(self):
+        """行程模式一次最多读取4096字节，不等待补满read。"""
+        old_timeout = self.ser.timeout
+        try:
+            self.ser.timeout = 0
+            size = min(4096, self.ser.in_waiting)
+            self._consume(self.ser.read(size) if size else b"")
+        finally:
+            self.ser.timeout = old_timeout
 
     def _unknown(self, line):
         self.unknown_count += 1
@@ -154,6 +174,8 @@ class Rig:
                     if self.velocity_validity.received_at is None or self.velocity_validity.ready():
                         self.last_state = parts[1:]
                         self.state_received_at = self._clock()
+                        if self.state_observer is not None:
+                            self.state_observer()
                     return
                 except ValueError:
                     pass
@@ -280,6 +302,9 @@ def cmd_enable(rig, args):
 
 
 def cmd_vel(rig, args):
+    if getattr(args, "to_limit", False):
+        from travel_limit import run
+        return run(rig, args)
     m = rig.query()
     if not m or m[0] != "READY":
         print("当前模式 %s，非 READY——先标定并 ENABLE" % (m,))
@@ -395,7 +420,13 @@ def main():
     sub.add_parser("calib-status")
     p = sub.add_parser("enable"); p.add_argument("--timeout", type=float, default=5.0)
     p = sub.add_parser("vel"); p.add_argument("v", type=int)
-    p.add_argument("--hold", type=float, default=1.0)
+    group = p.add_mutually_exclusive_group()
+    group.add_argument("--hold", type=float, default=None)
+    group.add_argument("--to-limit", action="store_true")
+    p.add_argument("--reserve-mm", type=float, default=20)
+    p.add_argument("--inflight-ms", type=float, default=50)
+    p.add_argument("--max-seconds", type=float, default=30)
+    p.add_argument("--plan", action="store_true")
     p = sub.add_parser("config"); p.add_argument("name"); p.add_argument("value", type=int)
     sub.add_parser("dump")
     p = sub.add_parser("state"); p.add_argument("--secs", type=float, default=10.0)
@@ -406,6 +437,15 @@ def main():
     sub.add_parser("disable")
 
     args = ap.parse_args()
+    if args.cmd == "vel":
+        if args.plan and not args.to_limit:
+            ap.error("--plan 需要 --to-limit")
+        if args.to_limit:
+            if not args.v or not all(math.isfinite(v) and v >= 0 for v in
+                    (args.reserve_mm, args.inflight_ms)) or not math.isfinite(args.max_seconds) or args.max_seconds <= 0:
+                ap.error("行程速度须非零，余量/在途预算须非负有限，期限须正有限")
+        elif args.hold is None:
+            args.hold = 1.0
     if args.cmd == "state":
         if not math.isfinite(args.secs) or args.secs <= 0:
             ap.error("--secs 必须是正的有限秒数")
