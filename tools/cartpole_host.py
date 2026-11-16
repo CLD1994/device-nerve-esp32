@@ -423,6 +423,7 @@ def main():
     group = p.add_mutually_exclusive_group()
     group.add_argument("--hold", type=float, default=None)
     p.add_argument("--reserve-mm", type=float, default=20)
+    p.add_argument("--start-tolerance-mm", type=float, default=.5, help="起点读数容差0..1mm，仅允许向内")
     p.add_argument("--inflight-ms", type=float, default=50)
     p.add_argument("--max-seconds", type=float, default=30)
     group.add_argument("--plan", action="store_true", help="只读单程规划，不发送运动命令")
@@ -438,6 +439,8 @@ def main():
     args = ap.parse_args()
     if args.cmd == "vel":
         if args.hold is None:
+            if not math.isfinite(args.start_tolerance_mm) or not 0 <= args.start_tolerance_mm <= 1:
+                ap.error("--start-tolerance-mm 必须为0..1mm有限数")
             if not args.v or not all(math.isfinite(v) and v >= 0 for v in
                     (args.reserve_mm, args.inflight_ms)) or not math.isfinite(args.max_seconds) or args.max_seconds <= 0:
                 ap.error("行程速度须非零，余量/在途预算须非负有限，期限须正有限")
@@ -460,7 +463,7 @@ def main():
             "reset": cmd_reset, "disable": cmd_disable,
         }
         rc = table[args.cmd](rig, args)
-    except (RuntimeError, OSError, KeyboardInterrupt) as exc:
+    except (RuntimeError, ValueError, OSError, KeyboardInterrupt) as exc:
         stop_error = None
         if rig.velocity_validity.active:
             try:

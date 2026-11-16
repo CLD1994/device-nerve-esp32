@@ -39,18 +39,25 @@ class Plan:
 
 
 class Guard:
-    def __init__(self, plan, start_um):
+    def __init__(self, plan, start_um, start_tolerance_mm=.5):
         self.plan, self.extreme = plan, start_um
         self.start = start_um
         self.entered = abs(start_um) <= plan.soft_um
-        if abs(start_um)>plan.physical_um:
-            raise ValueError('起点超过标定物理范围')
+        if not math.isfinite(start_tolerance_mm) or not 0 <= start_tolerance_mm <= 1:
+            raise ValueError('起点容差必须为0..1mm有限数')
+        self.physical_entered = abs(start_um) <= plan.physical_um
+        if abs(start_um)>plan.physical_um+start_tolerance_mm*1000:
+            raise ValueError('起点超过标定物理范围及有限容差')
         if plan.direction*start_um >= plan.direction*plan.target_um:
             raise ValueError('目标不在请求方向前方')
 
     def observe(self, x, vx):
         p = self.plan
-        if abs(x)>p.physical_um or p.direction*x>p.soft_um:
+        if not self.physical_entered:
+            if p.direction*(x-self.extreme)<0:
+                raise RuntimeError('物理范围外的起点不能继续向外移动')
+            if abs(x)<=p.physical_um: self.physical_entered=True
+        if (self.physical_entered and abs(x)>p.physical_um) or p.direction*x>p.soft_um:
             raise RuntimeError('收到的位置越过目标侧软件边界或物理边界')
         if self.entered and p.direction*x < -p.soft_um:
             raise RuntimeError('进入软件范围后退出起点侧边界')
@@ -104,14 +111,18 @@ def run(rig, args, sleep=time.sleep):
     if rig.last_reply and rig.last_reply[0]=='ERR': raise RuntimeError('查询被固件拒绝')
     if not rig.state_is_fresh(): raise RuntimeError('没有新鲜位置状态')
     x,_,vx,_=map(int,rig.last_state)
-    guard=Guard(p,x)
+    guard=Guard(p,x,getattr(args,'start_tolerance_mm',.5))
     if guard.observe(x,vx): raise RuntimeError('起点剩余距离不足制动预算')
     print('物理端 ±%.3f mm；软件端 ±%.3f mm；目标 %.3f mm；当前制动预算 %.3f mm'
           %(p.physical_um/1000,p.soft_um/1000,p.target_um/1000,p.budget_mm(vx)))
     if args.plan: return 0
     if rig.last_mode != ('READY','NONE'): raise RuntimeError('行程执行需要 READY NONE；不会自动 ENABLE')
     initial=Stillness(rig)
-    rig.state_observer=initial.observe
+    def initial_observe():
+        x,_,vx,_=map(int,rig.last_state)
+        guard.observe(x,vx)
+        initial.observe()
+    rig.state_observer=initial_observe
     try:
         deadline=rig._clock()+2
         while not initial.confirmed:

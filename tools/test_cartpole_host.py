@@ -338,3 +338,22 @@ class DefaultTravelCliTest(unittest.TestCase):
         args=self.invoke(['--hold','2'])
         self.assertEqual(args.hold,2)
         self.assertFalse(args.plan)
+
+class StartToleranceCliTest(unittest.TestCase):
+    def test_invalid_tolerance_rejected_before_port(self):
+        for value in ('-1','1.1','nan','inf'):
+            with patch.object(host.sys,'argv',['tool','--port','X','vel','600','--start-tolerance-mm',value]),patch.object(host,'Rig') as factory,contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):host.main()
+                factory.assert_not_called()
+    def test_value_error_is_friendly_without_motion(self):
+        rig=SimpleNamespace(velocity_validity=SimpleNamespace(active=False),close=lambda:None)
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'Rig',return_value=rig),patch('travel_limit.run',side_effect=ValueError('起点超限')),contextlib.redirect_stdout(io.StringIO()) as output:
+            with self.assertRaises(SystemExit) as exited:host.main()
+            self.assertEqual(exited.exception.code,1)
+        self.assertIn('起点超限',output.getvalue())
+    def test_active_value_error_requests_zero_before_message(self):
+        actions=[]
+        rig=SimpleNamespace(velocity_validity=SimpleNamespace(active=True),close=lambda:actions.append('close'),send_line=actions.append)
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'Rig',return_value=rig),patch('travel_limit.run',side_effect=ValueError('bad')),patch('builtins.print',side_effect=lambda *a:actions.append('print')):
+            with self.assertRaises(SystemExit):host.main()
+        self.assertEqual(actions[:2],['VEL 0','print'])

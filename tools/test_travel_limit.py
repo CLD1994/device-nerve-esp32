@@ -46,7 +46,7 @@ class EndpointTest(unittest.TestCase):
         g=Guard(Plan(C,600,20,50),-426970)
         g.observe(-416970,0)
         with self.assertRaises(RuntimeError): g.observe(-416971,0)
-        with self.assertRaises(ValueError): Guard(Plan(C,600,20,50),-426971)
+        with self.assertRaises(ValueError): Guard(Plan(C,600,20,50),-427471)
     def test_short_watchdog_rejected(self):
         with self.assertRaises(ValueError): Plan(dict(C,WDT_MS=20),600,20,50)
 
@@ -162,3 +162,40 @@ class StickyFailureTest(ExecutorTest):
             with self.subTest(bad=bad):
                 self.assertEqual(run(r,a,s),1)
                 self.assertTrue(r.velocity_validity.failed)
+
+class StartToleranceTest(unittest.TestCase):
+    def test_both_endpoints_allow_192um_inward(self):
+        for direction in (1,-1):
+            p=Plan(C,600*direction,20,50)
+            start=-direction*(p.physical_um+192)
+            g=Guard(p,start,.5)
+            self.assertFalse(g.observe(start,0))
+            self.assertFalse(g.observe(start+direction*100,1*direction))
+            g.observe(-direction*p.physical_um,1*direction)
+            with self.assertRaises(RuntimeError):g.observe(-direction*(p.physical_um+1),0)
+    def test_outside_cannot_move_more_outward_even_one_um(self):
+        p=Plan(C,600,20,50);g=Guard(p,-p.physical_um-192,.5)
+        g.observe(-p.physical_um-100,0)
+        with self.assertRaises(RuntimeError):g.observe(-p.physical_um-101,0)
+    def test_bad_start_direction_and_tolerance(self):
+        p=Plan(C,600,20,50)
+        for start,tolerance in [(-p.physical_um-501,.5),(p.physical_um+192,.5),(-p.physical_um-1,0),(-p.physical_um,1.1),(-p.physical_um,float('nan'))]:
+            with self.assertRaises(ValueError):Guard(p,start,tolerance)
+
+class InitialToleranceChainTest(ExecutorTest):
+    def test_initial_stillness_observes_entry_then_exit_no_nonzero(self):
+        from travel_limit import run
+        r,a,s=self.fixture(); original=r.poll_available
+        def poll():
+            observer=r.state_observer
+            r.state_observer=None
+            original()
+            r.state_observer=observer
+            if r.t<.42:x=-427162  # 192um超出左物理端
+            elif r.t<.44:x=-426970
+            else:x=-426971
+            r.last_state=[str(x),'0','0','0']
+            if observer:observer()
+        r.poll_available=poll
+        with self.assertRaises(RuntimeError):run(r,a,s)
+        self.assertFalse(any(line.startswith('VEL ') and line!='VEL 0' for _,line in r.writes))
