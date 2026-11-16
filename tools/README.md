@@ -62,3 +62,36 @@ ESP-IDF目标构建、波形和机械运动仍需在目标环境单独验证。
 诊断开关、observe-only主机责任及帧定义见 [STEP_LOSS诊断](../docs/step-loss-diagnostic.md)。
 本工具不读取旧实验SLT2/3，须与固件版本匹配。
 
+
+## 联调会话的 STEP_LOSS 事件策略
+
+`cartpole_host.py` 严格识别 `EVENT STEP_LOSS <event_id> <run_id> <device_us>`，
+不再将合法通知计为 UNKNOWN，也不把事件伪装成 MODE FAULT。事件 ID 和运行 ID
+必须为非零 uint32，设备时间必须为非负 int64；畸形、未知事件和越界字段仍按原
+UNKNOWN 规则处理，活动会话仍会中止。
+
+全局选项 `--step-loss-policy report|stop` 必须放在子命令之前：
+
+- `report` 是默认值：保存并显示合法事件，不清除最新 STATE、不改变测量有效性门禁，
+  不因该事件自动发送任何指令；调用方原来的控制流程继续执行。
+- `stop`：活动会话先保存事件并锁存中止，再通过异常交给命令入口；入口先尝试
+  `VEL 0`，之后输出包含事件身份的原因，退出码为 1。零速请求不保证已经物理停稳。
+  非活动会话仍只报告，不自动运动或使能。
+
+例如只读观察事件可执行：
+
+```powershell
+python tools/cartpole_host.py --port COM11 --baud 460800 --step-loss-policy report state --secs 10
+```
+
+使用 `Rig` 的程序可通过同名构造参数 `step_loss_policy` 指定策略。`last_step_loss_event`
+记录最近合法通知的 `event_id`、`run_id`、`device_us` 与 `host_received_at`；
+`event_count` 是收到的合法事件行数，重复通知也计数，不代表独立故障数。
+这些字段不证明事件属于当前运行，工具没有自动核验 RUN 身份，也不会把旧或重复通知
+当作新运行。需要关联时调用方应自行核对运行身份。
+
+`report` 不取消 VEL_VALID、未知数据、状态新鲜度或原有模式处理，也不会修改固件的
+STEP_LOSS 停车/observe-only 配置。报告通过与 MODE/OK 相同的同步输出接口显示，
+输出慢时可能阻塞；该联调工具不是硬实时控制器。`stop` 活动路径不先输出，避免在
+零速请求前新增 stdout 阻塞。其他直接使用 Rig 的调用方须处理异常并请求停止，不能
+假设 Rig 自行发出了零速。串口库仅在默认真实串口工厂使用时导入，内存替身测试不依赖设备。

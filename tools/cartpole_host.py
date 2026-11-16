@@ -22,24 +22,32 @@ cartpole_host — cartpole 固件串口联调工具（PC 直连 ESP32-S3 UART0�
 
 import argparse
 import math
+import re
 import sys
 import time
 
-import serial
 from velocity_validity import VelocityValidity
 
 
 class Rig:
     def __init__(self, port, baud=460800, timeout=0.2, *,
-                 serial_factory=None, clock=None, output=None):
+                 serial_factory=None, clock=None, output=None, step_loss_policy="report"):
         """创建会话。可注入兼容 pyserial 的工厂、单调秒时钟和消息输出函数。
 
         会话负责关闭工厂返回的串口。工厂接收 port、baud、timeout 和
         write_timeout；时钟必须单调递增，读取等待时间也应计入时钟。
         """
+        if step_loss_policy not in ("report", "stop"):
+            raise ValueError("step_loss_policy 必须为 report 或 stop")
+        self.step_loss_policy = step_loss_policy
+        self.last_step_loss_event = None
+        self.event_count = 0
         self._clock = clock if clock is not None else time.monotonic
         self._output = output if output is not None else print
-        factory = serial_factory if serial_factory is not None else serial.Serial
+        if serial_factory is None:
+            import serial
+            serial_factory = serial.Serial
+        factory = serial_factory
         self.ser = factory(port, baud, timeout=timeout, write_timeout=.02)
         self.velocity_validity = VelocityValidity(self._clock)
         self.state_received_at = None
@@ -111,6 +119,27 @@ class Rig:
             self._output("[UNKNOWN] %r" % line)
 
     def _dispatch(self, line):
+        if line.split()[:1] == ["EVENT"]:
+            # 先限字段长度再转整数，拒绝符号、下划线和超长十进制串。
+            match = re.fullmatch(r"EVENT STEP_LOSS ([0-9]{1,10}) ([0-9]{1,10}) ([0-9]{1,19})", line)
+            if match is None:
+                self._unknown(line)
+                return
+            event_id, run_id, device_us = map(int, match.groups())
+            if not (0 < event_id <= 0xffffffff and 0 < run_id <= 0xffffffff
+                    and device_us <= 0x7fffffffffffffff):
+                self._unknown(line)
+                return
+            self.last_step_loss_event = dict(event_id=event_id, run_id=run_id,
+                                            device_us=device_us, host_received_at=self._clock())
+            self.event_count += 1  # 合法接收行数，重复也计；未验证与当前运行匹配。
+            message = f"[EVENT STEP_LOSS {event_id} {run_id} {device_us}] 运行身份未核验"
+            if self.step_loss_policy == "stop" and self.velocity_validity.active:
+                self.velocity_validity.failed = True
+                # 调用方先请求零速，再显示带事件身份的异常。
+                raise RuntimeError(message + "；按 stop 策略中止")
+            self._output(message)
+            return
         if line.split()[:1] == ["VEL_VALID"]:
             if not self.velocity_validity.update(line.split()):
                 self.last_state = None
@@ -355,6 +384,8 @@ def main():
     ap = argparse.ArgumentParser(description="cartpole 固件串口联调工具")
     ap.add_argument("--port", required=True, help="串口（如 COM7）")
     ap.add_argument("--baud", type=int, default=460800)
+    ap.add_argument("--step-loss-policy", choices=("report", "stop"), default="report",
+                    help="合法 STEP_LOSS 事件：report 仅报告（默认）；stop 中止活动会话并请求零速")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("query")
@@ -381,7 +412,7 @@ def main():
         if args.expected_hz is not None and (
                 not math.isfinite(args.expected_hz) or args.expected_hz <= 0):
             ap.error("--expected-hz 必须是正的有限频率")
-    rig = Rig(args.port, args.baud)
+    rig = Rig(args.port, args.baud, step_loss_policy=args.step_loss_policy)
     try:
         table = {
             "confirm-left": cmd_confirm_left, "calib-status": cmd_calib_status,
