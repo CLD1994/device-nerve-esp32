@@ -71,6 +71,23 @@ esp_err_t tmc2209_init(const tmc2209_config_t *cfg);
  */
 bool tmc2209_read_reg(uint8_t reg, uint32_t *val);
 
+typedef enum {
+    TMC2209_READ_OK = 0,
+    TMC2209_READ_BUSY = 1,
+    TMC2209_READ_ERROR = 2,
+} tmc2209_read_result_t;
+
+/**
+ * @brief 诊断专用：仅尝试读取 DRV_STATUS（0x6f），不等待 UART 互斥锁。
+ *
+ * 锁忙时不发起 UART 事务、不输出日志，返回 BUSY。获得锁后的事务仍有
+ * TX/回声/响应超时，不能从实时监督或 ISR 调用。读取可能与设置寄存器
+ * 的任务竞争；本接口不读清除型寄存器、不写寄存器、不改变驱动使能。
+ * 仅 OK 更新 *value；未初始化、空指针、事务/回声/响应校验失败返回 ERROR。
+ */
+tmc2209_read_result_t tmc2209_try_read_drv_status(uint32_t *value);
+
+
 /**
  * @brief Write a 32-bit register via UART.
  *

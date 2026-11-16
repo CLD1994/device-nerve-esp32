@@ -2,6 +2,7 @@
  * UART or formatting in sample/trigger paths. Two banks swap in O(1) on trigger.
  * Protocol formatting happens only through explicit stopped-state queries. */
 #include "cartfsm_diagnostics.h"
+#include "cartfsm_tmc_trace.h"
 #include "cartaxis.h"
 #include "cartproto.h"
 #include "esp_timer.h"
@@ -51,6 +52,9 @@ void cartfsm_diag_begin_run(uint32_t run)
     banks[live].last_us=0;
 #endif
     portEXIT_CRITICAL(&lock);
+#ifdef CONFIG_CARTFSM_TMC_TRACE
+    cartfsm_tmc_trace_begin_run(run,esp_timer_get_time());
+#endif
 #else
     (void)run;
 #endif
@@ -82,6 +86,7 @@ uint32_t cartfsm_diag_trigger(uint32_t run,int64_t now,long target,
 #endif
     }
     portEXIT_CRITICAL(&lock);
+    if(event)cartfsm_tmc_trace_event(run,event,now);
     return event;
 #else
     (void)run; (void)now; (void)target; (void)candidate;
@@ -211,3 +216,4 @@ void cartfsm_diag_trace_query(void)
     cartproto_send_raw(line,n);
 #endif
 }
+

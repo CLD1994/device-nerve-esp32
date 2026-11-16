@@ -74,6 +74,7 @@ typedef enum {
     CART_CMD_DISABLE,        /* DISABLE */
     CART_CMD_STEPTRACE_QUERY,
     CART_CMD_RUN_QUERY,
+    CART_CMD_TMCTRACE_QUERY, /* TMCTRACE?：停稳导出运行期驱动状态 */
     CART_CMD_CONFIG_GET,     /* CONFIG? <NAME>：单项只读 */
 } cart_cmd_t;
 
@@ -107,3 +108,4 @@ void cartproto_register_exec(cartproto_exec_cb_t cb);
 #ifdef __cplusplus
 }
 #endif
+

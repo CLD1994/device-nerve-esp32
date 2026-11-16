@@ -6,15 +6,19 @@
 #include "tmc2209_hw.h"
 #include "driver/uart.h"
 int power_test_lock_depth;
+bool tmc_test_mutex_busy;
+TickType_t tmc_test_mutex_wait;
+unsigned tmc_test_mutex_calls;
+static unsigned uart_calls;
 static unsigned reads;
 static int written=4, echo_len=4, response_len=8;
 static bool bad_echo, wait_fail;
 static uint8_t request[4], response[8]={5,255,0x6c,0x12,0x34,0x56,0x78,0};
-esp_err_t uart_flush_input(int p) { (void)p;reads=0;return ESP_OK; }
-int uart_write_bytes(int p,const void*b,size_t n) { (void)p;assert(n==4);memcpy(request,b,n);return written; }
-esp_err_t uart_wait_tx_done(int p,TickType_t t) { (void)p;(void)t;return wait_fail?ESP_FAIL:ESP_OK; }
+esp_err_t uart_flush_input(int p) { (void)p;++uart_calls;reads=0;return ESP_OK; }
+int uart_write_bytes(int p,const void*b,size_t n) { (void)p;++uart_calls;assert(n==4);memcpy(request,b,n);return written; }
+esp_err_t uart_wait_tx_done(int p,TickType_t t) { (void)p;(void)t;++uart_calls;return wait_fail?ESP_FAIL:ESP_OK; }
 int uart_read_bytes(int p,void*b,uint32_t n,TickType_t t) {
- (void)p;(void)t;assert(power_test_lock_depth==1);
+ (void)p;(void)t;++uart_calls;assert(power_test_lock_depth==1);
  if(reads++==0) { assert(n==4);memcpy(b,request,4);if(bad_echo)((uint8_t*)b)[0]^=1;return echo_len; }
  assert(n==8);memcpy(b,response,8);return response_len;
 }
@@ -24,6 +28,8 @@ esp_err_t uart_set_pin(int a,int b,int c,int d,int e) { (void)a;(void)b;(void)c;
 static void reject(void) { uint32_t value=0xdeadbeef;assert(!tmc2209_read_reg(0x6c,&value));assert(value==0xdeadbeef && power_test_lock_depth==0); }
 int main(void) {
  uint32_t value=0;
+ assert(tmc2209_try_read_drv_status(&value)==TMC2209_READ_ERROR);
+ assert(value==0 && tmc_test_mutex_calls==0 && uart_calls==0);
  assert(!tmc2209_read_reg(0x6c,&value));
  tmc2209_hw_config_t cfg={.baud=115200};assert(tmc2209_hw_init(&cfg)==ESP_OK);
  assert(!tmc2209_read_reg(0x6c,NULL));
@@ -38,5 +44,27 @@ int main(void) {
  for(unsigned i=0;i<3;i++) { response[i]^=1;response[7]=tmc2209_crc8(response,7);reject();response[i]^=1; }
  response[7]=tmc2209_crc8(response,7)^1;reject();
  response[7]=tmc2209_crc8(response,7);assert(tmc2209_read_reg(0x6c,&value));
- puts("TMC UART read contract: OK");
+ /* Narrow diagnostic API: only DRV_STATUS; zero mutex wait; no writes. */
+ unsigned before=uart_calls, locks=tmc_test_mutex_calls;
+ assert(tmc2209_try_read_drv_status(NULL)==TMC2209_READ_ERROR);
+ assert(tmc_test_mutex_calls==locks && uart_calls==before);
+ tmc_test_mutex_busy=true;value=0xdeadbeef;
+ assert(tmc2209_try_read_drv_status(&value)==TMC2209_READ_BUSY);
+ assert(value==0xdeadbeef && uart_calls==before && tmc_test_mutex_wait==0);
+ assert(power_test_lock_depth==0);
+ tmc_test_mutex_busy=false;
+ response[2]=0x6f;response[7]=tmc2209_crc8(response,7);
+ assert(tmc2209_try_read_drv_status(&value)==TMC2209_READ_OK);
+ assert(value==0x12345678 && tmc_test_mutex_wait==0 && power_test_lock_depth==0);
+ assert(request[0]==5 && request[1]==0 && request[2]==0x6f);
+ value=0xdeadbeef;wait_fail=true;
+ assert(tmc2209_try_read_drv_status(&value)==TMC2209_READ_ERROR);
+ assert(value==0xdeadbeef && power_test_lock_depth==0);wait_fail=false;
+ bad_echo=true;
+ assert(tmc2209_try_read_drv_status(&value)==TMC2209_READ_ERROR);
+ assert(value==0xdeadbeef && power_test_lock_depth==0);bad_echo=false;
+ response[7]^=1;
+ assert(tmc2209_try_read_drv_status(&value)==TMC2209_READ_ERROR);
+ assert(value==0xdeadbeef && power_test_lock_depth==0);
+ puts("TMC UART read and nonblocking DRV_STATUS contracts: OK");
 }

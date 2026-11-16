@@ -20,6 +20,7 @@
 #include "esp_timer.h"
 #include "tmc2209.h"
 #include "cartfsm_diagnostics.h"
+#include "cartfsm_tmc_trace.h"
 #include "cartfsm_following_error.h"
 
 #include "freertos/FreeRTOS.h"
@@ -626,6 +627,20 @@ static void exec_step_diagnostic(bool trace)
     if (trace) cartfsm_diag_trace_query(); else cartfsm_diag_snapshot_query();
 }
 
+static void exec_tmc_trace_query(void)
+{
+#ifdef CONFIG_CARTFSM_TMC_TRACE
+    xSemaphoreTake(s_output_lock, portMAX_DELAY);
+    bool stopped=s_mode==CM_DISABLED || (s_mode==CM_FAULT && !s_fault_settling);
+    xSemaphoreGive(s_output_lock);
+    if(!stopped){cartproto_send_err("TMCTRACE_BUSY");return;}
+    /* comm_task串行命令；导出不持运动锁且不触发UART寄存器读取。 */
+    cartfsm_tmc_trace_query();
+#else
+    cartproto_send_err("TMCTRACE_DISABLED");
+#endif
+}
+
 static void exec_run_query(void)
 {
 #ifdef CARTFSM_EVENTS_ENABLED
@@ -642,6 +657,7 @@ static void exec_cmd(const cart_req_t *req)
 {
     switch (req->cmd) {
     case CART_CMD_TMC_QUERY: exec_tmc_query(); break;
+    case CART_CMD_TMCTRACE_QUERY: exec_tmc_trace_query(); break;
     case CART_CMD_QUERY:       exec_query(); break;
     case CART_CMD_STEPLOSS_QUERY: exec_step_diagnostic(false); break;
     case CART_CMD_STEPTRACE_QUERY: exec_step_diagnostic(true); break;
@@ -894,8 +910,10 @@ esp_err_t cartfsm_start(void)
         return ESP_ERR_NO_MEM;
     }
 
+    cartfsm_tmc_trace_start(); /* 失败仅使诊断不可用，不改变运动模式。 */
     s_started = true;
     ESP_LOGI(TAG, "模式机已启动：1 kHz，优先级 %d，CPU%d，上电 DISABLED",
              FSM_TASK_PRIO, FSM_TASK_CORE);
     return ESP_OK;
 }
+
