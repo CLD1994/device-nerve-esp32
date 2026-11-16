@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """采集 TMCT1/TMCT2 运行期驱动状态缓存；仅发送 TMCTRACE?，不使能、复位或运动。"""
 import argparse
-from cart_stream import parse_cart_state
+from state_frame import parse_state_frame
 import json
 import math
 import re
 import time
 from pathlib import Path
 
-BACKGROUND = re.compile(r'(?:STATE -?\d+ -?\d+ -?\d+ -?\d+|VEL_VALID [01] [01]|MODE [A-Z_]+ [A-Z_]+|EVENT STEP_LOSS \d+ \d+ \d+)')
+BACKGROUND = re.compile(r'(?:MODE [A-Z_]+ [A-Z_]+|EVENT STEP_LOSS [0-9]+ [0-9]+ [0-9]+)')
 # TMC2209 DRV_STATUS；与 components/tmc2209/tmc2209.c 位定义一致。
 FLAGS = dict(otpw=0, ot=1, s2ga=2, s2gb=3, s2vsa=4, s2vsb=5,
              ola=6, olb=7, stealth=30, stst=31)
@@ -43,7 +43,7 @@ class Capture:
         self.done = False
 
     def feed(self, line):
-        if parse_cart_state(line) is not None:
+        if parse_state_frame(line) is not None:
             return None
         if BACKGROUND.fullmatch(line):
             return None

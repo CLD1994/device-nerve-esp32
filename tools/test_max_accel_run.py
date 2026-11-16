@@ -128,7 +128,7 @@ class MotionSafetyTest(unittest.TestCase):
         self.rig.samples = deque([(self.now, 0, 0, 0, 0)])
         self.rig.fault_events = []
         self.rig.velocity_validity = VelocityValidity(lambda: self.now)
-        self.rig.velocity_validity.update(["VEL_VALID", "1", "1"])
+        self.refresh_measurement()
         self.rig.last_mode = ("READY", "NONE")
         self.rig.last_reply = None
         self.rig.last_state_tuple.side_effect = lambda: (
@@ -144,13 +144,19 @@ class MotionSafetyTest(unittest.TestCase):
         self.emit = True
         self.pumps = 0
 
+    def refresh_measurement(self):
+        self.sequence=getattr(self,'sequence',0)+1
+        lane=dict(seq=self.sequence,age_us=0)
+        self.rig.velocity_validity.update(dict(boot=1,tick=int(self.now*1000000),flags=3,
+            cart=dict(lane,x_um=0,vx_mm_s=0),pole=dict(lane,theta_urad=0,vth_mrad_s=0)))
+
     def pump(self, duration):
         self.pumps += 1
         if self.pumps > 200:
             self.fail("会话未在有界时间内终止")
         self.now += duration
         if self.emit:
-            self.rig.velocity_validity.update(["VEL_VALID", "1", "1"])
+            self.refresh_measurement()
             commanded = int(self.sent[-1].split()[1]) if self.sent and self.sent[-1].startswith("VEL ") else 0
             vx = commanded if self.velocity is None else self.velocity
             self.rig.samples.append((self.now, 0, 0, vx, 0))
@@ -321,7 +327,7 @@ class FurtherMotionSafetyTest(MotionSafetyTest):
         self.rig._t0 = 10
         def burst(duration):
             self.now += duration
-            self.rig.velocity_validity.update(["VEL_VALID", "1", "1"])
+            self.refresh_measurement()
             for n in range(3):
                 self.rig.samples.append((self.now + n / 10000, n, 0, int(self.sent[-1].split()[1]), 0))
         self.rig.pump.side_effect = burst

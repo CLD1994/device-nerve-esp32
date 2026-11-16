@@ -1,3 +1,4 @@
+from test_state_frame import INVALID as NEW_STATE
 import unittest
 from step_loss_capture import Capture, FIELDS, WINDOW_FIELDS, collect
 from unittest.mock import patch
@@ -9,8 +10,8 @@ class CaptureTests(unittest.TestCase):
         return capture.feed(f"SL1 {event} END 1")
     def test_complete_and_background(self):
         c=Capture()
-        self.assertIsNone(c.feed("STATE 1 -2 3 4"))
-        self.assertIsNone(c.feed("VEL_VALID 0 1"))
+        self.assertIsNone(c.feed(NEW_STATE))
+        self.assertIsNone(c.feed(NEW_STATE))
         result=self.complete(c)
         self.assertEqual(result['event_id'],1)
         self.assertEqual(result['E_COMPARED_UM'],-10)
@@ -46,7 +47,7 @@ class SerialFake:
 
 class CollectTests(unittest.TestCase):
     def test_only_readonly_command_and_fragmented_reply(self):
-        wire="STATE 0 0 0 0\n"+"".join(
+        wire=NEW_STATE+"\n"+"".join(
             f"SL1 4 {name} {1 if name=='VERSION' else 0}\n" for name in sorted(FIELDS)
         )+"SL1 4 END 1\n"
         data=wire.encode("ascii")

@@ -11,3 +11,9 @@ _Static_assert(configTICK_RATE_HZ >= 1000 && configTICK_RATE_HZ % 1000 == 0,
 _Static_assert(1000 % TELEMETRY_RATE_HZ == 0,
                "telemetry period must be an integer number of milliseconds");
 #define TELEMETRY_PERIOD_TICKS ((TickType_t)(configTICK_RATE_HZ / TELEMETRY_RATE_HZ))
+
+/* 超过本周期时从现在重新等待一周期，不追赶重播过期槽。tick减法允许回绕。 */
+static inline TickType_t telemetry_schedule_base(TickType_t previous,TickType_t now)
+{
+    return (TickType_t)(now-previous)>=TELEMETRY_PERIOD_TICKS ? now : previous;
+}

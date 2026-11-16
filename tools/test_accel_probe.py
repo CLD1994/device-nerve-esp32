@@ -68,7 +68,7 @@ class Tests(unittest.TestCase):
                     self.sent.append(self.t);self.t+=.02
                 return super().write(data)
             def read(self,n):
-                return super().read(n).replace(b' 400 0\n',b' 100 0\n')
+                return super().read(n).replace(b' 00000190 00000000\n',b' 00000064 00000000\n')
         f=Slow()
         with self.assertRaisesRegex(Abort,'窗口'):self.run_probe(f)
         self.assertLessEqual(f.sent[-1]-f.sent[0],.23)
@@ -84,7 +84,7 @@ class Tests(unittest.TestCase):
     def test_latched_batch_severe(self):
         class Batch(Rig):
             def read(self,n):
-                if self.v:self.rx+=b'STATE 201000 0 400 0\nSTATE 0 0 400 0\n'
+                if self.v:self.rx+=self.frame(201000,0,400,0)+self.frame(0,0,400,0)
                 return super().read(n)
         f=Batch()
         with self.assertRaises(Abort):self.run_probe(f)
@@ -121,7 +121,7 @@ class Tests(unittest.TestCase):
     def test_position_jump_cannot_be_hidden(self):
         class Jump(Rig):
             def read(self,n):
-                if self.v:self.rx+=b'STATE 5000 0 400 0\nSTATE 0 0 400 0\n'
+                if self.v:self.rx+=self.frame(5000,0,400,0)+self.frame(0,0,400,0)
                 return super().read(n)
         f=Jump()
         with self.assertRaises(Abort):self.run_probe(f)
@@ -131,7 +131,7 @@ class Tests(unittest.TestCase):
         from unittest.mock import patch
         class Danger(Rig):
             def read(self,n):
-                if self.v:self.rx+=b'STATE 201000 0 400 0\n'
+                if self.v:self.rx+=self.frame(201000,0,400,0)
                 return super().read(n)
         f=Danger();unsafe=[]
         def console(*a,**kw):

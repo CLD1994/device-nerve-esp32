@@ -155,16 +155,21 @@ class TestRig(Rig):
             self._log.write("%.3f %s\n" % (self.now(), line))
         super()._dispatch(line)
         parts = line.split()
-        if self.velocity_validity.failed or (parts[:1] == ["VEL_VALID"] and not self.velocity_validity.ready()):
+        if self.velocity_validity.failed:
             self.samples.clear()
-        if len(parts) == 5 and parts[0] == "STATE" and self.velocity_validity.ready():
-            try:
-                x, th, vx, vth = (int(p) for p in parts[1:])
-            except ValueError:
-                return
-            self.samples.append((self._clock(), x, th, vx, vth))
-        elif len(parts) == 3 and parts[0] == "MODE" and parts[1] == "FAULT":
+        if len(parts) == 3 and parts[0] == "MODE" and parts[1] == "FAULT":
             self.fault_events.append((self._clock(), parts[2]))
+
+    def accept_measurement_frame(self, frame):
+        super().accept_measurement_frame(frame)
+        cart, pole = frame['cart'], frame['pole']
+        self.samples.append((self._clock(), cart['x_um'], pole['theta_urad'],
+                             cart['vx_mm_s'], pole['vth_mrad_s']))
+
+    def clear_motion_state(self):
+        super().clear_motion_state()
+        if hasattr(self, 'samples'):
+            self.samples.clear()
 
     def pump(self, duration):
         try:

@@ -1,3 +1,4 @@
+from test_state_frame import INVALID as NEW_STATE
 import unittest
 from unittest.mock import patch
 import tmc_trace_capture as tool
@@ -68,7 +69,7 @@ class CaptureTests(unittest.TestCase):
         c.feed(END)
         with self.assertRaises(ValueError):c.feed(END)
     def test_background_and_errors(self):
-        for line in ['STATE 0 0 0 0','MODE DISABLED NONE','VEL_VALID 1 1','EVENT STEP_LOSS 3 2 1000000']:
+        for line in [NEW_STATE,'MODE DISABLED NONE','EVENT STEP_LOSS 3 2 1000000']:
             self.assertIsNone(tool.Capture().feed(line))
         for line in ['ERR TMCTRACE_BUSY','TMCT2 BEGIN 0','TMCT1 ROW bad','nonsense']:
             with self.assertRaises(ValueError):tool.Capture().feed(line)

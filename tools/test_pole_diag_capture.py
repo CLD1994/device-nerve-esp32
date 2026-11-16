@@ -1,3 +1,4 @@
+from test_state_frame import INVALID as NEW_STATE
 import unittest
 from pole_diag_capture import Capture
 
@@ -37,7 +38,7 @@ class CaptureTest(unittest.TestCase):
    fields=BEFORE.split();fields[index]=value;c=Capture();c.feed(lines()[0])
    with self.subTest(index=index),self.assertRaises(ValueError):c.feed('POLED1 BEFORE '+' '.join(fields))
  def test_background(self):
-  c=Capture();self.assertIsNone(c.feed('VEL_VALID 1 0'));self.assertIsNone(c.feed('STATE 1 2 3 4'))
+  c=Capture();self.assertIsNone(c.feed(NEW_STATE));self.assertIsNone(c.feed(NEW_STATE))
  def test_truncated_and_failure_byte(self):
   c=Capture()
   for s in lines()[:3]:c.feed(s)

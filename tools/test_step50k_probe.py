@@ -65,7 +65,7 @@ class ProbeTests(unittest.TestCase):
                 data=super().read(n)
                 if self.v and self.first is not None and self.t-self.first>=.05 and self.dipped is None:
                     self.dipped=self.t
-                    data=data.replace(b' 1250 0\n',b' 1200 0\n')
+                    data=data.replace(b' 000004e2 00000000\n',b' 000004b0 00000000\n')
                 return data
         f=Dip();a=options(hold_s=.1,window_s=.3)
         _,l=self.run_probe(f,a)
@@ -96,7 +96,7 @@ class ProbeTests(unittest.TestCase):
     def test_invalid_does_not_resume(self):
         class Bad(Bench):
             def read(self,n):
-                if self.v:self.rx+=b'VEL_VALID 0 1\nVEL_VALID 1 1\n'
+                if self.v:self.rx+=self.frame(flags=2)+self.frame()
                 return super().read(n)
         f=Bad()
         with self.assertRaises(Abort):self.run_probe(f)
@@ -113,7 +113,7 @@ class ProbeTests(unittest.TestCase):
     def test_overspeed_aborts(self):
         class Fast(Bench):
             def read(self,n):
-                if self.v:self.rx+=b'STATE -326662 0 1251 0\n'
+                if self.v:self.rx+=self.frame(-326662,0,1251,0)
                 return super().read(n)
         f=Fast()
         with self.assertRaises(Abort):self.run_probe(f)
@@ -138,7 +138,7 @@ class ProbeTests(unittest.TestCase):
     def test_forward_boundary_cannot_be_hidden_by_next_frame(self):
         class Jump(Bench):
             def read(self,n):
-                if self.v:self.rx+=b'STATE 200000 0 1250 0\nSTATE -300000 0 1250 0\n'
+                if self.v:self.rx+=self.frame(200000,0,1250,0)+self.frame(-300000,0,1250,0)
                 return super().read(n)
         f=Jump()
         with self.assertRaises(Abort):self.run_probe(f)
@@ -147,7 +147,7 @@ class ProbeTests(unittest.TestCase):
         class Slow(Bench):
             def read(self,n):
                 data=super().read(n)
-                return data.replace(b' 1250 0\n',b' 1000 0\n')
+                return data.replace(b' 000004e2 00000000\n',b' 000003e8 00000000\n')
         f=Slow()
         _,l=self.run_probe(f)
         end=next(e['value'] for e in l.events if e['direction']=='motion_end')
@@ -158,7 +158,7 @@ class ProbeTests(unittest.TestCase):
         for speed in (1225,1233):
             class Near(Bench):
                 def read(self,n):
-                    return super().read(n).replace(b' 1250 0\n',(' %d 0\n'%speed).encode())
+                    return super().read(n).replace(b' 000004e2 00000000\n',(' %08x 00000000\n'%speed).encode())
             f,l=self.run_probe(Near())
             end=next(e['value'] for e in l.events if e['direction']=='motion_end')
             self.assertEqual(end['reason'],'approx_target_hold_completed')
@@ -168,7 +168,7 @@ class ProbeTests(unittest.TestCase):
     def test_below_approximate_threshold_is_not_target_completion(self):
         class Near(Bench):
             def read(self,n):
-                return super().read(n).replace(b' 1250 0\n',b' 1224 0\n')
+                return super().read(n).replace(b' 000004e2 00000000\n',b' 000004c8 00000000\n')
         _,l=self.run_probe(Near())
         end=next(e['value'] for e in l.events if e['direction']=='motion_end')
         self.assertEqual(end['reason'],'window_elapsed')

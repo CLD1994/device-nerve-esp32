@@ -1,6 +1,8 @@
 """行程规划单元测试，不连接设备。"""
 import unittest
 from travel_limit import Plan, Guard
+from state_test_support import state_line
+from state_frame import parse_state_frame
 
 C = dict(CAL_STATE=2, CAL_SAVED=1, CAL_STORAGE=0, CAL_LENGTH_UM=853940,
          VEL_MAX=1250, ACC_MAX=9000, WDT_MS=100, X_MARGIN_UM=10000)
@@ -72,7 +74,7 @@ class ExecutorTest(unittest.TestCase):
             def poll_available(self):
                 self.state_received_at=self.t
                 self.replies.update(C); self.last_mode=('READY','NONE')
-                self.velocity_validity.update(['VEL_VALID','1','1'])
+                self.velocity_validity.update(parse_state_frame(state_line(tick=int(self.t*1e6)&0xffffffff,seq=round(self.t*1000)&0xffff).decode().strip()))
                 moving=any(s=='VEL 600' for _,s in self.writes)
                 zero=bool(self.writes and self.writes[-1][1]=='VEL 0')
                 if moving and not zero:
@@ -330,8 +332,8 @@ class StopHeartbeatRunTest(unittest.TestCase):
             vx=600 if moving else 0
             if zero:
                 stop_polls+=1;x=380000
-            heartbeat=b'' if zero and stop_polls<=3 else b'VEL_VALID 1 1\n'
-            r._consume(heartbeat+('STATE %d 0 %d 0\n'%(x,vx)).encode())
+            if not (zero and stop_polls<=3):
+                r._consume(state_line(x,0,vx,0,tick=int(clock.value*1e6)&0xffffffff,seq=int(clock.value*1000)&0xffff))
         r.poll_available=poll
         a=SimpleNamespace(v=600,reserve_mm=20,inflight_ms=10,max_seconds=1,plan=False)
         self.assertEqual(run(r,a,clock.advance),0)

@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import cartpole_host as host
-from host_test_support import session, receive
+from host_test_support import session, receive, receive_measurements, measurement_bytes
 
 
 class RigStateTest(unittest.TestCase):
@@ -28,8 +28,8 @@ class RigStateTest(unittest.TestCase):
 
     def test_valid_state_sets_latest_sample(self):
         rig = self.make_rig()
-        receive(rig, self.port, "STATE 80 -3141593 0 0")
-        self.assertEqual(rig.last_state, ["80", "-3141593", "0", "0"])
+        receive_measurements(rig,self.port,80,-3141592,0,0)
+        self.assertEqual(rig.last_state, ["80", "-3141592", "0", "0"])
         self.assertEqual(rig.state_count, 1)
 
     def test_state_without_frames_returns_failure(self):
@@ -141,7 +141,7 @@ class DisableCommandTest(unittest.TestCase):
 class StepLossEventTest(unittest.TestCase):
     def active(self, **kwargs):
         rig, port, clock, messages = session(host.Rig, **kwargs)
-        receive(rig, port, 'VEL_VALID 1 1', 'STATE 10 20 0 0')
+        receive_measurements(rig,port,10,20,0,0)
         rig.send_line('VEL 20')
         return rig, port, clock, messages
 
@@ -209,7 +209,7 @@ class StepLossEventTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):receive(rig,port,fault)
             with self.assertRaises(RuntimeError):rig.send_line('VEL 20')
         rig, port, _, _ = self.active()
-        receive(rig,port,'EVENT STEP_LOSS 1 1 0','MODE FAULT POWER')
+        with self.assertRaises(RuntimeError):receive(rig,port,'EVENT STEP_LOSS 1 1 0','MODE FAULT POWER')
         self.assertEqual(rig.last_mode,('FAULT','POWER'))
 
     def test_stop_records_then_latches_without_stdout_before_zero_request(self):
@@ -289,8 +289,9 @@ class TravelReceiveTest(unittest.TestCase):
         rig,port,_,_=session(host.Rig)
         seen=[]
         rig.state_observer=lambda:seen.append(int(rig.last_state[0]))
-        rig._consume(b'STATE 1 0 0')
-        rig._consume(b' 0\nSTATE 2 0 0 0\n')
+        first=measurement_bytes(rig,1);second=measurement_bytes(rig,2)
+        rig._consume(first[:30])
+        rig._consume(first[30:]+second)
         self.assertEqual(seen,[1,2])
     def test_poll_restores_timeout_after_error(self):
         rig,port,_,_=session(host.Rig)
@@ -374,7 +375,7 @@ class TimingHooksTest(unittest.TestCase):
     def test_short_write_records_attempt_not_success(self):
         rig,port,_,_=session(host.Rig)
         rig.timing=host.SessionTiming(rig._clock)
-        receive(rig,port,'VEL_VALID 1 1');receive(rig,port,'STATE 0 0 0 0')
+        receive_measurements(rig,port,0,0,0,0)
         with patch.object(port,'write',return_value=2):
             with self.assertRaises(RuntimeError):rig.send_line('VEL 600')
         self.assertEqual(rig.timing.report()['nonzero_write_attempts'],1)
@@ -398,7 +399,7 @@ class TimingHooksTest(unittest.TestCase):
         self.assertEqual(actions,['close'])
     def test_no_timing_does_not_parse_or_change_console_payload(self):
         rig,port,_,_=session(host.Rig)
-        receive(rig,port,'VEL_VALID 1 1');receive(rig,port,'STATE 0 0 0 0')
+        receive_measurements(rig,port,0,0,0,0)
         rig.send_line('VEL invalid')
         self.assertEqual(port.writes[-1],b'VEL invalid\n')
         self.assertIsNone(rig.timing)
@@ -408,22 +409,20 @@ class StopObservationTest(unittest.TestCase):
         rig,port,_,_=session(host.Rig)
         rig.velocity_validity.active=True;rig.velocity_validity.failed=True
         rig.begin_stop_observation()
-        rig._consume(b'VEL_VALID 1 1\nSTATE 10 0 0 0\n')
+        rig._consume(measurement_bytes(rig,10,0,0,0))
         self.assertEqual(rig.last_state,['10','0','0','0'])
         self.assertTrue(rig.velocity_validity.failed)
         with self.assertRaises(RuntimeError):rig.send_line('VEL 1')
         rig.send_line('VEL 0')
-    def test_bad_frame_requires_new_heartbeat_and_state(self):
+    def test_bad_frame_requires_new_atomic_state(self):
         rig,port,_,_=session(host.Rig)
         rig.velocity_validity.active=True;rig.velocity_validity.failed=True
         rig.begin_stop_observation()
-        rig._consume(b'VEL_VALID 1 1\nSTATE 10 0 0 0\n')
+        rig._consume(measurement_bytes(rig,10,0,0,0))
         for bad in (b'UNKNOWN\n',b'VEL_VALID 0 1\n',b'STATE invalid\n'):
             with self.assertRaises(RuntimeError):rig._consume(bad)
             self.assertIsNone(rig.last_state)
-            rig._consume(b'STATE 10 0 0 0\n')
-            self.assertIsNone(rig.last_state)
-            rig._consume(b'VEL_VALID 1 1\nSTATE 10 0 0 0\n')
+            rig._consume(measurement_bytes(rig,10,0,0,0))
             self.assertEqual(rig.last_state,['10','0','0','0'])
     def test_failed_gate_can_collect_full_stillness_window(self):
         from travel_limit import Stillness
@@ -432,24 +431,24 @@ class StopObservationTest(unittest.TestCase):
         rig.begin_stop_observation()
         stable=Stillness(rig);rig.state_observer=stable.observe
         for _ in range(6):
-            rig._consume(b'VEL_VALID 1 1\nSTATE 10 0 0 0\n')
+            rig._consume(measurement_bytes(rig,10,0,0,0))
             clock.advance(.05)
         self.assertTrue(stable.confirmed)
         self.assertTrue(rig.velocity_validity.failed)
         with self.assertRaises(RuntimeError):rig.send_line('ENABLE')
         with self.assertRaises(RuntimeError):rig.send_line('VEL 100')
-    def test_stop_entry_requires_new_heartbeat_not_previous_one(self):
+    def test_stop_entry_requires_new_sample_not_previous_one(self):
         rig,port,_,_=session(host.Rig)
-        receive(rig,port,'VEL_VALID 1 1');receive(rig,port,'STATE 10 0 0 0')
+        old=measurement_bytes(rig,10,0,0,0);rig._consume(old)
         rig.begin_stop_observation()
         self.assertIsNone(rig.last_state)
-        rig._consume(b'STATE 10 0 0 0\n')
+        rig._consume(old)
         self.assertIsNone(rig.last_state)
     def test_backlog_and_buffer_errors_invalidate_stop_qualification(self):
         for source in ('backlog','buffer'):
             rig,port,_,_=session(host.Rig)
             rig.begin_stop_observation()
-            rig._consume(b'VEL_VALID 1 1\nSTATE 10 0 0 0\n')
+            rig._consume(measurement_bytes(rig,10,0,0,0))
             with self.subTest(source=source),self.assertRaises(RuntimeError):
                 if source=='backlog':
                     port.timeout=.2;port.in_waiting=4097;rig.poll_available()
@@ -458,70 +457,76 @@ class StopObservationTest(unittest.TestCase):
             self.assertIsNone(rig.stop_observation.received_at)
 
 
-class StopAwaitHeartbeatTest(unittest.TestCase):
-    def test_initial_states_wait_without_fault_until_new_heartbeat(self):
+class StopAtomicStateTest(unittest.TestCase):
+    def test_duplicate_state_cannot_start_stop_window(self):
         from travel_limit import Stillness
         rig,port,clock,_=session(host.Rig)
+        old=measurement_bytes(rig,10,0,0,0);rig._consume(old)
         rig.velocity_validity.active=True
         rig.begin_stop_observation()
         stationary=Stillness(rig);rig.state_observer=stationary.observe
-        rig._consume(b'STATE 10 0 0 0\nSTATE 10 0 0 0\n')
+        rig._consume(old+old)
         self.assertIsNone(rig.last_state)
         self.assertFalse(rig.velocity_validity.failed)
         self.assertFalse(stationary.confirmed)
         for _ in range(6):
-            rig._consume(b'VEL_VALID 1 1\nSTATE 10 0 0 0\n');clock.advance(.05)
+            rig._consume(measurement_bytes(rig,10,0,0,0));clock.advance(.05)
         self.assertTrue(stationary.confirmed)
         # 原运动有效性在这个构造中未知，会按原规则锁存；观测不修改它。
-    def test_expired_established_observation_is_failure(self):
+    def test_expired_observation_cannot_extend_old_stillness(self):
+        from travel_limit import Stillness
         rig,port,clock,_=session(host.Rig)
-        rig.begin_stop_observation();rig._consume(b'VEL_VALID 1 1\n')
-        clock.advance(.301)
-        with self.assertRaises(RuntimeError):rig._consume(b'STATE 10 0 0 0\n')
+        rig.begin_stop_observation();stable=Stillness(rig);rig.state_observer=stable.observe
+        rig._consume(measurement_bytes(rig,10))
+        clock.advance(.101)
+        rig._consume(measurement_bytes(rig,10))
+        self.assertFalse(stable.confirmed)
+        self.assertAlmostEqual(stable.since,clock())
 
 class LatestTimingVelocityTest(unittest.TestCase):
     def test_fresh_valid_last_received_value_even_if_failed_latched(self):
         rig,port,_,_=session(host.Rig)
-        receive(rig,port,'VEL_VALID 1 1');receive(rig,port,'STATE 0 0 -800 0')
+        receive_measurements(rig,port,0,0,-800,0)
         rig.velocity_validity.failed=True
         self.assertEqual(host.latest_velocity_for_timing(rig),-800)
         self.assertTrue(rig.velocity_validity.failed)
     def test_missing_invalid_and_old_telemetry_are_unconfirmed(self):
         rig,port,clock,_=session(host.Rig)
         self.assertIsNone(host.latest_velocity_for_timing(rig))
-        receive(rig,port,'VEL_VALID 1 1');receive(rig,port,'STATE 0 0 0 0')
+        receive_measurements(rig,port,0,0,0,0)
         clock.advance(.101)
         self.assertIsNone(host.latest_velocity_for_timing(rig))
-        receive(rig,port,'VEL_VALID 0 1')
+        receive_measurements(rig,port,flags=2)
         self.assertIsNone(host.latest_velocity_for_timing(rig))
 
 class FailureEvidenceTest(unittest.TestCase):
     def active(self):
         r,p,c,m=session(host.Rig)
-        r._consume(b'VEL_VALID 1 1\nSTATE 0 0 0 0\n')
+        r._consume(measurement_bytes(r,0,0,0,0))
         r.velocity_validity.active=True
         return r,p,c,m
-    def test_bad_heartbeat_records_actual_raw_and_is_sticky(self):
+    def test_old_heartbeat_is_unknown_and_first_evidence_sticky(self):
         r,p,c,m=self.active()
         with self.assertRaises(RuntimeError):r._consume(b'VEL_VALID 1 x\r\n')
-        self.assertEqual(r.first_failure['reason'],'invalid_velocity_fields')
+        self.assertEqual(r.first_failure['reason'],'unknown_line')
         self.assertEqual(r.first_failure['raw'],b'VEL_VALID 1 x\r')
         first=r.first_failure
-        with self.assertRaises(RuntimeError):r._consume(b'VEL_VALID 1 1\n')
+        with self.assertRaises(RuntimeError):r._consume(measurement_bytes(r))
         self.assertIs(r.first_failure,first)
     def test_late_good_frame_not_blamed_as_bad_raw(self):
-        r,p,c,m=self.active();c.advance(.301)
-        with self.assertRaises(RuntimeError):r._consume(b'VEL_VALID 1 1\n')
-        self.assertEqual(r.first_failure['reason'],'velocity_heartbeat_expired')
+        r,p,c,m=self.active();c.advance(.101)
+        with self.assertRaises(RuntimeError):r._consume(measurement_bytes(r))
+        self.assertEqual(r.first_failure['reason'],'measurement_expired')
+        self.assertGreater(r.first_failure['measurements']['age_s'],.1)
         self.assertIsNone(r.first_failure['raw'])
     def test_existing_failed_not_attributed_to_current_state(self):
         r,p,c,m=self.active();r.velocity_validity.failed=True
-        with self.assertRaises(RuntimeError):r._consume(b'STATE 0 0 0 0\n')
+        with self.assertRaises(RuntimeError):r._consume(measurement_bytes(r,0,0,0,0))
         self.assertEqual(r.first_failure['reason'],'existing_failure_latch')
         self.assertIsNone(r.first_failure['raw'])
     def test_high_bytes_are_escaped_and_context_is_bounded(self):
         r,p,c,m=self.active()
-        for _ in range(10):r._consume(b'STATE 0 0 0 0\n')
+        for _ in range(10):r._consume(measurement_bytes(r,0,0,0,0))
         with self.assertRaises(RuntimeError):r._consume(b'\x1b[2J\xff'+b'x'*500+b'\n')
         evidence=r.first_failure
         self.assertEqual(len(evidence['raw']),256)
@@ -535,13 +540,13 @@ class FailureEvidenceTest(unittest.TestCase):
         self.assertEqual(r.first_failure['reason'],'short_write')
         self.assertIsNone(r.first_failure['raw'])
     def test_classified_flags_and_malformed_protocol(self):
-        for raw,reason in [(b'VEL_VALID 0 1','invalid_velocity_flags'),(b'STATE bad','malformed_state'),(b'MODE bad','malformed_mode'),(b'EVENT STEP_LOSS 0 1 2','malformed_event')]:
+        for raw,reason in [(b'VEL_VALID 0 1','unknown_line'),(b'STATE bad','malformed_state'),(b'MODE bad','malformed_mode'),(b'EVENT STEP_LOSS 0 1 2','malformed_event')]:
             r,p,c,m=self.active()
             with self.subTest(raw=raw),self.assertRaises(RuntimeError):r._consume(raw+b'\n')
             self.assertEqual(r.first_failure['reason'],reason)
             self.assertEqual(r.first_failure['raw'],raw)
     def test_no_fault_for_valid_data_and_no_raw_for_limits(self):
-        r,p,c,m=self.active();r._consume(b'STATE 10 0 2 0\n')
+        r,p,c,m=self.active();r._consume(measurement_bytes(r,10,0,2,0))
         self.assertIsNone(r.first_failure)
         p.timeout=.2;p.in_waiting=4097
         with self.assertRaises(RuntimeError):r.poll_available()

@@ -13,6 +13,7 @@
 #include "telemetry_timing.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_random.h"
 #include "esp_task_wdt.h"
 
 #include "cartpos.h"
@@ -28,14 +29,11 @@ static const char *TAG = "telemetry";
 
 static void telemetry_task(void *arg)
 {
-    (void)arg;
+    uint32_t boot=(uint32_t)(uintptr_t)arg;
 
     TickType_t last_wake = xTaskGetTickCount();
     char buf[128];
-    telemetry_validity_t gate = {0};
-#ifdef CONFIG_TELEMETRY_CART_DIAGNOSTICS
-    telemetry_cart_gate_t cart_gate = {0};
-#endif
+
 
     ESP_LOGI(TAG, "STATE 流任务已启动：%d Hz，优先级 %d，CPU%d",
              TELEMETRY_RATE_HZ, TELEMETRY_TASK_PRIO, TELEMETRY_TASK_CORE);
@@ -59,24 +57,20 @@ static void telemetry_task(void *arg)
         poleang_measurement_t pole = {0};
         bool cart_valid = cartpos_get_measurement(&cart);
         bool pole_valid = poleang_get_measurement(&pole);
-        int n = telemetry_format_measurement(buf, sizeof(buf), &gate, esp_timer_get_time(),
-            cart_valid, pole_valid, cart.x_um, pole.theta_urad, cart.vx_mm_s, pole.vth_mrad_s);
+        int n = telemetry_format_state(buf,sizeof(buf),boot,esp_timer_get_time(),
+            (telemetry_lane_t){cart_valid,cart.sampled_at_us,cart.sample_seq,cart.x_um,cart.vx_mm_s},
+            (telemetry_lane_t){pole_valid,pole.sampled_at_us,pole.sample_seq,pole.theta_urad,pole.vth_mrad_s});
         if (n > 0) {
             cartproto_send_raw(buf, n);
         } else if (n < 0) {
             ESP_LOGE(TAG, "组帧失败（n=%d）——帧被丢弃", n);
         }
 
-#ifdef CONFIG_TELEMETRY_CART_DIAGNOSTICS
-        /* 复用本次小车测量，摆杆失效不影响此帧；不额外采样。 */
-        int cart_n=telemetry_format_cart(buf,sizeof(buf),&cart_gate,esp_timer_get_time(),
-            cart_valid,cart.sampled_at_us,cart.sample_seq,cart.x_um,cart.vx_mm_s);
-        if(cart_n>0) cartproto_send_raw(buf,cart_n);
-        else if(cart_n<0) ESP_LOGE(TAG,"小车诊断组帧失败，帧被丢弃");
-#endif
         if (wdt_ok) {
             esp_task_wdt_reset();
         }
+        TickType_t now=xTaskGetTickCount();
+        last_wake=telemetry_schedule_base(last_wake,now);
         vTaskDelayUntil(&last_wake, TELEMETRY_PERIOD_TICKS);
     }
 }
@@ -84,7 +78,7 @@ static void telemetry_task(void *arg)
 esp_err_t telemetry_start(void)
 {
     BaseType_t ok = xTaskCreatePinnedToCore(telemetry_task, "telemetry",
-                                            TELEMETRY_TASK_STACK, NULL,
+                                            TELEMETRY_TASK_STACK, (void *)(uintptr_t)esp_random(),
                                             TELEMETRY_TASK_PRIO, NULL,
                                             TELEMETRY_TASK_CORE);
     if (ok != pdPASS) {

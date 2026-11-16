@@ -132,7 +132,7 @@ def run(rig, args, sleep=time.sleep):
     while rig._clock()<until: poll()
     p=Plan(dict(rig.replies),args.v,args.reserve_mm,args.inflight_ms,getattr(rig,"cart_period_s",0))
     if rig.last_reply and rig.last_reply[0]=='ERR': raise RuntimeError('查询被固件拒绝')
-    if not rig.state_is_fresh(): raise RuntimeError('没有新鲜位置状态；小车调试需开启 CONFIG_TELEMETRY_CART_DIAGNOSTICS')
+    if not rig.state_is_fresh(): raise RuntimeError('没有新鲜位置状态；请同步统一STATE的新固件及工具')
     x,vx=motion_cart(rig)
     def state_age():
         if hasattr(rig,"motion_age"):return rig.motion_age()

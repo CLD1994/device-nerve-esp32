@@ -1,6 +1,6 @@
 idf_component_register(
-    SRCS "telemetry.c" "telemetry_format.c" "telemetry_cart_format.c"
+    SRCS "telemetry.c" "telemetry_format.c"
     INCLUDE_DIRS "include"
     REQUIRES cartpos poleang cartproto freertos
-    PRIV_REQUIRES esp_timer cartfsm
+    PRIV_REQUIRES esp_timer esp_hw_support cartfsm
 )

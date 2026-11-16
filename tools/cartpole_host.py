@@ -29,7 +29,7 @@ import time
 
 from velocity_validity import VelocityValidity
 from session_timing import SessionTiming
-from cart_stream import parse_cart_state
+from state_frame import parse_state_frame
 
 
 class Rig:
@@ -94,19 +94,15 @@ class Rig:
 
     def note_velocity_gate(self):
         v=self.velocity_validity
-        if v.failed:
-            self.note_failure('existing_failure_latch')
-        elif v.received_at is None:
-            self.note_failure('velocity_heartbeat_missing')
-        elif not 0 <= self._clock()-v.received_at <= .3:
-            self.note_failure('velocity_heartbeat_expired', received_age_s=self._clock()-v.received_at, limit_s=.3)
-        elif v.flags != (1,1):
-            self.note_failure('velocity_flags_not_ready')
+        if v.failed:self.note_failure('existing_failure_latch')
+        elif v.age() is None:self.note_failure('measurement_missing')
+        elif not 0<=v.age()<=.1:self.note_failure('measurement_expired',age_s=v.age())
+        elif not v.ready():self.note_failure('measurement_invalid')
 
     def failure_summary(self):
         e=self.first_failure
         if e is None:return None
-        labels={'invalid_velocity_fields':'速度有效性心跳字段错误',
+        labels={'measurement_invalid':'STATE所需测量通道无效','measurement_missing':'尚未收到完整有效STATE','measurement_expired':'STATE观测年龄超限','measurement_identity_or_time_error':'STATE设备/采样身份或时钟异常', 'invalid_velocity_fields':'速度有效性心跳字段错误',
                 'invalid_velocity_flags':'速度窗口报告无效',
                 'velocity_heartbeat_expired':'速度有效性心跳超时或时间无效',
                 'velocity_heartbeat_missing':'尚未收到速度有效性心跳',
@@ -128,15 +124,16 @@ class Rig:
             lines.append('前文 %.6f s：%s'%(stamp,raw_text(raw,total)))
         return '\n'.join(lines)
 
+    def clear_motion_state(self):
+        self.last_state=self.state_received_at=None
+
     def begin_stop_observation(self):
-        """仅收集零速清理证据，不清除运动门禁失败锁存。"""
-        self.stop_observation = VelocityValidity(self._clock)
-        self.last_state = self.state_received_at = None
+        old=self.stop_observation or self.velocity_validity
+        self.stop_observation=old.stopped_copy()
+        self.clear_motion_state()
 
     def _invalidate_stop_observation(self):
-        if self.stop_observation is not None:
-            self.stop_observation = VelocityValidity(self._clock)
-            self.last_state = self.state_received_at = None
+        if self.stop_observation is not None:self.begin_stop_observation()
 
     def end_stop_observation(self):
         self.stop_observation = None
@@ -145,9 +142,20 @@ class Rig:
         self.ser.close()
 
     def state_is_fresh(self, max_age=0.1):
-        """最近接收的状态仍在接收时效内；不等同于设备采样时间。"""
-        return (self.last_state is not None and self.state_received_at is not None
-                and 0 <= self._clock() - self.state_received_at <= max_age)
+        gate=self.stop_observation or self.velocity_validity
+        age=gate.age()
+        return self.last_state is not None and age is not None and 0<=age<=max_age
+
+    def on_measurement_frame(self, frame):
+        pass
+
+    def accept_measurement_frame(self, frame):
+        cart,pole=frame['cart'],frame['pole']
+        self.last_state=[str(cart['x_um']),str(pole['theta_urad']),str(cart['vx_mm_s']),str(pole['vth_mrad_s'])]
+        self.state_received_at=(self.stop_observation or self.velocity_validity).received_at
+        self.state_count+=1
+        if self.timing is not None:self.timing.state(cart['vx_mm_s'])
+        if self.state_observer is not None:self.state_observer()
 
     def send_line(self, line):
         words=line.split()
@@ -245,8 +253,7 @@ class Rig:
             self.note_failure(reason,current_raw=True)
         if self.stop_observation is not None:
             self.velocity_validity.failed = True
-            self.stop_observation = VelocityValidity(self._clock)
-            self.last_state = self.state_received_at = None
+            self._invalidate_stop_observation()
             raise RuntimeError('停车观测收到未知或损坏数据')
         if self.velocity_validity.active:
             self.velocity_validity.failed = True
@@ -257,11 +264,6 @@ class Rig:
             self._output("[UNKNOWN] %r" % line)
 
     def _dispatch(self, line):
-        if line.split()[:1] == ['CART_STATE1']:
-            try: parse_cart_state(line)
-            except ValueError: self._unknown(line)
-            return  # 已知独立小车帧不能刷新默认双路门禁/STATE。
-
         if line.split()[:1] == ["EVENT"]:
             # 先限字段长度再转整数，拒绝符号、下划线和超长十进制串。
             match = re.fullmatch(r"EVENT STEP_LOSS ([0-9]{1,10}) ([0-9]{1,10}) ([0-9]{1,19})", line)
@@ -284,52 +286,34 @@ class Rig:
                 raise RuntimeError(message + "；按 stop 策略中止")
             self._output(message)
             return
-        if line.split()[:1] == ["VEL_VALID"]:
-            parts=line.split()
-            if self.velocity_validity.active and self.stop_observation is None:
-                self.note_velocity_gate()
-            if self.velocity_validity.active or self.stop_observation is not None:
-                if len(parts)!=3 or any(p not in ('0','1') for p in parts[1:]):
-                    self.note_failure('invalid_velocity_fields',current_raw=True)
-                elif parts[1:]!=['1','1']:
-                    self.note_failure('invalid_velocity_flags',current_raw=True)
-            if self.stop_observation is not None:
-                self.velocity_validity.update(line.split())
-                if not self.stop_observation.update(line.split()):
-                    raise RuntimeError('停车观测速度有效性失效')
-                return
-            if not self.velocity_validity.update(line.split()):
-                self.last_state = None
-                self.state_received_at = None
+        if line.split()[:1] == ['STATE']:
+            try:frame=parse_state_frame(line)
+            except ValueError:
+                self._unknown(line);return
+            self.on_measurement_frame(frame)
+            gate=self.stop_observation or self.velocity_validity
+            if self.stop_observation is None and self.velocity_validity.active:self.note_velocity_gate()
+            try:fresh=gate.update(frame)
+            except RuntimeError:
+                self.note_failure('measurement_identity_or_time_error',current_raw=True)
+                self.velocity_validity.failed=True
+                self.clear_motion_state()
+                raise
+            if frame['flags']&gate.required_mask != gate.required_mask:
+                self.note_failure('measurement_invalid',current_raw=True)
+                self.clear_motion_state()
+                if self.stop_observation is not None:raise RuntimeError('停车观测所需测量无效')
+            if fresh:self.accept_measurement_frame(frame)
+            elif gate.failed:self.clear_motion_state()
             return
-        if line.startswith("STATE "):
-            parts = line.split()
-            if len(parts) == 5:
-                try:
-                    [int(p) for p in parts[1:]]
-                    self.state_count += 1
-                    if self.stop_observation is not None and self.stop_observation.received_at is None:
-                        return  # 等待入口后的首个有效心跳；未知不等于新故障。
-                    if self.stop_observation is not None and not self.stop_observation.ready():
-                        self.note_failure('stop_observation_heartbeat_expired')
-                        raise RuntimeError('停车观测需要入口后的有效心跳且不得过期')
-                    if self.stop_observation is None and self.velocity_validity.active:
-                        self.note_velocity_gate()
-                    if self.stop_observation is not None or self.velocity_validity.received_at is None or self.velocity_validity.ready():
-                        self.last_state = parts[1:]
-                        self.state_received_at = self._clock()
-                        if self.timing is not None:self.timing.state(int(parts[3]))
-                        if self.state_observer is not None:
-                            self.state_observer()
-                    return
-                except ValueError:
-                    pass
-            self._unknown(line)
         elif line.startswith("MODE "):
             parts = line.split()
             if len(parts) == 3:
                 self.last_mode = (parts[1], parts[2])
                 self._output("[MODE] %s %s" % self.last_mode)
+                if self.velocity_validity.active and self.last_mode != ("READY","NONE"):
+                    self.note_failure("firmware_mode_changed",current_raw=True)
+                    self.velocity_validity.failed=True
             else:
                 self._unknown(line)
         elif line.startswith("OK "):
@@ -569,8 +553,8 @@ def latest_velocity_for_timing(rig):
     """纯读取观测资格；不调用会改变运动失败锁存的ready。"""
     validity=rig.velocity_validity
     if (rig.last_state is None or not rig.state_is_fresh()
-            or validity.flags != (1,1) or validity.received_at is None
-            or not 0 <= rig._clock()-validity.received_at <= .3):
+            or validity.flags != (1,1) or validity.age() is None
+            or not 0 <= validity.age() <= .1):
         return None
     return int(rig.last_state[2])
 

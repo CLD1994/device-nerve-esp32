@@ -27,15 +27,8 @@ while IFS= read -r path; do includes+=("-I$path"); done < <(find components -typ
   -Ihost_tests/power_stubs -Icomponents/cartfsm/host_stub -Ihost_tests/stub \
   "${includes[@]}" -fsyntax-only components/telemetry/telemetry.c
 
-# 独立小车流默认关闭/启用：固定限流，无边沿突发。
-for mode in off on; do
-  flags=()
-  if [[ $mode == on ]]; then flags+=(-DCONFIG_TELEMETRY_CART_DIAGNOSTICS=1); fi
-  "${CC:-cc}" -std=c11 -Wall -Wextra -Werror "${flags[@]}" \
-    -Ihost_tests/stub -Icomponents/telemetry/include \
-    host_tests/telemetry_cart_test.c components/telemetry/telemetry_cart_format.c -o "$tmp/cart-$mode"
-  "$tmp/cart-$mode"
-  "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -DconfigTICK_RATE_HZ=1000 "${flags[@]}" \
-    -Ihost_tests/power_stubs -Icomponents/cartfsm/host_stub -Ihost_tests/stub \
-    "${includes[@]}" -fsyntax-only components/telemetry/telemetry.c
+for test in telemetry_format_test telemetry_validity_test; do
+ "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Ihost_tests/stub -Icomponents/telemetry/include \
+  "host_tests/$test.c" components/telemetry/telemetry_format.c -o "$tmp/$test"
+ "$tmp/$test"
 done

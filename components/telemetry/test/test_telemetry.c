@@ -1,31 +1,13 @@
-/*
- * telemetry 单元测试（官方 test/ 子目录约定，仅测试工程编入）
- *
- * 覆盖组帧向量。counts→µm 换算断言已随 as5600_counts_to_um 删除
- * （换算归 cartpos 解释层，数值域比对移至上板验收）。行率
- * （500 Hz±1）、x_um 漂移、手推方向一致性需从端侧/USB 串口观察，
- * 归入最终上板清单。
- */
-
+/* 目标测试验证固定宽度组帧；物理串口吞吐需独立现场验证。 */
 #include "telemetry.h"
-
 #include <string.h>
-
 #include "unity.h"
-
-/* 组帧向量（与宿主测试同源） */
-TEST_CASE("组帧向量", "[telemetry]")
+TEST_CASE("固定宽度双路STATE", "[telemetry]")
 {
-    char buf[64];
-    int n = telemetry_format_state(buf, sizeof(buf), 123456, -3141592, -200, 4500);
-    TEST_ASSERT_TRUE_MESSAGE(n > 0 && strcmp(buf, "STATE 123456 -3141592 -200 4500") == 0,
-                             "基本格式");
-    TEST_ASSERT_NULL_MESSAGE(strchr(buf, '\n'), "不含换行");
-
-    telemetry_format_state(buf, sizeof(buf), 0, 0, 0, 0);
-    TEST_ASSERT_EQUAL_STRING_MESSAGE("STATE 0 0 0 0", buf, "零值");
-
-    char small[16];
-    TEST_ASSERT_TRUE_MESSAGE(telemetry_format_state(small, sizeof(small), 1, 1, 1, 1) < 0,
-                             "小缓冲负值");
+ char b[83];
+ telemetry_lane_t c={true,100,65536,-1,0},p={false,0,0,99,99};
+ TEST_ASSERT_EQUAL_INT(82,telemetry_format_state(b,sizeof(b),0,100,c,p));
+ TEST_ASSERT_EQUAL_STRING("STATE 00000000 00000064 1 0000 0000 0000 ffff ffffffff 00000000 00000000 00000000\n",b);
+ TEST_ASSERT_EQUAL_INT(82,strlen(b));
+ TEST_ASSERT_TRUE(telemetry_format_state(b,82,0,100,c,p)<0);
 }

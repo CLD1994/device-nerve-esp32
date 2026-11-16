@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """停机后只读收集摆杆测量失效首证据；不清除、使能或发送运动命令。"""
 import argparse
-from cart_stream import parse_cart_state
+from state_frame import parse_state_frame
 import json
 import re
 import time
@@ -9,7 +9,7 @@ from pathlib import Path
 
 FIELDS=('observed_us sampled_us age_us fill required span_us gap_us seq failure_seq '
         'continuity_seq has_sample last_attempt_ok ok velocity_valid reason_bits raw_counts status').split()
-BACKGROUND=re.compile(r'(?:STATE -?[0-9]+ -?[0-9]+ -?[0-9]+ -?[0-9]+|VEL_VALID [01] [01]|MODE [A-Z_]+ [A-Z_]+|EVENT STEP_LOSS [0-9]+ [0-9]+ [0-9]+)')
+BACKGROUND = re.compile(r'(?:MODE [A-Z_]+ [A-Z_]+|EVENT STEP_LOSS [0-9]+ [0-9]+ [0-9]+)')
 def number(token, low=0, high=2**64-1):
     if not re.fullmatch(r'-?[0-9]{1,20}',token):raise ValueError('非法数字字段')
     value=int(token)
@@ -32,9 +32,9 @@ class Capture:
         self.done=False
         self.raw=[]
     def feed(self,line):
-        if parse_cart_state(line) is not None:
-            return None
         if len(line)>2048:raise ValueError('诊断行过长')
+        if parse_state_frame(line) is not None:
+            return None
         if BACKGROUND.fullmatch(line):return None
         if line.startswith('ERR '):raise ValueError('固件拒绝诊断：'+line)
         p=line.split()

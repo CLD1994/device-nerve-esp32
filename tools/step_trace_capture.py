@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Read-only SLT4 software trace capture. Never sends motion/configuration commands."""
 import argparse
-from cart_stream import parse_cart_state
+from state_frame import parse_state_frame
 import json
 import re
 import time
 from pathlib import Path
 
 FIELDS = 'observed_us sample_us c_begin_us c_end_us e_um c_um sample_seq target_mm_s encoder_v_mm_s metadata sample_valid velocity_valid last_read_ok'.split()
-BACKGROUND = re.compile(r'(?:STATE -?\d+ -?\d+ -?\d+ -?\d+|VEL_VALID [01] [01]|MODE [A-Z_]+ [A-Z_]+|EVENT STEP_LOSS \d+ \d+ \d+)')
+BACKGROUND = re.compile(r'(?:MODE [A-Z_]+ [A-Z_]+|EVENT STEP_LOSS [0-9]+ [0-9]+ [0-9]+)')
 
 class Capture:
     def __init__(self):
@@ -17,7 +17,7 @@ class Capture:
         self.done = False
 
     def feed(self, line):
-        if parse_cart_state(line) is not None:
+        if parse_state_frame(line) is not None:
             return None
         if BACKGROUND.fullmatch(line):
             return None
