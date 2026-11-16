@@ -1,5 +1,6 @@
 """运动探针共用串口会话与预检；串口、单调时钟和等待函数由调用方注入。"""
 import time
+from state_frame import parse_state_frame
 from velocity_validity import VelocityValidity
 
 
@@ -59,22 +60,22 @@ class Link:
         while b'\n' in self.buffer:
             raw, self.buffer = self.buffer.split(b'\n', 1)
             try:
-                p = raw.decode('ascii').strip().split()
+                line = raw.decode('ascii').removesuffix('\r')
+                p = line.strip().split()
                 if not p:
                     continue
-                if p[0] == 'VEL_VALID':
-                    if not self.velocity_validity.update(p):
-                        self.state = self.received_at = None
-                        self.batch = []
+                frame = parse_state_frame(line)
+                if frame is not None:
+                    if not self.velocity_validity.update(frame):
+                        if not self.velocity_validity.ready():
+                            self.state = self.received_at = None
+                            self.batch = []
                         if self.velocity_validity.failed:
-                            self.guard_failure = '速度窗口失效；试验中止'
+                            self.guard_failure = '统一STATE失效；试验中止'
                             raise Abort(self.guard_failure)
-                    continue
-                if p[0] == 'STATE' and len(p) == 5:
-                    if not self.velocity_validity.ready():
-                        self.state = self.received_at = None
                         continue
-                    self.state = tuple(map(int, p[1:]))
+                    cart, pole = frame['cart'], frame['pole']
+                    self.state = (cart['x_um'], pole['theta_urad'], cart['vx_mm_s'], pole['vth_mrad_s'])
                     self.batch.append(self.state)
                     if self.guard:
                         try:
@@ -97,6 +98,11 @@ class Link:
                     raise Abort('异常协议行: ' + repr(raw))
             except (ValueError, UnicodeError) as e:
                 raise Abort('损坏协议行') from e
+            except RuntimeError as e:
+                if isinstance(e, Abort):
+                    raise
+                self.guard_failure = str(e)
+                raise Abort(self.guard_failure) from e
 
     def wait(self, condition, seconds=1.0):
         end = self.clock() + seconds

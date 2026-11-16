@@ -44,11 +44,11 @@ class Tests(unittest.TestCase):
         f,l=self.setup_link(); f.write=lambda data:0
         with self.assertRaises(Abort):l.send('QUERY')
     def test_guards_and_faults_stop(self):
-        for injection in ('STATE -4000 0 20 0\n','STATE 31000 0 20 0\n','MODE FAULT POWER\n'):
+        for injection in (-4000,31000,None):
             class Unsafe(Fake):
                 def read(self,n):
                     if self.v:
-                        self.rx += injection.encode()
+                        self.rx += self.frame(injection,0,20,0) if injection is not None else b'MODE FAULT POWER\n'
                         data=self.rx; self.rx=b''; return data
                     return super().read(n)
             f,l=self.setup_link(Unsafe())
@@ -91,7 +91,7 @@ class Tests(unittest.TestCase):
             class Drift(Fake):
                 def read(self,n):
                     self.x=self.t*speed*1000
-                    self.rx+=('VEL_VALID 1 1\nSTATE %d 0 %d 0\n'%(self.x,speed)).encode()
+                    self.rx+=self.frame(self.x,0,speed,0)
                     data=self.rx;self.rx=b'';return data
             f,l=self.setup_link(Drift());l.mode=('READY','NONE')
             with self.assertRaises(Abort):stopped(l)
@@ -102,7 +102,7 @@ class Tests(unittest.TestCase):
     def test_batch_motion_cannot_be_hidden(self):
         class Batch(Fake):
             def read(self,n):
-                return b'\nVEL_VALID 1 1\nSTATE 0 0 9 0\nSTATE 0 0 0 0\n'
+                return b'\n'+self.frame(0,0,9,0)+self.frame(0,0,0,0)
         f,l=self.setup_link(Batch());l.mode=('READY','NONE')
         with self.assertRaises(Abort):stopped(l)
     def test_stop_phase_violation_latches(self):
@@ -111,7 +111,7 @@ class Tests(unittest.TestCase):
             def write(self,data):
                 if data==b'VEL 20\n': self.moved=True
                 if data==b'VEL 0\n' and self.moved:
-                    self.rx+=b'STATE 32000 0 0 0\nSTATE 10000 0 0 0\n'
+                    self.rx+=self.frame(32000,0,0,0)+self.frame(10000,0,0,0)
                 return super().write(data)
         f,l=self.setup_link(AfterStop())
         with self.assertRaises(Abort):execute(l,args())

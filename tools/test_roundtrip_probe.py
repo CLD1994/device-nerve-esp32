@@ -46,7 +46,7 @@ class Tests(unittest.TestCase):
     def test_approach_invalid_cancels_reverse(self):
         class Invalid(Bench):
             def read(self,n):
-                if self.v==20:self.rx+=b'VEL_VALID 0 1\n'
+                if self.v==20:self.rx+=self.frame(flags=2)
                 return super().read(n)
         f=Invalid();l=Link(f,f.clock,f.sleep)
         with self.assertRaises(Abort):execute(l,args())

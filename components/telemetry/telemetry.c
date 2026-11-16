@@ -32,7 +32,7 @@ static void telemetry_task(void *arg)
 
     TickType_t last_wake = xTaskGetTickCount();
     char buf[128];
-    telemetry_validity_t gate = {0};
+
 
     ESP_LOGI(TAG, "STATE 流任务已启动：%d Hz，优先级 %d，CPU%d",
              TELEMETRY_RATE_HZ, TELEMETRY_TASK_PRIO, TELEMETRY_TASK_CORE);
@@ -56,8 +56,9 @@ static void telemetry_task(void *arg)
         poleang_measurement_t pole = {0};
         bool cart_valid = cartpos_get_measurement(&cart);
         bool pole_valid = poleang_get_measurement(&pole);
-        int n = telemetry_format_measurement(buf, sizeof(buf), &gate, esp_timer_get_time(),
-            cart_valid, pole_valid, cart.x_um, pole.theta_urad, cart.vx_mm_s, pole.vth_mrad_s);
+        int n = telemetry_format_state(buf,sizeof(buf),esp_timer_get_time(),
+            (telemetry_lane_t){cart_valid,cart.sampled_at_us,cart.x_um,cart.vx_mm_s},
+            (telemetry_lane_t){pole_valid,pole.sampled_at_us,pole.theta_urad,pole.vth_mrad_s});
         if (n > 0) {
             cartproto_send_raw(buf, n);
         } else if (n < 0) {
@@ -67,6 +68,8 @@ static void telemetry_task(void *arg)
         if (wdt_ok) {
             esp_task_wdt_reset();
         }
+        TickType_t now=xTaskGetTickCount();
+        last_wake=telemetry_schedule_base(last_wake,now);
         vTaskDelayUntil(&last_wake, TELEMETRY_PERIOD_TICKS);
     }
 }

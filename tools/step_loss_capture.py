@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """只读收集固件STEP_LOSS证据；不配置、使能或发送运动命令。"""
 import argparse
+from state_frame import parse_state_frame
 import json
 import re
 import time
@@ -13,7 +14,7 @@ SAMPLE_US AGE_US SAMPLE_SEQ FAILURE_SEQ CONTINUITY_SEQ GAP_US SAMPLE_VALID
 LAST_READ_OK""".split())
 WINDOW_FIELDS = frozenset("TRIGGER HARD_UM GROWTH_UM WINDOW_US GROWING_WINDOWS".split())
 SL = re.compile(r"SL1 ([0-9]+) ([A-Z_]+) (-?[0-9]+)")
-BACKGROUND = re.compile(r"(?:STATE -?[0-9]+ -?[0-9]+ -?[0-9]+ -?[0-9]+|VEL_VALID [01] [01]|MODE [A-Z_]+ [A-Z_]+|EVENT STEP_LOSS [0-9]+ [0-9]+ [0-9]+)")
+BACKGROUND = re.compile(r'(?:MODE [A-Z_]+ [A-Z_]+|EVENT STEP_LOSS [0-9]+ [0-9]+ [0-9]+)')
 
 class Capture:
     def __init__(self):
@@ -22,6 +23,8 @@ class Capture:
         self.done = False
 
     def feed(self, line):
+        if parse_state_frame(line) is not None:
+            return None
         if line.startswith("ERR "):
             raise ValueError(f"固件拒绝诊断：{line}")
         if BACKGROUND.fullmatch(line):
@@ -65,7 +68,7 @@ def collect(ser, timeout=3.0):
         while b"\n" in pending:
             line, _, tail = pending.partition(b"\n")
             pending = bytearray(tail)
-            result = capture.feed(line.decode("ascii").rstrip("\r"))
+            result = capture.feed(line.decode("ascii").removesuffix("\r"))
             if result is not None:
                 return result
     raise TimeoutError("未收到完整STEP_LOSS证据，不保存部分结果")

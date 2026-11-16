@@ -65,3 +65,14 @@ def session(rig_class, **kwargs):
 def receive(rig, transport, *lines):
     transport.feed(('\n'.join(lines) + '\n').encode('ascii'))
     rig.pump(.005)
+
+
+def measurement_bytes(rig, x=0, theta=0, vx=0, vth=0, *, flags=3):
+    """生成一个新的测量样本；不转换传入的旧协议文本。"""
+    from state_test_support import state_line
+    return state_line(x,theta,vx,vth,flags=flags)
+
+
+def receive_measurements(rig, transport, x=0, theta=0, vx=0, vth=0, *, flags=3):
+    transport.feed(measurement_bytes(rig,x,theta,vx,vth,flags=flags))
+    rig.pump(.005)

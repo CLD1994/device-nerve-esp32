@@ -96,7 +96,7 @@ class ProbeTests(unittest.TestCase):
     def test_invalid_does_not_resume(self):
         class Bad(Bench):
             def read(self,n):
-                if self.v:self.rx+=b'VEL_VALID 0 1\nVEL_VALID 1 1\n'
+                if self.v:self.rx+=self.frame(flags=2)+self.frame()
                 return super().read(n)
         f=Bad()
         with self.assertRaises(Abort):self.run_probe(f)
@@ -113,7 +113,7 @@ class ProbeTests(unittest.TestCase):
     def test_overspeed_aborts(self):
         class Fast(Bench):
             def read(self,n):
-                if self.v:self.rx+=b'STATE -326662 0 1251 0\n'
+                if self.v:self.rx+=self.frame(-326662,0,1251,0)
                 return super().read(n)
         f=Fast()
         with self.assertRaises(Abort):self.run_probe(f)
@@ -138,7 +138,7 @@ class ProbeTests(unittest.TestCase):
     def test_forward_boundary_cannot_be_hidden_by_next_frame(self):
         class Jump(Bench):
             def read(self,n):
-                if self.v:self.rx+=b'STATE 200000 0 1250 0\nSTATE -300000 0 1250 0\n'
+                if self.v:self.rx+=self.frame(200000,0,1250,0)+self.frame(-300000,0,1250,0)
                 return super().read(n)
         f=Jump()
         with self.assertRaises(Abort):self.run_probe(f)
