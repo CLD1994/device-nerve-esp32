@@ -53,7 +53,7 @@ static void fail_desc(void *ctx, char *buf, size_t len)
     const char *k;
     switch (kind) {
     case MT6835_HW_FAIL_SPI_ERR:  k = "SPI 事务错误"; break;
-    case MT6835_HW_FAIL_ALL_ZERO: k = "全零帧（MISO 悬空/器件未应答）"; break;
+    case MT6835_HW_FAIL_ALL_ZERO: k = "全零帧未确认（合法零角或线路全低）"; break;
     case MT6835_HW_FAIL_CRC:      k = "CRC 不符"; break;
     default:                      k = "?"; break;
     }
@@ -63,22 +63,26 @@ static void fail_desc(void *ctx, char *buf, size_t len)
              k, frame[0], frame[1], frame[2], frame[3], frame[4], frame[5]);
 }
 
-/* STATUS 位变化告警（bit0 过速 bit1 磁场弱 bit2 欠压；仅记录，不上报协议） */
-static void on_sample(void *ctx, uint8_t status)
+/* 只能由采样线程复制；消费者仅使用此副本。 */
+static void failure_snapshot(void *ctx, me_diag_failure_t *out)
 {
     me_mt6835_inst_t *me = ctx;
-    if (status != me->last_status && status != 0) {
-        ESP_LOGW(me->name, "STATUS 变化：0x%x（bit0 过速 bit1 磁弱 bit2 欠压）",
-                 status);
+    mt6835_hw_fail_t kind;
+    mt6835_hw_last_failure(me->hw, &kind, out->frame);
+    switch(kind) {
+    case MT6835_HW_FAIL_SPI_ERR: out->kind=1; break;
+    case MT6835_HW_FAIL_ALL_ZERO: out->kind=2; break;
+    case MT6835_HW_FAIL_CRC: out->kind=3; break;
+    default: out->kind=0; break;
     }
-    me->last_status = status;
 }
 
 static const magnetic_encoder_impl_t s_impl = {
     .read_frame    = read_frame,
     .counts_per_rev = counts_per_rev,
     .fail_desc     = fail_desc,
-    .on_sample     = on_sample,
+    .on_sample     = NULL,
+    .failure_snapshot = failure_snapshot,
 };
 
 /* ---- 器件自测面 ---- */

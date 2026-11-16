@@ -9,8 +9,8 @@
  *   raw21 = (rx[2]<<13) | (rx[3]<<5) | (rx[4]>>3)
  *   STATUS：bit0 过速、bit1 磁场弱、bit2 欠压（仅记录，不上报协议）。
  *   CRC8（poly 0x07、init 0x00）与器件回传寄存器 0x006 比较。
- *   帧校验：拔线时 MISO 悬空常读全零——CRC 与全零帧一并拒绝，
- *   失败帧原文留存（mt6835_hw_last_failure）供设备组件分诊。
+ *   帧校验：全零角度帧与 MISO 恒低不可区分——缺少独立确认时拒绝，
+ *   失败帧原文留存（mt6835_hw_last_failure）供设备组件分诊，不据此断言断线。
  *
  * 层内约束：参数全部由 mt6835_hw_init 的 config 注入；不 include
  * settings.h；不调用 bsp；不创建任务。
@@ -106,8 +106,10 @@ bool mt6835_hw_read_raw(mt6835_hw_handle_t h, uint32_t *raw_out, uint8_t *status
                  | ((uint32_t)rx[4] >> 3);
     uint8_t status = rx[4] & 0x07;
 
-    /* 帧校验：拔线时 MISO 悬空常读全零——CRC 与全零帧一并拒绝，
-     * 失败计入 fail_streak（10 ms 内 is_ok 变 false → FAULT/MT6835） */
+    /* 帧校验：全零角度帧与 MISO 恒低不可区分——缺少独立确认时拒绝，
+     * 失败计入 fail_streak（连续 10 次失败使 is_ok 变 false）。
+     * 合法 raw=0/status=0 的 CRC 也为 0；这是保守的歧义拒绝，
+     * 不是无效角码。不能仅凭历史成功、重复零帧或 CRC 正确放行。 */
     if (raw == 0 && status == 0 && rx[5] == 0) {
         h->last_fail = MT6835_HW_FAIL_ALL_ZERO;
         goto fail;

@@ -38,6 +38,9 @@ int main(void)
     };
     assert(magnetic_encoder_sampler_init(&inst, &impl, NULL, "sample", clock_now, &now) == ESP_OK);
     magnetic_encoder_handle_t enc = (magnetic_encoder_handle_t)&inst;
+#ifndef CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS
+    assert(!enc->diagnostic_arm && !enc->diagnostic_get);
+#endif
     magnetic_encoder_sample_t s;
 
     /* 原 is_ok 初始为 true，但没有样本时不能用作标定。 */

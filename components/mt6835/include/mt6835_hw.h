@@ -7,7 +7,7 @@
  *   TX: [0]=OP_ANGLE(0b1010)<<4, [1]=ANGLE1 地址 0x03, [2..5]=0
  *   RX: [2]=ANGLE[20:13] [3]=ANGLE[12:5]
  *       [4]=ANGLE[4:0]<<3 | STATUS[2:0]  [5]=器件 CRC8
- * 帧校验：全零帧（MISO 悬空）与 CRC 不符均判失败，并留存帧原文
+ * 帧校验：全零帧因缺少独立链路确认而拒绝，CRC 不符也判失败；留存帧原文
  * 供设备组件分诊日志。
  *
  * 层内约束：参数全部由 mt6835_hw_init 的 config 注入；不 include
@@ -30,7 +30,7 @@ extern "C" {
 /* 失败分类（分诊字符串由设备组件维护） */
 typedef enum {
     MT6835_HW_FAIL_SPI_ERR = 0,  /* SPI 事务错误 */
-    MT6835_HW_FAIL_ALL_ZERO,     /* 全零帧（MISO 悬空/器件未应答） */
+    MT6835_HW_FAIL_ALL_ZERO,     /* 全零歧义：合法零角与线路恒低尚不能区分 */
     MT6835_HW_FAIL_CRC,          /* CRC 不符 */
 } mt6835_hw_fail_t;
 

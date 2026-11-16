@@ -300,3 +300,25 @@ GSTAT 的 R+WC、上次读取以来措辞及 uv_cp 非锁存限制见运行期�
 ### 统一加减速度配置
 
 `ACC_MAX` 同时控制正常速度斜坡、`VEL 0`、命令看门狗与受控故障停车。`WDT_MS` 仅控制无有效命令等待时间，故障断电或驱动失效不保证能执行受控减速。配置查询只报告 `ACC_MAX`，不再接受或报告独立的 `WDT_DEC`，旧命令不作兼容。两项原本都是运行时RAM配置，本次不涉及NVS迁移或擦除；FAULT状态仍不允许写配置。
+
+### 摆杆测量失效首证据 `POLEDIAG?`
+
+仅编入 `CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS` 时可用；查询只允许 DISABLED 或 FAULT 且已结束故障减速。查询不使能、不清除记录、不重新读取 SPI。每次成功 ENABLE 按运行身份重新布防；失败的 ENABLE 不清证据。启动运行身份为0。
+
+```
+POLED1 BEGIN <run_id> <captured> <transitions> <dropped>
+POLED1 BEFORE <observed_us> <sampled_us> <age_us> <fill> <required> <span_us> <gap_us> <seq> <failure_seq> <continuity_seq> <has_sample> <last_attempt_ok> <ok> <velocity_valid> <reason_bits> <raw_counts> <status>
+POLED1 AFTER  <同 BEFORE 字段顺序>
+POLED1 FAIL <kind> <failure_seq> <failure_us> <b0> <b1> <b2> <b3> <b4> <b5>
+POLED1 END <run_id>
+```
+
+`captured=0` 时只有 BEGIN/END，不伪造快照。`captured=1` 表示本运行先出现有效样本，随后保存了首次观测到的无效条件；此后恢复或失效不覆盖首证据。BEFORE 是本运行失效前最近有效观测，不保证紧邻硬件采样。AFTER 是失效观测，SPI失败清窗时 `fill` 可为0。`transitions` 是本运行观测的有效到无效次数；`dropped` 是启动以来日志队列丢弃累计，均饱和而不回绕。
+
+时间均是设备启动后的单调微秒；`age_us` 为观测时点减最近成功采样时点，无样本为-1，时钟回退也可能为负。`fill/required` 是窗口已有/所需点数（17或33），`span_us` 为实际速度窗跨度，`gap_us` 为连续性预算；三个序列区分成功采样、读取失败和连续性中断。布尔字段只允许0/1；`raw_counts/status` 是缓存成功样本，不是失败帧解码结果。
+
+原因位图可同时成立：1无样本、2最近读取失败、4健康位无效、8窗口未满、16窗口跨度超限、32样本过期、64时钟回退、128速度计算无效且未细分。该位图解释软件判据，不直接证明硬件根因。
+
+FAIL 的协议分类为0无失败、1 SPI事务错误、2全零帧未确认、3 CRC不符；后六项为0..255的原始字节。FAIL保存冻结时最近一次读取失败，必须比较失败序列/时间与AFTER，不能将历史失败直接归因于当前过期或窗口错误。全零帧无法区分合法零角与线路全低，当前仍保守拒绝，不声称已经解决合法零角可用性。
+
+错误使用 `ERR POLEDIAG_DISABLED`、`POLEDIAG_NONE`、`POLEDIAG_BUSY`、`POLEDIAG_FORMAT`，分别表示未编入、无绑定编码器、当前不可导出和格式错误。操作与验证边界见[摆杆失效诊断](pole-diagnostic.md)。
