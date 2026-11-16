@@ -6,7 +6,8 @@ menu "cartproto - cartpole 线协议通讯栈"
         range 9600 2000000
         help
             与端侧（Hi3516CV610 / PC 联调）板对板链路的波特率，
-            8N1。protocol.md 定为 460800；联调若不过降 230400。
+            8N1。默认 1000000；必须与主机 --baud 一致。已有 sdkconfig
+            可覆盖默认值，协议与链路验证见 docs/protocol.md。
 
     config CARTPROTO_LINE_TIMEOUT_MS
         int "不完整行超时（ms）"

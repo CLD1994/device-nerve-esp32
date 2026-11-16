@@ -4,7 +4,7 @@
  * 换算即读即算 settings 派生 steps_per_mm（细分×每转整步数÷每转行程）；
  * X_INV 经指令与读数统一取反（cartfsm 的调用面签名与旧 motor.h 一致）；
  * 细分档由本组件单一写者持有（决策表见规格「cartaxis」节）。
- * 语义：docs/superpowers/specs/2026-10-14-device-category-abstraction.md。
+ * 语义：docs/reference/architecture.md。
  */
 #pragma once
 

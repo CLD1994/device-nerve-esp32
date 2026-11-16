@@ -9,7 +9,7 @@
  * 实例结构的首成员，init 返回其地址；契约函数经操作表分发到所属
  * 实现——本台位 AS5600 与 MT6835 两实例同时编入并存，同一组契约
  * 函数按句柄各归其主。
- * 语义：docs/superpowers/specs/2026-10-14-device-category-abstraction.md。
+ * 语义：docs/reference/architecture.md。
  */
 #pragma once
 

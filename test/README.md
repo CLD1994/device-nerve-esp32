@@ -23,7 +23,7 @@ idf.py -C test -B "$PWD/build/acceptance-tests" -DCURRENT_MEASUREMENT=OFF build
 
 此入口适用于 PCB 已安装到电机、尚未接入滑台的阶段。它复用 `cartproto` 的 UART0
 行收发载体，使用 `CURRENT` 前缀的诊断指令。测量入口仅初始化板载编码器，
-不启动正式模式机、200 Hz `STATE` 任务和 Unity 菜单。
+不启动正式模式机、500 Hz `STATE` 任务和 Unity 菜单。
 
 在仓库根目录构建，配置与产物保留在专用目录：
 

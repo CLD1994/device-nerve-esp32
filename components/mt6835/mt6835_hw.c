@@ -1,7 +1,7 @@
 /*
  * mt6835_hw — SPI 角度帧层（驱动核心层）
  *
- * SPI 角度读取事务（帧格式与时序见 docs/reviews/T4-brief.md）：
+ * SPI 角度读取事务（帧格式与时序见 docs/reference/mt6835.md）：
  *   MODE3、MSB 先行；48 bit（6 字节）单次事务，CS 拉低期间完成：
  *     TX: [0]=OP_ANGLE(0b1010)<<4, [1]=ANGLE1 地址 0x003, [2..5]=0
  *     RX: [2]=ANGLE[20:13]  [3]=ANGLE[12:5]

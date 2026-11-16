@@ -1,9 +1,9 @@
 # 速度与加速度实测方案
 
 本方案用于准备和记录倒立摆装置的执行能力测试。主机工具为
-[`tools/max_accel_run.py`](../tools/max_accel_run.py)，硬件以
-[hardware.md](hardware.md) 为准，命令以 [protocol.md](protocol.md) 为准。
-`cartpole` 仓库的 `deploy/v2/sim2real-spec.md` 在取得可信实测结果后再调整。
+[`tools/max_accel_run.py`](../../tools/max_accel_run.py)，硬件以
+[hardware.md](../hardware.md) 为准，命令以 [protocol.md](../protocol.md) 为准。
+仿真参数与执行契约由 [cartpole 仓库](https://github.com/CLD1994/cartpole)维护；取得可信实测结果后再调整，不把配置值当作实测值。
 
 ## 参数与测量边界
 
@@ -22,7 +22,7 @@
 1. 确认正式固件启动、控制 UART0 连接与 `DISABLED` 状态。原生 USB 是烧录/日志通道，
    不能仅凭 `/dev/ttyACM0` 存在便认定已连接控制通道。
 2. 在禁用状态手推确认位置连续、方向正确；进行两点标定，并用尺量核对返回的 L。
-   轨道更换或固件重启后不能沿用旧行程。标定命令见下文，不自动使能。
+   轨道或机械比例改变后应重新两点标定。仅重启且保存记录有效时，按[标定指南](../calibration.md)确认同一左参考点即可，不需要重新测量行程。标定命令见下文，不自动使能。
 3. 保存 `CONFIG?` 参数及启动日志中的实际微步、换算比例与电气状态。
 4. 确认独立断电/急停手段、运动空间与人员防护。固件软限位到达边界后才减速，
    不等于零制动距离；必须按当前行程、速度、制动和通信延迟留余量。

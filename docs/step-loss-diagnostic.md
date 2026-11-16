@@ -1,6 +1,6 @@
 # STEP_LOSS：可选事件、诊断与上位机处置
 
-## 三个独立配置
+## 三项可组合配置
 
 | Kconfig | 默认 | 功能 |
 |---|---|---|
@@ -46,7 +46,7 @@ VERSION=2 保留原字段，增加 TRIGGER、HARD_UM、GROWTH_UM、WINDOW_US、G
 
 ## SLT4 事件前后软件轨迹
 
-`STEPTRACE?` 使用与快照相同的停稳门限；后段尚未收完时也返回 `ERR STEPTRACE_BUSY`。
+`STEPTRACE?` 使用与快照相同的停稳门限；后段尚未收完时也返回 `ERR STEPTRACE_BUSY`。未编入诊断返回 `ERR STEPTRACE_DISABLED`，无记录返回 `ERR STEPTRACE_NONE`；导出中运行或事件改变可返回 `ERR STEPTRACE_CHANGED`，格式错误可返回 `ERR STEPTRACE_FORMAT`，不得把不完整响应当成成功。
 
 - 最多128条触发前/附近记录、32条触发后记录；每条最小间隔5ms，不是精确采样频率。
 - 两个固定160条缓冲在触发时 O(1) 交换，不复制整条轨迹。只读现有缓存及软件计数，
@@ -61,17 +61,17 @@ SLT4 ROW <event> <index> <observed_us> <sample_us> <c_begin_us> <c_end_us> <e_um
 SLT4 END <event> <count>
 ```
 
-complete=1，行顺序为最旧到最新；最后post_count条为触发后的记录。
+complete=1 表示后段收集已结束，不保证凑满32条（新 ENABLE 可提前结束）。行顺序为最旧到最新；最后post_count条为触发后的记录。
 最早一条到触发点不一定覆盖完整640ms，例如刚使能就触发。样本时刻和传输时刻不能混用。
 取证不会证明编码器、传动比或电机运动正确，也不应以软件轨迹替代独立物理测量。
 
 ## 主机只读取证
 
-设备停稳后运行（不自动使能、复位、配置或发送运动）：
+在仓库根目录、设备停稳后运行（不自动使能、复位、配置或发送运动）。示例460800须替换为实际构建波特率，当前 Kconfig 默认1000000：
 
 ```powershell
-& $python .\tools\step_loss_capture.py --port COM11 --baud 460800 --out .\step-loss-new.json
-& $python .\tools\step_trace_capture.py --port COM11 --baud 460800 --out .\step-trace-new.json
+python .\tools\step_loss_capture.py --port COM11 --baud 460800 --out .\step-loss-new.json
+python .\tools\step_trace_capture.py --port COM11 --baud 460800 --out .\step-trace-new.json
 ```
 
 每次使用新文件名，不覆盖已有证据。未完整收到END不得当作成功报告。
@@ -81,3 +81,5 @@ complete=1，行顺序为最旧到最新；最后post_count条为触发后的记
 宿主替身覆盖诊断关闭、事件单独、诊断、observe-only单独及组合；覆盖首次触发、
 重新ENABLE、128+32界限、查询门限、窗口软/硬边界与 WDT 新喂狗竞态。
 这些不是 ESP32-S3 实时开销、UART 负载或真机验收；目标构建和现场验证单独记录。
+
+实现依据：[诊断模块](../components/cartfsm/cartfsm_diagnostics.c)、[配置定义](../components/cartfsm/Kconfig)、[遥测出口](../components/telemetry/telemetry.c)。

@@ -1,165 +1,40 @@
-# cartpole 固件 · ESP32-S3 倒立摆小车控制器
+# device-nerve-esp32 · 倒立摆运动端固件
 
-cartpole 实验台的运动端固件：ESP32-S3 + TMC2209 步进驱动 +
-双 MT6835 编码器（板载测小车位置、外接测摆角）。上端（Hi3516CV610 或
-PC 联调机）通过串口以 **protocol.md 线协议** 驱动：500 Hz 状态流、
-`VEL` 速度模式跟踪、手动两点标定（`MARK LEFT`/`MARK RIGHT`/`ENABLE`）、
-三态模式机与参数注册表。
+当前应用是 ESP32-S3 倒立摆小车控制器：上位机发送目标速度，固件负责步进斜坡、
+编码器采样、标定参考、模式与故障处置，并报告位置、摆角和速度。
+硬件为 TMC2209 步进驱动、两路 MT6835 磁编码器和 CH224Q 供电管理。
+这是当前已实现的串口单动作应用，不是已经完成的通用 Wi-Fi/蓝牙控制平台。
 
-> **硬件已改版（2026-10-17，见 [docs/hardware.md](docs/hardware.md)）**：
-> 小车编码器 AS5600→板载 MT6835、摆角改外接 MT6835、协议通道 UART1→UART0、
-> 烧录切原生 USB；当前 UART1 日志配置见硬件文档 §5。固件适配已完成（双 SPI 编码器骨架多实例、通道迁移、
-> vbus/LED/按键/CH224Q 调档）；上板回归按 hardware.md 检查清单执行（待办）。
+## 从哪里开始
 
-**线协议唯一权威：本仓库之外的项目主仓库
-`deploy/v2/protocol.md`**（命令词法、模式转换表、参数注册表、
-符号约定、时序）。
+| 要做的事 | 文档入口 |
+| --- | --- |
+| 了解接线、供电和日志通道 | [硬件](docs/hardware.md) |
+| 构建、烧录并首次连接 | [开发与启动](docs/getting-started.md) |
+| 两点标定、保存或重启后恢复左参考 | [标定](docs/calibration.md) |
+| 编写上位机或核对响应 | [协议](docs/protocol.md) |
+| 排查测量无效、丢步与状态时序 | [文档导航](docs/README.md) |
+| 使用查询、诊断或实验脚本 | [主机工具](tools/README.md) |
+| 运行软件测试或目标测试镜像 | [宿主测试](host_tests/README.md) / [目标测试](test/README.md) |
 
-## 硬件
+本仓库的 [protocol.md](docs/protocol.md) 是固件现行线协议入口；
+[cartpole](https://github.com/CLD1994/cartpole) 是训练与策略部署的消费者仓库。
+历史实测、旧板记录和已经执行的计划不作为当前版本验收证明，集中见[归档](docs/archive/README.md)。
 
-| 模块 | 器件 | 引脚 | 职责 |
-|---|---|---|---|
-| 主控 | ESP32-S3-WROOM-1-N16R8 | — | 16MB Flash + 8MB PSRAM，240 MHz |
-| 步进驱动 | TMC2209 | EN=21（低有效）、STEP=5、DIR=6、UART TX=17/RX=18 | 42 步进电机驱动，单线 UART 配置 |
-| 小车编码器 | MT6835（板载，21 bit） | SPI SCK=12、MOSI=11、MISO=13、CS=10 | 多圈 → x_um 遥测与丢步判定（2026-10-17 改版接替 AS5600） |
-| 摆角编码器 | MT6835（外接，21 bit） | SPI SCK=47、MOSI=48、MISO=38、CS=14 | ±π µrad 摆角与角速度遥测 |
-| 主机通道 | UART0 | TX=43 / RX=44，当前真机 @1000000 8N1 | protocol.md 线协议（飞线直连；CH343P 已移除） |
-| 供电 | CH224Q PD | [供电配置、I2C 与分压接线](docs/hardware.md#1-usb-c-拓扑与-pd-供电) | USB-PD 协商供电与 VBUS 回读 |
-| 按键/LED | 3 键 + 1 LED | but=7/2/1、LED=15 | 按键驱动层读取；LED 1Hz 心跳（行为语义待定义） |
-| 烧录 | 原生 USB | D−=19 / D+=20 | USB-Serial/JTAG |
-| 日志 | UART1（可配置） | TX=41 / RX=42 | 接线和配置见 [硬件文档 §5](docs/hardware.md#5-上位机通道飞线)；仓库默认仍为 USB 日志 |
+## 当前行为边界
 
-机械：2GT 20T 同步带，40 mm/圈；细分 8（settings 微步参数，NVS
-namespace `cart`）→ 1600 steps/圈 = 40 steps/mm = 25 µm/step。
+- 上电保持禁用。供电验证和位置参考满足后，仍需显式 `ENABLE`。主机发起运动前另行确认测量有效性，ENABLE 成功不代表速度窗已有效。
+- 固件接收单动作 `VEL`；速度、正常加减速与看门狗减速分别受运行参数约束，见[运动默认值](docs/motion-defaults.md)。
+- `STATE` 目标为 500 Hz；编码器默认目标采样率 2 kHz。它们不是上位机模型控制频率或实时性保证。
+- `STEP_LOSS` 默认仍进入故障处置。连续增长判据、事件推送、轨迹诊断和 observe-only 是不同构建选项，见[丢步判据](docs/following-error-window.md)和[诊断](docs/step-loss-diagnostic.md)。
+- observe-only 只改变 `STEP_LOSS` 的处置，不能理解为关闭全部保护，也不能让旧上位机自动具备事件处理能力。
 
-## 工程结构
+## 代码入口
 
-```
-components/
-  bsp/          引脚与外设初始化（GPIO/I2C/双 SPI/vbus ADC/LED/按键）
-  cartparams/   参数注册表（九项运行参数，纯数据层，无硬件依赖）
-  cartproto/    线协议载体：行组装、命令解析（纯函数）、MODE/OK/ERR 应答
-  cartfsm/      三态模式机：纯核心（转换表/标定合法性/软限位窗口/丢步）
-                + 1 kHz 监督任务（标定状态/编码器失联/
-                丢步/软限位/FAULT 次序）
-  magnetic_encoder/ 磁编码器类别：契约（句柄式、原生单位 counts）
-                + 参数化多圈纯逻辑 + 采样骨架（默认 2 kHz 任务/失败计数/
-                16 ms 速度窗，实例全状态进实例结构）+ AS5600/MT6835
-                薄读层实现（rev2 组装用双 MT6835 实例，契约经操作表分发）
-  motor/        步进电机类别：契约（句柄式、steps 域）+ TMC2209+
-                GPTimer 实现（Kconfig choice）
-  cartpos/      小车位置解释组件：encoder counts → x_um（每转行程比例、
-                原点偏移归本层）
-  poleang/      摆角解释组件：encoder 角量 → 已标定 θ（POLE_ZERO/
-                POLE_INV 归本层，µrad 算术与 mt6835_urad 逐位一致）
-  cartaxis/     直线轴解释组件：mm↔steps 换算（纯函数，宿主可测）、
-                steps_per_mm 即读即算、细分单一写者、X_INV 指令与
-                读数统一取反
-  step_engine/  GPTimer ISR 速度模式：vel_ramp 每步递推（纯函数）+
-                带符号目标 + 命令看门狗 + 换向经零速（器件驱动，经 motor 组合）
-  ch224q/       CH224Q PD 诱骗 I2C 调档（驱动核心：设档 0x0A/握手
-                状态 0x09 位解析/档电流 0x50；CFG1 电阻档为上电默认）
-  as5600/       AS5600 I2C 读层（驱动核心，实例句柄式；rev2 不接线，
-                组件保留备旧板/复用）
-  mt6835/       MT6835 SPI 帧层 + ±π 环绕换算纯函数（驱动核心，经
-                magnetic_encoder 组合；帧格式抄录见
-                docs/reviews/T4-brief.md）
-  telemetry/    500 Hz STATE 组帧（纯函数 + 常开任务）
-  settings/     NVS 机械参数（微步/每转整步数/每转行程/电流，索引 0–4）
-  tmc2209/      驱动配置（电流/细分/EN，初值经 config 注入）（器件
-                驱动，经 motor 组合）
-  <每个组件>/test/  组件单元测试（Unity，仅测试工程编入）
-main/app_main.c 启动接线（创建全部实例、分发句柄、运行/保持电流中转）
-test/           独立测试工程（TEST_COMPONENTS + Unity 菜单）
-host_tests/     宿主可跑的纯逻辑测试（gcc，无 ESP 依赖）
-tools/          cartpole_host.py 联调工具
-docs/reviews/   抄录与上板验收记录
-```
+- [main/app_main.c](main/app_main.c)：实例创建与组装。
+- `components/`：设备驱动、类别接口、业务坐标解释、模式机和协议。
+- [组件架构](docs/reference/architecture.md)：职责和数据流，接口声明以对应头文件为准。
+- `tools/`：PC 联调及只读诊断；`experiments/`：装置专用实验，不属于正常运行流程。
+- `test/`：独立 ESP-IDF 测试工程；`host_tests/`：可在宿主运行的测试与替身。
 
-任务/CPU 布局：CPU0 = cartproto 通讯（prio 5）+ STEP ISR；
-CPU1 = me_cart/me_pole 采样（prio 3）、cartfsm 监督（prio 4）、
-telemetry 组帧（prio 2）。全部订阅任务看门狗。
-
-## 构建
-
-需要 ESP-IDF v6.1（`C:\esp\v6.1\esp-idf`，PowerShell）：
-
-```powershell
-. C:\esp\v6.1\esp-idf\export.ps1
-idf.py -B build build                    # 正式固件（不含任何测试代码）
-idf.py -B build flash                    # 完整烧录
-```
-
-日志切到 UART1 后，烧录口与日志口须分别使用；配置和监听命令见
-[硬件文档 §5](docs/hardware.md#5-上位机通道飞线)。
-
-### 测试固件（独立测试工程，官方 unit_test 模式）
-
-各组件测试在 `components/<c>/test/`（Unity），由 `test/` 独立工程经
-`TEST_COMPONENTS` 编入，正式固件构建完全不包含：
-
-```powershell
-idf.py -C test build flash monitor       # 测试工程
-idf.py -C test -T cartfsm build          # 只编某组件的测试
-```
-
-上电初始化后进入 Unity 菜单：Enter 列出用例，按名称/序号/`[标签]`/`*`
-选择执行。标签约定：
-
-| 标签 | 内容 | 注意 |
-|---|---|---|
-| `[组件名]` | 常规自测（向量 + 硬件读取） | B 组手勿碰轴 |
-| `[flowtest]` | cartfsm 注入式流程自测 | 会开 EN |
-| `[manual]` | 人工引导段（手转轴/摆杆） | 按提示操作 |
-| `[bringup]` | TMC2209 寄存器核对；`[spin]` 实转 | `[spin]` 确认可自由转动 |
-
-（历史 selftest/flowtest 构建风味与 `SELF-TEST DONE` 汇总行已被
-此机制取代；`step_engine`/`cartfsm` 的 `*_TEST_HOOKS` 插桩开关由
-测试工程 sdkconfig 默认开启，正式固件关闭。）
-
-宿主纯逻辑测试（无需硬件）：
-
-```
-wsl gcc -std=c11 -Wall -Wextra -Werror \
-  -Ihost_tests/stub -Icomponents/<c>/include ... host_tests/<t>.c ...
-```
-
-摆角单元回归使用类别接口替身，不连接设备；覆盖非零启动角、重新初始化后的
-零偏复用、累计多圈不影响绝对角、环绕、方向和不同编码器分辨率：
-
-```bash
-gcc -std=c11 -Wall -Wextra -Werror \
-  -Icomponents/magnetic_encoder/include -Icomponents/poleang/include \
-  -Icomponents/cartparams/include \
-  host_tests/poleang_test.c components/poleang/poleang.c -lm -o /tmp/poleang_test
-/tmp/poleang_test
-```
-
-PD 供电、UART0 控制的空载相电流测量使用 `CURRENT_MEASUREMENT=ON` 独立入口，
-构建方法、指令、供电检查和示波器采集说明见[硬件测试指南](test/README.md)。
-
-## 标定持久化
-
-行程和摆角配置可保存到NVS，重启后须手推到同一左参考点并显式确认，不能直接使能。Windows控制口示例、首次保存、重启后左参考确认、回执核对与失败恢复见[标定保存指南](docs/calibration.md)。
-
-## 状态报告频率
-
-STATE 目标报告率为 500 Hz（2 ms）；编码器默认 2 kHz 采样，速度窗口名义约 16 ms。
-采样配置与实测范围见[编码器采样与统计](docs/encoder-sampling.md)。固件构建会拒绝不能精确表示 1 ms 的 tick
-配置；项目默认 `CONFIG_FREERTOS_HZ=1000`。500 Hz 的现场稳定性仍需验证，
-不代表控制闭环或策略已经达到相同频率。
-
-编译检查、只读接收验收、带宽预算与回退方式见[状态流验证指南](docs/telemetry.md)。
-历史 200 Hz 验收数据不作为 500 Hz 的通过证据。
-
-## 联调
-
-`tools/cartpole_host.py`（`pip install pyserial`）：
-
-```
-python tools/cartpole_host.py --port COM7 query|mark-left|mark-right|enable|vel|config|dump|state|wdt-test|console
-```
-
-上板验收按主仓库 `deploy/v2/onboard-checklist.md`（C 阶段，两点
-标定规程）与 `docs/reviews/T10-acceptance.md`（端到端五用例）
-执行并回填。
+开发约束见 [AGENTS.md](AGENTS.md)。文档各主题只维护一份现行说明，其他入口通过链接引用。
