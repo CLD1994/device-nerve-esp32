@@ -13,6 +13,7 @@
 #include "driver/uart.h"
 #include "bsp.h"
 #include "settings.h"
+#include "settings_startup_current.h"
 #include "motor_tmc2209.h"
 #include "motor.h"
 #include "cartaxis.h"
@@ -43,6 +44,12 @@ void app_main(void)
 {
     bsp_early_init();                    /* EN 高 = 电机不使能 */
     ESP_ERROR_CHECK(settings_init());
+#ifdef CONFIG_SETTINGS_STARTUP_RUN_CURRENT_OVERRIDE
+    /* EN已禁用；此时尚无设备或settings订阅，不进行运行期调流。 */
+    settings_status_t current_status = settings_apply_startup_run_current(
+        true, CONFIG_SETTINGS_STARTUP_RUN_CURRENT_MA);
+    ESP_ERROR_CHECK(current_status == SETTINGS_OK ? ESP_OK : ESP_FAIL);
+#endif
     /* bsp 任一外设初始化失败即 panic 重启：静默半启动表现为死链路，
      * 可见可恢复优于带病存活 */
     ESP_ERROR_CHECK(bsp_init());

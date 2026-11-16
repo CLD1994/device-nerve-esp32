@@ -15,6 +15,7 @@ bash host_tests/test_encoder_2khz.sh
 bash host_tests/test_measurement_validity.sh
 bash host_tests/test_telemetry_timing.sh
 bash host_tests/test_tmc.sh
+bash host_tests/test_settings_startup_current.sh
 ```
 
 各脚本定义具体编译源、替身和断言范围。更多纯函数测试如电流时序、PD状态、摆角和换算，
