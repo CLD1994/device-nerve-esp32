@@ -166,6 +166,7 @@ def run(rig, args, sleep=time.sleep):
         nonlocal error
         parts=line.split()
         if parts[:1]==['ERR'] or (parts[:1]==['MODE'] and parts!=['MODE','READY','NONE']):
+            rig.note_failure('firmware_error_reply' if parts[:1]==['ERR'] else 'firmware_mode_changed',current_raw=True)
             error=error or RuntimeError('行程收到异常协议行：'+line)
             rig.velocity_validity.failed=True
     rig.message_observer=observe_message
@@ -176,22 +177,31 @@ def run(rig, args, sleep=time.sleep):
             while not braking:
                 rig.poll_available()
                 now=rig._clock()
-                if now-started>=args.max_seconds: raise RuntimeError('达到最长期限；位置可能未更新')
+                if now-started>=args.max_seconds:
+                    rig.note_failure('travel_duration_limit')
+                    raise RuntimeError('达到最长期限；位置可能未更新')
                 if rig.last_mode != ('READY','NONE'): raise RuntimeError('运动中模式不再 READY NONE')
-                if not rig.state_is_fresh(): raise RuntimeError('运动中状态过旧')
+                if not rig.state_is_fresh():
+                    rig.note_failure('state_missing_or_expired')
+                    raise RuntimeError('运动中状态过旧')
+                rig.note_velocity_gate()
                 rig.velocity_validity.require()
                 observe()
                 if braking: break
                 if last_send is not None and now-last_send>=gap_limit:
+                    rig.note_failure('command_gap_limit')
                     raise RuntimeError('非零续发间隔超限')
                 if now>=next_send:
                     before=rig._clock()
                     rig.send_line('VEL %d'%args.v)
                     last_send=before
-                    if rig._clock()-before>=gap_limit: raise RuntimeError('主机写入耗时超限')
+                    if rig._clock()-before>=gap_limit:
+                        rig.note_failure('write_duration_limit')
+                        raise RuntimeError('主机写入耗时超限')
                     next_send=rig._clock()+.02
                 sleep(.001)
         except (RuntimeError,OSError,KeyboardInterrupt) as exc:
+            rig.note_failure('user_interrupt' if isinstance(exc,KeyboardInterrupt) else 'travel_runtime_error')
             error=RuntimeError('用户中断（Ctrl+C）') if isinstance(exc,KeyboardInterrupt) else exc
             rig.velocity_validity.failed=True
         finally:
@@ -211,6 +221,7 @@ def run(rig, args, sleep=time.sleep):
             try:
                 rig.poll_available()
             except RuntimeError as exc:
+                rig.note_failure('stop_observation_error')
                 error=error or exc
                 rig.velocity_validity.failed=True
                 # 门禁继续锁存失败；仅零速清理，不恢复非零。

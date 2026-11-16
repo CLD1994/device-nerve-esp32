@@ -20,6 +20,7 @@ cartpole_host — cartpole 固件串口联调工具（PC 直连 ESP32-S3 UART0�
 对应 docs/protocol.md。工具默认 460800，须通过 --baud 匹配固件实际配置。
 """
 
+from collections import deque
 import argparse
 import math
 import re
@@ -63,6 +64,9 @@ class Rig:
         self.timing = None
         self.stop_observation = None
         self.unknown_count = 0
+        self.first_failure = None
+        self._raw_context = deque(maxlen=4)
+        self._current_raw = None
         # 跨 pump 调用持久的接收缓冲：未凑齐的半行必须留到下次继续，
         # 不得随窗口丢弃——STATE 流近乎连续，0.2 s 窗口边界几乎必然
         # 落在行中间（丢半行头 + 下一窗口把行尾记成 UNKNOWN）
@@ -77,6 +81,51 @@ class Rig:
                 if b"\n" in self._rx_buf:
                     self._rx_buf = self._rx_buf.split(b"\n", 1)[1]
                     break
+
+    def note_failure(self, reason, current_raw=False, **measurements):
+        """有界旁路首因；不改变门禁，不在控制路径格式化或打印。"""
+        if self.first_failure is not None:return
+        current=self._current_raw if current_raw else None
+        self.first_failure=dict(reason=reason,
+            observed_monotonic_s=current[0] if current is not None else self._clock(),
+            raw=None if current is None else current[1],
+            raw_total=0 if current is None else current[2],context=tuple(self._raw_context),measurements=measurements)
+
+    def note_velocity_gate(self):
+        v=self.velocity_validity
+        if v.failed:
+            self.note_failure('existing_failure_latch')
+        elif v.received_at is None:
+            self.note_failure('velocity_heartbeat_missing')
+        elif not 0 <= self._clock()-v.received_at <= .3:
+            self.note_failure('velocity_heartbeat_expired', received_age_s=self._clock()-v.received_at, limit_s=.3)
+        elif v.flags != (1,1):
+            self.note_failure('velocity_flags_not_ready')
+
+    def failure_summary(self):
+        e=self.first_failure
+        if e is None:return None
+        labels={'invalid_velocity_fields':'速度有效性心跳字段错误',
+                'invalid_velocity_flags':'速度窗口报告无效',
+                'velocity_heartbeat_expired':'速度有效性心跳超时或时间无效',
+                'velocity_heartbeat_missing':'尚未收到速度有效性心跳',
+                'velocity_flags_not_ready':'速度有效性条件未就绪',
+                'existing_failure_latch':'发现此前已经锁存的失败，触发点未记录',
+                'unknown_line':'未知接收行', 'short_write':'串口写入不完整',
+                'read_exception':'串口读取异常','write_exception':'串口写入异常',
+                'serial_backlog_limit':'串口待接收积压超限','receive_buffer_limit':'接收缓冲超限',
+                'state_missing_or_expired':'状态缺失或接收年龄超限',
+                'user_interrupt':'用户中断（Ctrl+C）'}
+        lines=['首个主机诊断：%s（%s）；主机读取/发现单调时间 %.6f s（不是设备发送时间）'%
+               (labels.get(e['reason'],'主机条件触发，见分类'),e['reason'],e['observed_monotonic_s'])]
+        if e['measurements']:
+            lines.append('条件数值：'+', '.join('%s=%s'%(key,value) for key,value in e['measurements'].items()))
+        def raw_text(raw,total):
+            return repr(raw)+(' [截断，原长%d字节]'%total if total>len(raw) else '')
+        lines.append('原始行：'+('无原始行；仅发现本地条件/既有锁存' if e['raw'] is None else raw_text(e['raw'],e['raw_total'])))
+        for stamp,raw,total in e['context']:
+            lines.append('前文 %.6f s：%s'%(stamp,raw_text(raw,total)))
+        return '\n'.join(lines)
 
     def begin_stop_observation(self):
         """仅收集零速清理证据，不清除运动门禁失败锁存。"""
@@ -100,16 +149,26 @@ class Rig:
                 and 0 <= self._clock() - self.state_received_at <= max_age)
 
     def send_line(self, line):
+        words=line.split()
+        if words and (words[0]=='ENABLE' or (words[0]=='VEL' and words[1:]!=['0'])):
+            self.note_velocity_gate()
         self.velocity_validity.command(line)
         if line.startswith("VEL ") and line.split()[1:] != ["0"]:
             if not self.state_is_fresh():
+                self.note_failure("state_missing_or_expired")
                 self.velocity_validity.failed = True
                 raise RuntimeError("没有最近收到的状态；禁止非零速度")
         data = (line + "\n").encode("ascii")
         match = re.fullmatch(r'VEL ([+-]?[0-9]+)', line) if self.timing is not None else None
         velocity = int(match[1]) if match is not None and len(match[1]) <= 12 else None
         if self.timing is not None and velocity is not None:self.timing.write_attempt(velocity)
-        if self.ser.write(data) != len(data):
+        try:
+            written=self.ser.write(data)
+        except (OSError,RuntimeError):
+            self.note_failure('write_exception')
+            raise
+        if written != len(data):
+            self.note_failure('short_write')
             self.velocity_validity.failed = True
             raise RuntimeError("串口写入不完整")
         if self.timing is not None and velocity is not None:self.timing.write_complete(velocity)
@@ -118,7 +177,11 @@ class Rig:
         """读串口 duration 秒，解析 STATE/MODE/OK/ERR，统计 UNKNOWN。"""
         t0 = self._clock()
         while self._clock() - t0 < duration:
-            chunk = self.ser.read(256)
+            try:
+                chunk = self.ser.read(256)
+            except OSError:
+                self.note_failure('read_exception')
+                raise
             if not chunk:
                 continue
             self._consume(chunk)
@@ -126,6 +189,7 @@ class Rig:
     def _consume(self, chunk):
         self._rx_buf += chunk
         if len(self._rx_buf) > 65536:
+            self.note_failure('receive_buffer_limit')
             self.velocity_validity.failed = True
             self._invalidate_stop_observation()
             raise RuntimeError("接收缓冲超过上限")
@@ -134,15 +198,24 @@ class Rig:
             line = raw.decode("ascii", "replace").strip()
             if not line:
                 continue
-            if self.message_observer is not None:
-                self.message_observer(line)
+            self._current_raw=(self._clock(),raw[:256],len(raw))
             try:
-                self._dispatch(line)
-            except RuntimeError:
-                self._invalidate_stop_observation()
-                raise
-            if self.stop_observation is None and self.velocity_validity.active and self.velocity_validity.failed:
-                raise RuntimeError("活动会话收到失效或损坏数据；停止运动")
+                if self.velocity_validity.active and self.velocity_validity.failed:
+                    self.note_failure('existing_failure_latch')
+                if self.message_observer is not None:
+                    self.message_observer(line)
+                try:
+                    self._dispatch(line)
+                except RuntimeError:
+                    self.note_failure('receive_callback_or_stop_observation_error',current_raw=True)
+                    self._invalidate_stop_observation()
+                    raise
+                if self.stop_observation is None and self.velocity_validity.active and self.velocity_validity.failed:
+                    self.note_failure('existing_failure_latch')
+                    raise RuntimeError("活动会话收到失效或损坏数据；停止运动")
+            finally:
+                self._raw_context.append(self._current_raw)
+                self._current_raw=None
 
     def poll_available(self):
         """行程模式拒绝超过4096字节的已知积压，其余非阻塞读取。"""
@@ -152,15 +225,23 @@ class Rig:
             size = self.ser.in_waiting
             self.max_rx_waiting = max(self.max_rx_waiting, size)
             if size > 4096:
+                self.note_failure('serial_backlog_limit')
                 self.velocity_validity.failed = True
                 self._invalidate_stop_observation()
                 raise RuntimeError('串口待接收积压超过4096字节；禁止以重新接收时间继续运动')
             self._consume(self.ser.read(size) if size else b"")
+        except OSError:
+            self.note_failure("read_exception")
+            raise
         finally:
             self.ser.timeout = old_timeout
 
     def _unknown(self, line):
         self.unknown_count += 1
+        if self.velocity_validity.active or self.stop_observation is not None:
+            kind=line.split()[:1]
+            reason=('malformed_'+kind[0].lower()) if kind and kind[0] in ('STATE','MODE','EVENT','OK') else 'unknown_line'
+            self.note_failure(reason,current_raw=True)
         if self.stop_observation is not None:
             self.velocity_validity.failed = True
             self.stop_observation = VelocityValidity(self._clock)
@@ -191,12 +272,21 @@ class Rig:
             self.event_count += 1  # 合法接收行数，重复也计；未验证与当前运行匹配。
             message = f"[EVENT STEP_LOSS {event_id} {run_id} {device_us}] 运行身份未核验"
             if self.step_loss_policy == "stop" and self.velocity_validity.active:
+                self.note_failure('step_loss_stop_policy',current_raw=True)
                 self.velocity_validity.failed = True
                 # 调用方先请求零速，再显示带事件身份的异常。
                 raise RuntimeError(message + "；按 stop 策略中止")
             self._output(message)
             return
         if line.split()[:1] == ["VEL_VALID"]:
+            parts=line.split()
+            if self.velocity_validity.active and self.stop_observation is None:
+                self.note_velocity_gate()
+            if self.velocity_validity.active or self.stop_observation is not None:
+                if len(parts)!=3 or any(p not in ('0','1') for p in parts[1:]):
+                    self.note_failure('invalid_velocity_fields',current_raw=True)
+                elif parts[1:]!=['1','1']:
+                    self.note_failure('invalid_velocity_flags',current_raw=True)
             if self.stop_observation is not None:
                 self.velocity_validity.update(line.split())
                 if not self.stop_observation.update(line.split()):
@@ -215,7 +305,10 @@ class Rig:
                     if self.stop_observation is not None and self.stop_observation.received_at is None:
                         return  # 等待入口后的首个有效心跳；未知不等于新故障。
                     if self.stop_observation is not None and not self.stop_observation.ready():
+                        self.note_failure('stop_observation_heartbeat_expired')
                         raise RuntimeError('停车观测需要入口后的有效心跳且不得过期')
+                    if self.stop_observation is None and self.velocity_validity.active:
+                        self.note_velocity_gate()
                     if self.stop_observation is not None or self.velocity_validity.received_at is None or self.velocity_validity.ready():
                         self.last_state = parts[1:]
                         self.state_received_at = self._clock()
@@ -522,6 +615,8 @@ def main():
         }
         rc = table[args.cmd](rig, args)
     except (RuntimeError, ValueError, OSError, KeyboardInterrupt) as exc:
+        if isinstance(getattr(rig, '_raw_context', None), deque):
+            rig.note_failure('user_interrupt' if isinstance(exc,KeyboardInterrupt) else 'command_error_without_raw')
         stop_error = None
         if rig.velocity_validity.active:
             try:
@@ -534,6 +629,12 @@ def main():
         rc = 1
     finally:
         rig.close()
+        if isinstance(getattr(rig, "first_failure", None), dict):
+            try:
+                diagnostic=rig.failure_summary()
+                if diagnostic is not None:print(diagnostic)
+            except Exception:
+                pass  # 诊断输出失败不得覆盖原命令结果；清理已先完成。
         timing = getattr(rig, 'timing', None)
         if isinstance(timing, SessionTiming):
             try:

@@ -494,3 +494,79 @@ class LatestTimingVelocityTest(unittest.TestCase):
         self.assertIsNone(host.latest_velocity_for_timing(rig))
         receive(rig,port,'VEL_VALID 0 1')
         self.assertIsNone(host.latest_velocity_for_timing(rig))
+
+class FailureEvidenceTest(unittest.TestCase):
+    def active(self):
+        r,p,c,m=session(host.Rig)
+        r._consume(b'VEL_VALID 1 1\nSTATE 0 0 0 0\n')
+        r.velocity_validity.active=True
+        return r,p,c,m
+    def test_bad_heartbeat_records_actual_raw_and_is_sticky(self):
+        r,p,c,m=self.active()
+        with self.assertRaises(RuntimeError):r._consume(b'VEL_VALID 1 x\r\n')
+        self.assertEqual(r.first_failure['reason'],'invalid_velocity_fields')
+        self.assertEqual(r.first_failure['raw'],b'VEL_VALID 1 x\r')
+        first=r.first_failure
+        with self.assertRaises(RuntimeError):r._consume(b'VEL_VALID 1 1\n')
+        self.assertIs(r.first_failure,first)
+    def test_late_good_frame_not_blamed_as_bad_raw(self):
+        r,p,c,m=self.active();c.advance(.301)
+        with self.assertRaises(RuntimeError):r._consume(b'VEL_VALID 1 1\n')
+        self.assertEqual(r.first_failure['reason'],'velocity_heartbeat_expired')
+        self.assertIsNone(r.first_failure['raw'])
+    def test_existing_failed_not_attributed_to_current_state(self):
+        r,p,c,m=self.active();r.velocity_validity.failed=True
+        with self.assertRaises(RuntimeError):r._consume(b'STATE 0 0 0 0\n')
+        self.assertEqual(r.first_failure['reason'],'existing_failure_latch')
+        self.assertIsNone(r.first_failure['raw'])
+    def test_high_bytes_are_escaped_and_context_is_bounded(self):
+        r,p,c,m=self.active()
+        for _ in range(10):r._consume(b'STATE 0 0 0 0\n')
+        with self.assertRaises(RuntimeError):r._consume(b'\x1b[2J\xff'+b'x'*500+b'\n')
+        evidence=r.first_failure
+        self.assertEqual(len(evidence['raw']),256)
+        self.assertEqual(len(evidence['context']),4)
+        text=r.failure_summary()
+        self.assertNotIn('\x1b',text);self.assertIn('\\x1b',text);self.assertIn('\\xff',text)
+        self.assertIn('截断',text)
+    def test_short_write_has_no_received_raw(self):
+        r,p,c,m=self.active();p.write_limit=2
+        with self.assertRaises(RuntimeError):r.send_line('VEL 100')
+        self.assertEqual(r.first_failure['reason'],'short_write')
+        self.assertIsNone(r.first_failure['raw'])
+    def test_classified_flags_and_malformed_protocol(self):
+        for raw,reason in [(b'VEL_VALID 0 1','invalid_velocity_flags'),(b'STATE bad','malformed_state'),(b'MODE bad','malformed_mode'),(b'EVENT STEP_LOSS 0 1 2','malformed_event')]:
+            r,p,c,m=self.active()
+            with self.subTest(raw=raw),self.assertRaises(RuntimeError):r._consume(raw+b'\n')
+            self.assertEqual(r.first_failure['reason'],reason)
+            self.assertEqual(r.first_failure['raw'],raw)
+    def test_no_fault_for_valid_data_and_no_raw_for_limits(self):
+        r,p,c,m=self.active();r._consume(b'STATE 10 0 2 0\n')
+        self.assertIsNone(r.first_failure)
+        p.timeout=.2;p.in_waiting=4097
+        with self.assertRaises(RuntimeError):r.poll_available()
+        self.assertEqual(r.first_failure['reason'],'serial_backlog_limit')
+        self.assertIsNone(r.first_failure['raw'])
+    def test_diagnostic_output_follows_zero_request_and_close(self):
+        r,p,c,m=self.active();events=[]
+        original_write=p.write
+        def write(data):events.append(('write',data));return original_write(data)
+        p.write=write
+        p.close=lambda:events.append(('close',None))
+        def fail(rig,args):rig._consume(b'VEL_VALID 1 x\n')
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'Rig',return_value=r),patch.object(host,'cmd_vel',side_effect=fail),patch('builtins.print',side_effect=lambda *args:events.append(('print',str(args)))):
+            with self.assertRaises(SystemExit):host.main()
+        zero=events.index(('write',b'VEL 0\n'))
+        diag=next(i for i,e in enumerate(events) if e[0]=='print' and '首个主机诊断' in e[1])
+        self.assertLess(zero,diag)
+        self.assertLess(events.index(('close',None)),diag)
+    def test_diagnostic_stdout_failure_keeps_original_result(self):
+        r,p,c,m=self.active()
+        def fail(rig,args):rig._consume(b'VEL_VALID 1 x\n')
+        def output(*args):
+            if '首个主机诊断' in str(args):raise OSError('stdout unavailable')
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'Rig',return_value=r),patch.object(host,'cmd_vel',side_effect=fail),patch('builtins.print',side_effect=output):
+            with self.assertRaises(SystemExit) as end:host.main()
+        self.assertEqual(end.exception.code,1)
+        self.assertTrue(p.closed)
+        self.assertIn(b'VEL 0\n',p.writes)

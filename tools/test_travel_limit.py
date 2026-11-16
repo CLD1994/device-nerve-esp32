@@ -59,6 +59,8 @@ class ExecutorTest(unittest.TestCase):
                 self.t=0.; self.state_received_at=0.; self.last_reply=None; self.replies={}; self.last_mode=None; self.last_state=['0','0','0','0']; self.state_observer=None
                 self.writes=[]; self._output=lambda x: None
                 self.velocity_validity=VelocityValidity(self._clock)
+            def note_failure(self,*args,**kwargs): pass
+            def note_velocity_gate(self): pass
             def begin_stop_observation(self): pass
             def end_stop_observation(self): pass
             def _clock(self): return self.t
