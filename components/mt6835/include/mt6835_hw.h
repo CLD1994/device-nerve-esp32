@@ -3,7 +3,7 @@
  * 类别实现消费）
  *
  * 48-bit 单次事务（MODE3、MSB 先行；帧格式抄录与 CRC8 见
- * mt6835_urad.h 与 docs/reviews/T4-brief.md）：
+ * mt6835_urad.h 与 docs/reference/mt6835.md）：
  *   TX: [0]=OP_ANGLE(0b1010)<<4, [1]=ANGLE1 地址 0x03, [2..5]=0
  *   RX: [2]=ANGLE[20:13] [3]=ANGLE[12:5]
  *       [4]=ANGLE[4:0]<<3 | STATUS[2:0]  [5]=器件 CRC8

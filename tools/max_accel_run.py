@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-max_accel_run — 最大加速度实测执行器（方案：docs/max-accel-exploration-plan.md）
+max_accel_run — 最大加速度实测执行器（方案：docs/experiments/acceleration.md）
 
 依赖：pip install pyserial；与 cartpole_host.py 同目录运行（复用 Rig 串口会话）。
 
@@ -42,7 +42,7 @@ from collections import deque
 
 from cartpole_host import Rig
 
-# ---- 方案固定值（docs/max-accel-exploration-plan.md） ----
+# ---- 方案固定值（docs/experiments/acceleration.md） ----
 
 SPEEDS_DEFAULT = [50, 120, 300, 550]          # mm/s
 ACCS_DEFAULT = [5000, 10000, 15000, 20000, 25000, 30000]  # mm/s²

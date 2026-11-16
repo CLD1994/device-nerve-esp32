@@ -4,7 +4,7 @@
  * steps 指当前细分档的一个微步——微步档位变更即单位含义变更
  * （motor_set_microstep）。契约无方向旋钮：应用方向约定归解释层
  * （cartaxis 经指令与读数取反）。
- * 语义：docs/superpowers/specs/2026-10-14-device-category-abstraction.md。
+ * 语义：docs/reference/architecture.md。
  */
 #pragma once
 

@@ -4,7 +4,7 @@
  * 持有 magnetic_encoder 句柄，把原始角量解释为已标定摆角：
  * 零位与符号（POLE_ZERO_URAD / POLE_INV，来自 cartparams 注册表）
  * 在读取时应用。消费方读到的是标定后角度。
- * 语义：docs/superpowers/specs/2026-10-14-device-category-abstraction.md。
+ * 语义：docs/reference/architecture.md。
  */
 #pragma once
 

@@ -1,9 +1,22 @@
-# Tools directory
+# 宿主工具
 
-This directory contains host-side tools and test scripts.
+先阅读[入门与串口选择](../docs/getting-started.md)。串口工具的默认波特率不一定等于当前固件配置，始终核对 `--baud`。工具提供能力，不代表已经完成现场验证。
 
-- `host_sim.py` — Host simulator and end-to-end acceptance script (T12)
-  Usage: `python tools/host_sim.py <PORT> --phase 1` → power-cycle the board → `python tools/host_sim.py <PORT> --phase 2` (需 pyserial；快速自检用 `--skip-power-cycle --fast`，报告写入 `docs/acceptance.md`)
+## 日常控制与只读诊断
+
+| 入口 | 用途与边界 |
+|---|---|
+| `cartpole_host.py` | 查询、标定、配置、使能及速度命令；不同子命令会改变设备状态，先看 `--help` |
+| `step_loss_capture.py` / `step_trace_capture.py` | SL1 / SLT4 只读证据采集；版本匹配见下文 |
+| `tmc_readonly.py` | TMC 寄存器读回，见 [TMC 指南](../docs/tmc-readonly.md)；不证明真实电流或扭矩 |
+| `velocity_validity.py` | 速度有效性检查，见 [测量有效性](../docs/measurement-validity.md) |
+| `max_accel_run.py` | 加速度试验入口，见 [专用指南](../docs/experiments/acceleration.md) |
+
+## 历史验收与压力脚本
+
+`host_sim.py`、`host_sim_sweep.py`、`host_sim_stress.py`、`t3_stress_test.py` 保留作历史测试代码参考，不是当前主线的一键验收流程。其旧模式、标定和运动假设必须先逐项对照现行协议，不应未经审查直接运行于真机。
+
+`host_sim.py` 默认生成 `docs/acceptance.md`，这只是旧脚本的输出路径，不是当前文档入口。需要复用时显式给 `--report` 指定新的日志路径，不覆盖归档报告。旧结果见[历史证据](../docs/archive/README.md)。
 
 ## 真机实验工具
 
@@ -12,13 +25,13 @@ This directory contains host-side tools and test scripts.
 
 - [低速方向与停稳](../experiments/low-speed-probe/README.md)：小幅单向运动。
 - [400 mm/s 加速度基线](../experiments/accel-5000-probe/README.md)：固定单次基线。
-- [50 kHz 离线预算](../docs/step50k-plan.md)：不打开串口、不运动。
-- [单次高速探针](../docs/step50k-probe.md)：显式预算输入，全部预算通过才允许执行。
-- [两次往返探针](../docs/roundtrip-probe.md)：固定装置专用，低速接近端点，停稳后反向。
+- [50 kHz 离线预算](../docs/experiments/step50k-budget.md)：不打开串口、不运动。
+- [单次高速探针](../docs/experiments/step50k-probe.md)：显式预算输入，全部预算通过才允许执行。
+- [两次往返探针](../docs/experiments/roundtrip-probe.md)：固定装置专用，低速接近端点，停稳后反向。
 - [独立 STEP 测量固件](../experiments/step-frequency-isolated/README.md)：需物理隔离动力路径。
 
 所有日志由用户指定新文件保存，不提交到仓库。实验结果不能替代实际速度、
-加速度、温升、波形和停止距离的独立测量。对照记录见[实验结论](../docs/experiment-results.md)。
+加速度、温升、波形和停止距离的独立测量。对照记录见[实验结论](../docs/archive/2026-11-13-experiment-results.md)。
 
 ## 开发与维护边界
 
@@ -47,3 +60,4 @@ ESP-IDF目标构建、波形和机械运动仍需在目标环境单独验证。
 读取新 SLT4 事件前后软件轨迹。两者都只发查询，不使能/复位/运动。
 诊断开关、observe-only主机责任及帧定义见 [STEP_LOSS诊断](../docs/step-loss-diagnostic.md)。
 本工具不读取旧实验SLT2/3，须与固件版本匹配。
+

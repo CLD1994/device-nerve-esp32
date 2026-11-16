@@ -4,7 +4,7 @@
  * 持有 magnetic_encoder 句柄，把原始 counts 解释为 mm 域小车位置：
  * 比例随每转行程（units_per_rev）订阅刷新，原点偏移存 µm 整数。
  * x_um = round(counts × 每转行程 × 1000 ÷ counts_per_rev) − 原点偏移。
- * 语义：docs/superpowers/specs/2026-10-14-device-category-abstraction.md。
+ * 语义：docs/reference/architecture.md。
  */
 #pragma once
 

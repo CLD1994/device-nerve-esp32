@@ -4,9 +4,9 @@
 
 ## 操作前准备与首次升级
 
-下列命令在 **Windows PowerShell 的项目根目录**执行，以控制口 `COM11`、`460800` 波特率为例。替换为设备实际控制串口和固件波特率；不要使用日志口。关闭其他占用该串口的软件。固件可在开发容器中编译、烧录，但 Windows 中的仓库和 `tools/cartpole_host.py` 也必须更新到支持 `confirm-left`、`calib-status` 的同一版本。
+下列命令在 **Windows PowerShell 的项目根目录**执行，以控制口 `COM11`、现场配置 `460800` 波特率为例（当前 Kconfig 默认值为1000000）。替换为设备实际控制串口和固件波特率；不要使用日志口。关闭其他占用该串口的软件。固件可在开发容器中编译、烧录，但 Windows 中的仓库和 `tools/cartpole_host.py` 也必须更新到支持 `confirm-left`、`calib-status` 的同一版本。
 
-**旧固件的标定只在 RAM，刷机重启不会自动迁入 NVS。** 升级前可执行 `dump` 留存已确认的摆角参数；第一次刷入本功能仍要完成一次两点标定，并重新下发摆角参数。正常升级不要执行 `erase-flash`；擦除 NVS 会删除保存记录。固件不内置某台设备的历史标定值。
+**旧固件的标定只在 RAM，刷机重启不会自动迁入 NVS。** 升级前可执行 `dump` 留存已确认的摆角参数；第一次刷入本功能仍要完成一次两点标定，并重新下发摆角参数。正常 `idf.py flash` 不等同于整片擦除；是否保留记录还取决于分区布局、实际烧录范围和启动时的存储处理。正常升级不要执行 `erase-flash`；擦除 NVS 会删除保存记录。固件不内置某台设备的历史标定值。
 
 全程先保持电机禁用，摆杆自然下垂，确认磁铁、传动和接线已正确安装。标记两端时使用可重复到达的固定位置，不要强推或撞击挡块。
 
@@ -127,15 +127,17 @@ python tools/cartpole_host.py --port COM11 --baud 460800 disable
 
 必须收到`MODE DISABLED NONE`才按禁用状态继续操作。`ERR BUSY`表示引擎仍在运动，不能手推小车制造故障；等待停稳后重试。FAULT仍按原故障处理，RESET不是READY下的禁用命令。禁用后参考继续有效，但采样中断仍会使它失效；不得把引擎零速度当作机械停止保证。详见[禁用协议](protocol.md#正常停止后的禁用)。
 
+成功完成右点后进入 `CAL_STATE=2`，再次 `mark-right` 会被拒绝，因为它只接受等待右点的状态。重启后复用保存行程应使用 `confirm-left`，不要以重复 `mark-right` 代替参考确认。
+
 ## 物理条件与安全边界
 
 用户必须保证实际停在左标记，软件不能检测挡块或替用户确认物理位置。断电期间小车可以移动，但启动后仍需回到同一左标记确认，不能使用断电前的当前位置。
 
 采样门禁只验证读取成功、CRC与时间连续性，不是磁铁或机械安装自检。MT6835的磁弱、欠压、过速状态目前仍沿驱动的告警策略处理，不进入本次参考门禁；请人工确认磁铁安装、状态告警及读数随小车运动的对应关系。
 
-## 固件扩展命令
+## 标定命令与状态
 
-现有协议说明的入口是 [protocol.md](protocol.md)。以下为本固件新增接口；配套主项目协议文档需要同步后，上位机才能将其作为共同协议使用。
+现有协议说明的入口是 [protocol.md](protocol.md)。以下是当前主线接口，上位机工具须与所烧录固件匹配。
 
 | 命令 | 成功回执 | 前提 |
 |---|---|---|
@@ -169,12 +171,7 @@ gcc -std=c11 -Wall -Wextra -Werror \
   components/cartparams/params.c -lm -o /tmp/cartcal-test
 /tmp/cartcal-test
 
-gcc -std=c11 -Wall -Wextra -Werror \
-  -Ihost_tests/power_stubs -Icomponents/cartfsm/host_stub -Icomponents/cartcal/host_stub -Ihost_tests/stub \
-  $(find components -type d -name include -printf '-I%p ') \
-  host_tests/cartfsm_calibration_test.c components/cartfsm/cartfsm_core.c \
-  components/cartparams/params.c -lm -o /tmp/cartfsm-calibration-test
-/tmp/cartfsm-calibration-test
+bash host_tests/test_cartfsm_calibration.sh
 
 python -m unittest discover -s tools -p 'test_*.py'
 ```

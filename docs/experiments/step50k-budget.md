@@ -1,6 +1,6 @@
 # 50 kHz STEP 的离线带载行程预算
 
-[`tools/step50k_plan.py`](../tools/step50k_plan.py) 对目标计算条件预算。目标速度固定为1250 mm/s，加速度由 `--acceleration` 选择100..30000 mm/s²整数（默认9000；软件配置范围，不代表已验证物理极限），40 steps/mm对应50 kHz。工具没有串口依赖，不读取设备，不配置参数，也没有 `run` 入口。
+[`tools/step50k_plan.py`](../../tools/step50k_plan.py) 对目标计算条件预算。目标速度固定为1250 mm/s，加速度由 `--acceleration` 选择100..30000 mm/s²整数（默认9000；软件配置范围，不代表已验证物理极限），40 steps/mm对应50 kHz。工具没有串口依赖，不读取设备，不配置参数，也没有 `run` 入口。
 
 ```powershell
 python tools/step50k_plan.py plan

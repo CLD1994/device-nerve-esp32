@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-cartpole_host — cartpole 固件串口联调工具（PC 直连 ESP32-S3 UART1/CH343P）
+cartpole_host — cartpole 固件串口联调工具（PC 直连 ESP32-S3 UART0（3.3 V TTL））
 
 依赖：pip install pyserial
 
@@ -17,7 +17,7 @@ cartpole_host — cartpole 固件串口联调工具（PC 直连 ESP32-S3 UART1/C
   python cartpole_host.py --port COM7 wdt-test
   python cartpole_host.py --port COM7 console
 
-对应 protocol.md：STATE/MODE/OK/ERR 行、460800 8N1。
+对应 docs/protocol.md。工具默认 460800，须通过 --baud 匹配固件实际配置。
 """
 
 import argparse
