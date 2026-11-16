@@ -131,6 +131,7 @@ def run(rig, args, sleep=time.sleep):
     print('物理端 ±%.3f mm；软件端 ±%.3f mm；目标 %.3f mm；正常提前制动预算 %.3f mm；异常断链条件预算 %.3f mm'
           %(p.physical_um/1000,p.soft_um/1000,p.target_um/1000,p.budget_mm(vx,state_age()),p.watchdog_budget_mm(vx,state_age())))
     print('已观察串口最大待接收字节数=%s；不能据此推算设备采样或全链路延迟'%getattr(rig,'max_rx_waiting','未知'))
+    if getattr(rig,'timing',None) is not None:rig.timing.mark('query_complete')
     if args.plan: return 0
     if rig.last_mode != ('READY','NONE'): raise RuntimeError('行程执行需要 READY NONE；不会自动 ENABLE')
     initial=Stillness(rig)
@@ -146,6 +147,7 @@ def run(rig, args, sleep=time.sleep):
             poll()
     finally:
         rig.state_observer=None
+    if getattr(rig,'timing',None) is not None:rig.timing.mark('preflight_complete')
     braking=False
     def observe():
         nonlocal braking
@@ -190,12 +192,13 @@ def run(rig, args, sleep=time.sleep):
                     next_send=rig._clock()+.02
                 sleep(.001)
         except (RuntimeError,OSError,KeyboardInterrupt) as exc:
-            error=exc
+            error=RuntimeError('用户中断（Ctrl+C）') if isinstance(exc,KeyboardInterrupt) else exc
             rig.velocity_validity.failed=True
         finally:
             rig.state_observer=None
             stop_x=int(rig.last_state[0]) if rig.last_state else None
             rig.send_line('VEL 0')
+        rig.begin_stop_observation()
         # 最后非零写入后的在途假设窗口过去后才累计停稳证据。
         stationary=Stillness(rig,max(rig._clock(),(last_send or started)+args.inflight_ms/1000))
         rig.state_observer=stationary.observe
@@ -218,9 +221,11 @@ def run(rig, args, sleep=time.sleep):
                 rig.velocity_validity.failed=True
             if stationary.confirmed and rig.state_is_fresh():
                 confirmed=True
+                if getattr(rig,'timing',None) is not None:rig.timing.mark('stop_observed')
                 break
             sleep(.001)
     finally:
+        rig.end_stop_observation()
         rig.state_observer=None
         rig.message_observer=None
         rig._output=old_output

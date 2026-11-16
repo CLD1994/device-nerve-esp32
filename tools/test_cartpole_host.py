@@ -369,3 +369,112 @@ class TravelBacklogTest(unittest.TestCase):
         self.assertTrue(rig.velocity_validity.failed)
         self.assertEqual(rig.max_rx_waiting,4097)
         self.assertEqual(port.timeout,.2)
+
+class TimingHooksTest(unittest.TestCase):
+    def test_short_write_records_attempt_not_success(self):
+        rig,port,_,_=session(host.Rig)
+        rig.timing=host.SessionTiming(rig._clock)
+        receive(rig,port,'VEL_VALID 1 1');receive(rig,port,'STATE 0 0 0 0')
+        with patch.object(port,'write',return_value=2):
+            with self.assertRaises(RuntimeError):rig.send_line('VEL 600')
+        self.assertEqual(rig.timing.report()['nonzero_write_attempts'],1)
+        self.assertIsNone(rig.timing.report()['first_nonzero_complete_s'])
+    def test_hold_keeps_existing_pumps_without_zero(self):
+        writes=[];pumps=[]
+        rig=SimpleNamespace(query=lambda:('READY','NONE'),send_line=writes.append,pump=pumps.append,last_state=None)
+        with patch.object(host.time,'time',side_effect=[0,0,.5,1]),contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(host.cmd_vel(rig,SimpleNamespace(hold=1,v=600)),0)
+        self.assertEqual(writes,['VEL 600','VEL 600'])
+        self.assertEqual(pumps,[.005,.005,.3])
+        self.assertIsNone(rig.timing.report()['stop_observed_s'])
+    def test_summary_failure_does_not_change_result_or_skip_close(self):
+        actions=[];rig=SimpleNamespace(close=lambda:actions.append('close'))
+        def cmd(r,a):
+            r.timing=host.SessionTiming(lambda:0)
+            return 0
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'Rig',return_value=rig),patch.object(host,'cmd_vel',side_effect=cmd),patch.object(host.SessionTiming,'summary',side_effect=ValueError('summary')):
+            with self.assertRaises(SystemExit) as end:host.main()
+        self.assertEqual(end.exception.code,0)
+        self.assertEqual(actions,['close'])
+    def test_no_timing_does_not_parse_or_change_console_payload(self):
+        rig,port,_,_=session(host.Rig)
+        receive(rig,port,'VEL_VALID 1 1');receive(rig,port,'STATE 0 0 0 0')
+        rig.send_line('VEL invalid')
+        self.assertEqual(port.writes[-1],b'VEL invalid\n')
+        self.assertIsNone(rig.timing)
+
+class StopObservationTest(unittest.TestCase):
+    def test_failed_motion_can_observe_new_valid_state_not_resume(self):
+        rig,port,_,_=session(host.Rig)
+        rig.velocity_validity.active=True;rig.velocity_validity.failed=True
+        rig.begin_stop_observation()
+        rig._consume(b'VEL_VALID 1 1\nSTATE 10 0 0 0\n')
+        self.assertEqual(rig.last_state,['10','0','0','0'])
+        self.assertTrue(rig.velocity_validity.failed)
+        with self.assertRaises(RuntimeError):rig.send_line('VEL 1')
+        rig.send_line('VEL 0')
+    def test_bad_frame_requires_new_heartbeat_and_state(self):
+        rig,port,_,_=session(host.Rig)
+        rig.velocity_validity.active=True;rig.velocity_validity.failed=True
+        rig.begin_stop_observation()
+        rig._consume(b'VEL_VALID 1 1\nSTATE 10 0 0 0\n')
+        for bad in (b'UNKNOWN\n',b'VEL_VALID 0 1\n',b'STATE invalid\n'):
+            with self.assertRaises(RuntimeError):rig._consume(bad)
+            self.assertIsNone(rig.last_state)
+            rig._consume(b'STATE 10 0 0 0\n')
+            self.assertIsNone(rig.last_state)
+            rig._consume(b'VEL_VALID 1 1\nSTATE 10 0 0 0\n')
+            self.assertEqual(rig.last_state,['10','0','0','0'])
+    def test_failed_gate_can_collect_full_stillness_window(self):
+        from travel_limit import Stillness
+        rig,port,clock,_=session(host.Rig)
+        rig.velocity_validity.active=True;rig.velocity_validity.failed=True
+        rig.begin_stop_observation()
+        stable=Stillness(rig);rig.state_observer=stable.observe
+        for _ in range(6):
+            rig._consume(b'VEL_VALID 1 1\nSTATE 10 0 0 0\n')
+            clock.advance(.05)
+        self.assertTrue(stable.confirmed)
+        self.assertTrue(rig.velocity_validity.failed)
+        with self.assertRaises(RuntimeError):rig.send_line('ENABLE')
+        with self.assertRaises(RuntimeError):rig.send_line('VEL 100')
+    def test_stop_entry_requires_new_heartbeat_not_previous_one(self):
+        rig,port,_,_=session(host.Rig)
+        receive(rig,port,'VEL_VALID 1 1');receive(rig,port,'STATE 10 0 0 0')
+        rig.begin_stop_observation()
+        self.assertIsNone(rig.last_state)
+        rig._consume(b'STATE 10 0 0 0\n')
+        self.assertIsNone(rig.last_state)
+    def test_backlog_and_buffer_errors_invalidate_stop_qualification(self):
+        for source in ('backlog','buffer'):
+            rig,port,_,_=session(host.Rig)
+            rig.begin_stop_observation()
+            rig._consume(b'VEL_VALID 1 1\nSTATE 10 0 0 0\n')
+            with self.subTest(source=source),self.assertRaises(RuntimeError):
+                if source=='backlog':
+                    port.timeout=.2;port.in_waiting=4097;rig.poll_available()
+                else:rig._consume(b'x'*65537)
+            self.assertIsNone(rig.last_state)
+            self.assertIsNone(rig.stop_observation.received_at)
+
+
+class StopAwaitHeartbeatTest(unittest.TestCase):
+    def test_initial_states_wait_without_fault_until_new_heartbeat(self):
+        from travel_limit import Stillness
+        rig,port,clock,_=session(host.Rig)
+        rig.velocity_validity.active=True
+        rig.begin_stop_observation()
+        stationary=Stillness(rig);rig.state_observer=stationary.observe
+        rig._consume(b'STATE 10 0 0 0\nSTATE 10 0 0 0\n')
+        self.assertIsNone(rig.last_state)
+        self.assertFalse(rig.velocity_validity.failed)
+        self.assertFalse(stationary.confirmed)
+        for _ in range(6):
+            rig._consume(b'VEL_VALID 1 1\nSTATE 10 0 0 0\n');clock.advance(.05)
+        self.assertTrue(stationary.confirmed)
+        # 原运动有效性在这个构造中未知，会按原规则锁存；观测不修改它。
+    def test_expired_established_observation_is_failure(self):
+        rig,port,clock,_=session(host.Rig)
+        rig.begin_stop_observation();rig._consume(b'VEL_VALID 1 1\n')
+        clock.advance(.301)
+        with self.assertRaises(RuntimeError):rig._consume(b'STATE 10 0 0 0\n')

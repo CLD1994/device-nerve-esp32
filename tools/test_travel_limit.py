@@ -59,6 +59,8 @@ class ExecutorTest(unittest.TestCase):
                 self.t=0.; self.state_received_at=0.; self.last_reply=None; self.replies={}; self.last_mode=None; self.last_state=['0','0','0','0']; self.state_observer=None
                 self.writes=[]; self._output=lambda x: None
                 self.velocity_validity=VelocityValidity(self._clock)
+            def begin_stop_observation(self): pass
+            def end_stop_observation(self): pass
             def _clock(self): return self.t
             def state_is_fresh(self): return mode!='stale' or self.t<.65
             def send_line(self,line):
@@ -286,3 +288,51 @@ class RecoveryRunTest(ExecutorTest):
         self.assertEqual(run(r,a,s),0)
         self.assertTrue(any(line=='VEL 600' for _,line in r.writes))
         self.assertEqual(r.writes[-1][1],'VEL 0')
+
+class TimingPhaseTest(ExecutorTest):
+    def test_plan_only_marks_query_not_ready_stillness(self):
+        from session_timing import SessionTiming
+        from travel_limit import run
+        r,a,s=self.fixture();a.plan=True;r.timing=SessionTiming(r._clock)
+        self.assertEqual(run(r,a,s),0)
+        self.assertIsNotNone(r.timing.report()['query_complete_s'])
+        self.assertIsNone(r.timing.report()['preflight_complete_s'])
+    def test_unconfirmed_initial_stillness_is_not_preflight_complete(self):
+        from session_timing import SessionTiming
+        from travel_limit import run
+        r,a,s=self.fixture();r.timing=SessionTiming(r._clock);original=r.poll_available
+        def poll():
+            observer=r.state_observer;r.state_observer=None;original();r.state_observer=observer
+            r.last_state=['0','0','1','0']
+            if observer:observer()
+        r.poll_available=poll
+        with self.assertRaisesRegex(RuntimeError,'停稳'):run(r,a,s)
+        self.assertIsNotNone(r.timing.report()['query_complete_s'])
+        self.assertIsNone(r.timing.report()['preflight_complete_s'])
+
+class StopHeartbeatRunTest(unittest.TestCase):
+    def test_normal_run_waits_for_first_stop_heartbeat_then_succeeds(self):
+        import cartpole_host
+        from host_test_support import session
+        from travel_limit import run
+        from types import SimpleNamespace
+        r,port,clock,_=session(cartpole_host.Rig)
+        stop_polls=0
+        def poll():
+            nonlocal stop_polls
+            r.replies.update(C)
+            r.last_mode=('READY','NONE')
+            zero=b'VEL 0\n' in port.writes
+            moving=b'VEL 600\n' in port.writes and not zero
+            x=380000 if moving and clock.value>.7 else 0
+            vx=600 if moving else 0
+            if zero:
+                stop_polls+=1;x=380000
+            heartbeat=b'' if zero and stop_polls<=3 else b'VEL_VALID 1 1\n'
+            r._consume(heartbeat+('STATE %d 0 %d 0\n'%(x,vx)).encode())
+        r.poll_available=poll
+        a=SimpleNamespace(v=600,reserve_mm=20,inflight_ms=10,max_seconds=1,plan=False)
+        self.assertEqual(run(r,a,clock.advance),0)
+        self.assertGreater(stop_polls,3)
+        self.assertFalse(r.velocity_validity.failed)
+        self.assertEqual(port.writes[-1],b'VEL 0\n')
