@@ -172,11 +172,15 @@ class StartToleranceTest(unittest.TestCase):
             self.assertFalse(g.observe(start,0))
             self.assertFalse(g.observe(start+direction*100,1*direction))
             g.observe(-direction*p.physical_um,1*direction)
+            g.observe(-direction*(p.physical_um+1),0)
+            g.observe(-direction*(p.physical_um-100),0)
             with self.assertRaises(RuntimeError):g.observe(-direction*(p.physical_um+1),0)
-    def test_outside_cannot_move_more_outward_even_one_um(self):
+    def test_outside_noise_then_significant_reversal(self):
         p=Plan(C,600,20,50);g=Guard(p,-p.physical_um-192,.5)
         g.observe(-p.physical_um-100,0)
-        with self.assertRaises(RuntimeError):g.observe(-p.physical_um-101,0)
+        self.assertFalse(g.observe(-p.physical_um-101,0))
+        self.assertFalse(g.observe(-p.physical_um-200,0))
+        with self.assertRaises(RuntimeError):g.observe(-p.physical_um-201,0)
     def test_bad_start_direction_and_tolerance(self):
         p=Plan(C,600,20,50)
         for start,tolerance in [(-p.physical_um-501,.5),(p.physical_um+192,.5),(-p.physical_um-1,0),(-p.physical_um,1.1),(-p.physical_um,float('nan'))]:
@@ -192,7 +196,7 @@ class InitialToleranceChainTest(ExecutorTest):
             original()
             r.state_observer=observer
             if r.t<.42:x=-427162  # 192um超出左物理端
-            elif r.t<.44:x=-426970
+            elif r.t<.44:x=-426870
             else:x=-426971
             r.last_state=[str(x),'0','0','0']
             if observer:observer()
@@ -221,3 +225,64 @@ class DynamicNormalBudgetTest(unittest.TestCase):
         p=Plan(dict(C,ACC_MAX=10000),600,20,10)
         self.assertAlmostEqual(p.budget_mm(0,0),24)
         self.assertAlmostEqual(p.watchdog_budget_mm(0,0),84)
+
+
+class RecoveryNoiseTest(unittest.TestCase):
+    def test_single_and_accumulated_outward_motion_both_directions(self):
+        for d in (1,-1):
+            p=Plan(C,600*d,20,10)
+            start=-d*(p.physical_um+185)
+            g=Guard(p,start,.5)
+            self.assertFalse(g.observe(start-d,0))
+            self.assertFalse(g.observe(start+d,0))
+            for delta in range(1,100):g.observe(start-d*delta,0)
+            with self.assertRaises(RuntimeError):g.observe(start-d*100,0)
+            g=Guard(p,start,.5)
+            with self.assertRaises(RuntimeError):g.observe(start-d*101,0)
+    def test_absolute_tolerance_not_expanded_by_noise(self):
+        p=Plan(C,600,20,10)
+        g=Guard(p,-p.physical_um-490,.5)
+        g.observe(-p.physical_um-500,0)
+        with self.assertRaises(RuntimeError):g.observe(-p.physical_um-501,0)
+    def test_large_inward_progress_does_not_allow_return_to_start(self):
+        p=Plan(C,600,20,10)
+        g=Guard(p,-p.physical_um-450,.5)
+        g.observe(-p.physical_um-150,0)
+        with self.assertRaises(RuntimeError):g.observe(-p.physical_um-251,0)
+
+    def test_recovery_latches_at_100um_inside_not_first_crossing(self):
+        for d in (1,-1):
+            p=Plan(C,600*d,20,10)
+            g=Guard(p,-d*(p.physical_um+185),.5)
+            g.observe(-d*(p.physical_um-1),0)
+            g.observe(-d*(p.physical_um+1),0)
+            self.assertFalse(g.physical_entered)
+            g.observe(-d*(p.physical_um-99),0)
+            self.assertFalse(g.physical_entered)
+            g.observe(-d*(p.physical_um-100),0)
+            self.assertTrue(g.physical_entered)
+            with self.assertRaises(RuntimeError):g.observe(-d*(p.physical_um+1),0)
+    def test_inside_start_remains_strict(self):
+        p=Plan(C,600,20,10)
+        g=Guard(p,-p.physical_um,.5)
+        with self.assertRaises(RuntimeError):g.observe(-p.physical_um-1,0)
+
+class RecoveryRunTest(ExecutorTest):
+    def test_initial_one_um_noise_can_start_and_complete(self):
+        from travel_limit import run
+        r,a,s=self.fixture();original=r.poll_available;frames=0
+        def poll():
+            nonlocal frames
+            observer=r.state_observer
+            r.state_observer=None
+            original()
+            r.state_observer=observer
+            frames+=1
+            if not any(line=='VEL 600' for _,line in r.writes):
+                x=-C['CAL_LENGTH_UM']//2-185+(frames%2)
+                r.last_state=[str(x),'0','0','0']
+            if observer:observer()
+        r.poll_available=poll
+        self.assertEqual(run(r,a,s),0)
+        self.assertTrue(any(line=='VEL 600' for _,line in r.writes))
+        self.assertEqual(r.writes[-1][1],'VEL 0')

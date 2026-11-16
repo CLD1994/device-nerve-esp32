@@ -45,6 +45,7 @@ class Plan:
 
 
 class Guard:
+    RECOVERY_NOISE_UM = 100
     def __init__(self, plan, start_um, start_tolerance_mm=.5):
         self.plan, self.extreme = plan, start_um
         self.start = start_um
@@ -52,6 +53,7 @@ class Guard:
         if not math.isfinite(start_tolerance_mm) or not 0 <= start_tolerance_mm <= 1:
             raise ValueError('起点容差必须为0..1mm有限数')
         self.physical_entered = abs(start_um) <= plan.physical_um
+        self.recovery_outer_um = plan.physical_um+start_tolerance_mm*1000
         if abs(start_um)>plan.physical_um+start_tolerance_mm*1000:
             raise ValueError('起点超过标定物理范围及有限容差')
         if plan.direction*start_um >= plan.direction*plan.target_um:
@@ -60,9 +62,13 @@ class Guard:
     def observe(self, x, vx, state_age_s=0):
         p = self.plan
         if not self.physical_entered:
-            if p.direction*(x-self.extreme)<0:
-                raise RuntimeError('物理范围外的起点不能继续向外移动')
-            if abs(x)<=p.physical_um: self.physical_entered=True
+            if abs(x)>self.recovery_outer_um:
+                raise RuntimeError('恢复期位置超过绝对起点容差')
+            if p.direction*(x-self.extreme)<-self.RECOVERY_NOISE_UM:
+                raise RuntimeError('恢复期向外回撤超过100µm噪声包络')
+            # 仅原越界起点使用滞回；避免刚跨物理端1µm又被噪声触发。
+            if p.direction*x>=-p.physical_um+self.RECOVERY_NOISE_UM:
+                self.physical_entered=True
         if (self.physical_entered and abs(x)>p.physical_um) or p.direction*x>p.soft_um:
             raise RuntimeError('收到的位置越过目标侧软件边界或物理边界')
         if self.entered and p.direction*x < -p.soft_um:
