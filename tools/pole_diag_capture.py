@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """停机后只读收集摆杆测量失效首证据；不清除、使能或发送运动命令。"""
 import argparse
+from cart_stream import parse_cart_state
 import json
 import re
 import time
@@ -31,6 +32,8 @@ class Capture:
         self.done=False
         self.raw=[]
     def feed(self,line):
+        if parse_cart_state(line) is not None:
+            return None
         if len(line)>2048:raise ValueError('诊断行过长')
         if BACKGROUND.fullmatch(line):return None
         if line.startswith('ERR '):raise ValueError('固件拒绝诊断：'+line)

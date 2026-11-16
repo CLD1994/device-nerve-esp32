@@ -47,6 +47,18 @@ int telemetry_format_measurement(char *buf, size_t len, telemetry_validity_t *ga
     int64_t now_us, bool cart_valid, bool pole_valid,
     int32_t x, int32_t theta, int32_t vx, int32_t vth);
 
+/** 独立小车流门控。只用于诊断，不能代替双路模型观测。 */
+typedef struct {
+    bool initialized;
+    int64_t last_report_us;
+} telemetry_cart_gate_t;
+/** 默认关闭时总返回0。启用时首次或间隔>=20ms才发；边沿不突发。
+ * 时间倒退只重基，不发送。有效帧要求0<=sample_us<=now_us且seq>0。
+ * 缓冲不足/字段非法返回负值且不提交发送状态。 */
+int telemetry_format_cart(char *buf, size_t len, telemetry_cart_gate_t *gate,
+    int64_t now_us, bool valid, int64_t sample_us, uint64_t seq,
+    int32_t x_um, int32_t vx_mm_s);
+
 #ifdef __cplusplus
 }
 #endif

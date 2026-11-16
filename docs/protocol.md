@@ -322,3 +322,18 @@ POLED1 END <run_id>
 FAIL 的协议分类为0无失败、1 SPI事务错误、2全零帧未确认、3 CRC不符；后六项为0..255的原始字节。FAIL保存冻结时最近一次读取失败，必须比较失败序列/时间与AFTER，不能将历史失败直接归因于当前过期或窗口错误。全零帧无法区分合法零角与线路全低，当前仍保守拒绝，不声称已经解决合法零角可用性。
 
 错误使用 `ERR POLEDIAG_DISABLED`、`POLEDIAG_NONE`、`POLEDIAG_BUSY`、`POLEDIAG_FORMAT`，分别表示未编入、无绑定编码器、当前不可导出和格式错误。操作与验证边界见[摆杆失效诊断](pole-diagnostic.md)。
+
+### 独立小车诊断流 CART_STATE1
+
+`Component config → telemetry - 状态遥测 → 独立小车诊断流 CART_STATE1（最多50Hz）`（`CONFIG_TELEMETRY_CART_DIAGNOSTICS`）默认关闭。开启后复用现有小车快照，固定最小间隔 20 ms（最高 50 Hz），不因有效性变化突发、不补发追赶。
+
+```
+CART_STATE1 <device_us> <sample_us> <seq> 1 <x_um> <vx_mm_s>
+CART_STATE1 <device_us> 0
+```
+
+有效帧共 7 个 token：设备组帧单调微秒、同一小车样本单调微秒、成功样本序列、有效位、小车位置 µm、速度 mm/s。无效帧只有 3 个 token，不填假位置/零速度。设备时间非负 int64，`sample_us <= device_us`，序列为 1..UINT64_MAX，x/vx 为 int32。有效性沿用 `cartpos_get_measurement` 全部条件；摆杆失效不取消独立小车帧。
+
+原 `STATE` 和 `VEL_VALID` 含义、双路要求及频率不变；模型仍须等待完整有效观测，不能用本帧替代四维状态。固件连续 10 次摆杆读取失败触发 `FAULT MT6835` 的保护仍然执行。
+
+最大有效帧为 99 字节（含换行），50 Hz 增量最高约 4.95 kB/s。原 STATE 最宽帧 54 字节 × 500 Hz；再保守计 VEL_VALID 每周期变化 14 字节 × 500 Hz，合计约 38.95 kB/s，尚未计事件、配置查询等输出。460800 baud/8N1 的理论单方向容量为 46.08 kB/s；这些是长度预算，不是端到端延迟保证。关闭开关不增加这些帧；开启后 400 Hz 模型的实际串口/调度时序仍需现场验证。

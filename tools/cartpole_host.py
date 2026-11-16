@@ -29,6 +29,7 @@ import time
 
 from velocity_validity import VelocityValidity
 from session_timing import SessionTiming
+from cart_stream import parse_cart_state
 
 
 class Rig:
@@ -256,6 +257,11 @@ class Rig:
             self._output("[UNKNOWN] %r" % line)
 
     def _dispatch(self, line):
+        if line.split()[:1] == ['CART_STATE1']:
+            try: parse_cart_state(line)
+            except ValueError: self._unknown(line)
+            return  # 已知独立小车帧不能刷新默认双路门禁/STATE。
+
         if line.split()[:1] == ["EVENT"]:
             # 先限字段长度再转整数，拒绝符号、下划线和超长十进制串。
             match = re.fullmatch(r"EVENT STEP_LOSS ([0-9]{1,10}) ([0-9]{1,10}) ([0-9]{1,19})", line)
@@ -440,6 +446,12 @@ def cmd_enable(rig, args):
     return 0
 
 
+from cart_motion import CartMotionMixin
+
+class CartRig(CartMotionMixin, Rig):
+    pass
+
+
 def cmd_vel(rig, args):
     rig.timing = SessionTiming(getattr(rig, "_clock", time.monotonic))
     if args.hold is None:
@@ -458,6 +470,11 @@ def cmd_vel(rig, args):
         rig.pump(0.005)
     rig.pump(0.3)
     print("已发送 %d 条 VEL（%.1f Hz）" % (n, n / args.hold))
+    if isinstance(rig, CartMotionMixin):
+        if rig.last_cart:
+            x,vx=rig.motion_cart()
+            print("最新独立小车测量：x=%.3f mm，vx=%d mm/s；非摆杆状态"%(x/1000,vx))
+        return 0
     if rig.last_state:
         x, th, vx, vth = rig.last_state
         print("最新 STATE: x=%s（%.2f mm） θ=%s（%.2f°） vx=%s mm/s vth=%s mrad/s"
@@ -547,6 +564,8 @@ def cmd_console(rig, args):
 
 
 def latest_velocity_for_timing(rig):
+    if isinstance(rig, CartMotionMixin):
+        return rig.motion_cart()[1] if rig.state_is_fresh() else None
     """纯读取观测资格；不调用会改变运动失败锁存的ready。"""
     validity=rig.velocity_validity
     if (rig.last_state is None or not rig.state_is_fresh()
@@ -603,7 +622,7 @@ def main():
         if args.expected_hz is not None and (
                 not math.isfinite(args.expected_hz) or args.expected_hz <= 0):
             ap.error("--expected-hz 必须是正的有限频率")
-    rig = Rig(args.port, args.baud, step_loss_policy=args.step_loss_policy)
+    rig = (CartRig if args.cmd == "vel" else Rig)(args.port, args.baud, step_loss_policy=args.step_loss_policy)
     try:
         table = {
             "confirm-left": cmd_confirm_left, "calib-status": cmd_calib_status,
@@ -629,6 +648,9 @@ def main():
         rc = 1
     finally:
         rig.close()
+        if isinstance(rig, CartMotionMixin):
+            try: print(rig.cart_diagnostic_summary())
+            except Exception: pass
         if isinstance(getattr(rig, "first_failure", None), dict):
             try:
                 diagnostic=rig.failure_summary()

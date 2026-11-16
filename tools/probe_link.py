@@ -1,5 +1,6 @@
 """运动探针共用串口会话与预检；串口、单调时钟和等待函数由调用方注入。"""
 import time
+from cart_stream import parse_cart_state
 from velocity_validity import VelocityValidity
 
 
@@ -59,7 +60,10 @@ class Link:
         while b'\n' in self.buffer:
             raw, self.buffer = self.buffer.split(b'\n', 1)
             try:
-                p = raw.decode('ascii').strip().split()
+                line = raw.decode('ascii').rstrip('\r')
+                if parse_cart_state(line) is not None:
+                    continue
+                p = line.strip().split()
                 if not p:
                     continue
                 if p[0] == 'VEL_VALID':

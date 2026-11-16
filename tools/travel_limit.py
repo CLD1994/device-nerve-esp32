@@ -3,8 +3,17 @@ import math
 import time
 
 
+def motion_cart(rig):
+    if hasattr(rig,'motion_cart'):return rig.motion_cart()
+    x,_,vx,_=map(int,rig.last_state)
+    return x,vx
+
+def has_motion_cart(rig):
+    return rig.last_cart is not None if hasattr(rig,'last_cart') else rig.last_state is not None
+
+
 class Plan:
-    def __init__(self, config, velocity, reserve_mm, inflight_ms):
+    def __init__(self, config, velocity, reserve_mm, inflight_ms, observation_period_s=0):
         if 'WDT_DEC' in config:
             raise ValueError('检测到旧 WDT_DEC；行程工具要求统一 ACC_MAX 的新固件')
         required = ('CAL_STATE','CAL_SAVED','CAL_STORAGE','CAL_LENGTH_UM',
@@ -24,6 +33,8 @@ class Plan:
         self.physical_um = config['CAL_LENGTH_UM']//2
         self.soft_um = self.physical_um-config['X_MARGIN_UM']
         self.target_um = self.direction*(self.soft_um-reserve_mm*1000)
+        self.observation_period_s=observation_period_s
+        if not math.isfinite(observation_period_s) or not 0<=observation_period_s<=.1:raise ValueError("观测周期预算无效")
         self.inflight = inflight_ms/1000 # 显式调试延迟余量，不是测得的全链路上界。
         if config['WDT_MS'] <= 20:
             raise ValueError('WDT_MS 必须大于20ms保活间隔')
@@ -32,11 +43,11 @@ class Plan:
 
     def budget_mm(self, measured_velocity, state_age_s=0):
         if not math.isfinite(state_age_s) or not 0 <= state_age_s <= .1:
-            raise RuntimeError('STATE主机接收年龄无效或超过100ms')
+            raise RuntimeError('测量观测年龄无效或超过100ms')
         v = max(abs(self.velocity),abs(measured_velocity))
         if v > self.config['VEL_MAX']:
             raise RuntimeError('收到的速度超过 VEL_MAX')
-        return v*(state_age_s+self.inflight)+v*v/(2*self.config['ACC_MAX'])
+        return v*(max(state_age_s,self.observation_period_s)+self.inflight)+v*v/(2*self.config['ACC_MAX'])
 
     def watchdog_budget_mm(self, measured_velocity, state_age_s=0):
         normal=self.budget_mm(measured_velocity,state_age_s)
@@ -82,7 +93,7 @@ class Guard:
 
 
 class Stillness:
-    """只用新到STATE逐帧建立200ms、100µm范围停稳证据。"""
+    """只用新到运动测量逐帧建立200ms、100µm范围停稳证据。"""
     def __init__(self, rig, not_before=0):
         self.rig, self.not_before = rig, not_before
         self.since = self.low = self.high = None
@@ -90,7 +101,7 @@ class Stillness:
         self.last_seen = None
 
     def observe(self):
-        x,_,vx,_=map(int,self.rig.last_state)
+        x,vx=motion_cart(self.rig)
         now=self.rig._clock()
         if self.last_seen is not None and now-self.last_seen>.1:
             self.since=self.low=self.high=None
@@ -119,11 +130,12 @@ def run(rig, args, sleep=time.sleep):
     rig.last_mode=None
     for command in ('CALIB?','CONFIG?','QUERY'): rig.send_line(command)
     while rig._clock()<until: poll()
-    p=Plan(dict(rig.replies),args.v,args.reserve_mm,args.inflight_ms)
+    p=Plan(dict(rig.replies),args.v,args.reserve_mm,args.inflight_ms,getattr(rig,"cart_period_s",0))
     if rig.last_reply and rig.last_reply[0]=='ERR': raise RuntimeError('查询被固件拒绝')
-    if not rig.state_is_fresh(): raise RuntimeError('没有新鲜位置状态')
-    x,_,vx,_=map(int,rig.last_state)
+    if not rig.state_is_fresh(): raise RuntimeError('没有新鲜位置状态；小车调试需开启 CONFIG_TELEMETRY_CART_DIAGNOSTICS')
+    x,vx=motion_cart(rig)
     def state_age():
+        if hasattr(rig,"motion_age"):return rig.motion_age()
         if rig.state_received_at is None: raise RuntimeError('STATE接收时间未知')
         return rig._clock()-rig.state_received_at
     guard=Guard(p,x,getattr(args,'start_tolerance_mm',.5))
@@ -136,7 +148,7 @@ def run(rig, args, sleep=time.sleep):
     if rig.last_mode != ('READY','NONE'): raise RuntimeError('行程执行需要 READY NONE；不会自动 ENABLE')
     initial=Stillness(rig)
     def initial_observe():
-        x,_,vx,_=map(int,rig.last_state)
+        x,vx=motion_cart(rig)
         guard.observe(x,vx,state_age())
         initial.observe()
     rig.state_observer=initial_observe
@@ -151,7 +163,7 @@ def run(rig, args, sleep=time.sleep):
     braking=False
     def observe():
         nonlocal braking
-        x,_,vx,_=map(int,rig.last_state)
+        x,vx=motion_cart(rig)
         if guard.observe(x,vx,state_age()): braking=True
     from collections import deque
     messages=deque(maxlen=128)
@@ -206,7 +218,7 @@ def run(rig, args, sleep=time.sleep):
             rig.velocity_validity.failed=True
         finally:
             rig.state_observer=None
-            stop_x=int(rig.last_state[0]) if rig.last_state else None
+            stop_x=motion_cart(rig)[0] if has_motion_cart(rig) else None
             rig.send_line('VEL 0')
         rig.begin_stop_observation()
         # 最后非零写入后的在途假设窗口过去后才累计停稳证据。
@@ -242,7 +254,7 @@ def run(rig, args, sleep=time.sleep):
         rig._output=old_output
     for message in messages: old_output(message)
     if error: print('行程中止：%s'%error)
-    final_x=int(rig.last_state[0]) if rig.last_state else None
+    final_x=motion_cart(rig)[0] if has_motion_cart(rig) else None
     print('零速请求位置µm=%s；最终收到位置µm=%s；距目标µm=%s'%
           (stop_x,final_x,None if final_x is None else p.target_um-final_x))
     print('已观察串口最大待接收字节数=%s'%getattr(rig,'max_rx_waiting','未知'))

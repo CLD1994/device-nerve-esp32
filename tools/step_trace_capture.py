@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Read-only SLT4 software trace capture. Never sends motion/configuration commands."""
 import argparse
+from cart_stream import parse_cart_state
 import json
 import re
 import time
@@ -16,6 +17,8 @@ class Capture:
         self.done = False
 
     def feed(self, line):
+        if parse_cart_state(line) is not None:
+            return None
         if BACKGROUND.fullmatch(line):
             return None
         if line.startswith('ERR '):

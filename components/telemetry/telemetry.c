@@ -33,6 +33,9 @@ static void telemetry_task(void *arg)
     TickType_t last_wake = xTaskGetTickCount();
     char buf[128];
     telemetry_validity_t gate = {0};
+#ifdef CONFIG_TELEMETRY_CART_DIAGNOSTICS
+    telemetry_cart_gate_t cart_gate = {0};
+#endif
 
     ESP_LOGI(TAG, "STATE 流任务已启动：%d Hz，优先级 %d，CPU%d",
              TELEMETRY_RATE_HZ, TELEMETRY_TASK_PRIO, TELEMETRY_TASK_CORE);
@@ -64,6 +67,13 @@ static void telemetry_task(void *arg)
             ESP_LOGE(TAG, "组帧失败（n=%d）——帧被丢弃", n);
         }
 
+#ifdef CONFIG_TELEMETRY_CART_DIAGNOSTICS
+        /* 复用本次小车测量，摆杆失效不影响此帧；不额外采样。 */
+        int cart_n=telemetry_format_cart(buf,sizeof(buf),&cart_gate,esp_timer_get_time(),
+            cart_valid,cart.sampled_at_us,cart.sample_seq,cart.x_um,cart.vx_mm_s);
+        if(cart_n>0) cartproto_send_raw(buf,cart_n);
+        else if(cart_n<0) ESP_LOGE(TAG,"小车诊断组帧失败，帧被丢弃");
+#endif
         if (wdt_ok) {
             esp_task_wdt_reset();
         }

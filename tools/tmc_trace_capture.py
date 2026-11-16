@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """采集 TMCT1/TMCT2 运行期驱动状态缓存；仅发送 TMCTRACE?，不使能、复位或运动。"""
 import argparse
+from cart_stream import parse_cart_state
 import json
 import math
 import re
@@ -42,6 +43,8 @@ class Capture:
         self.done = False
 
     def feed(self, line):
+        if parse_cart_state(line) is not None:
+            return None
         if BACKGROUND.fullmatch(line):
             return None
         if line.startswith('ERR '):

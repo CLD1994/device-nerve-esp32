@@ -238,7 +238,7 @@ class StepLossEventTest(unittest.TestCase):
         def printed(*args,**kwargs):
             self.assertEqual(port.writes[-1],b'VEL 0\n')
         with patch.object(host.sys,'argv',['tool','--port','memory','--step-loss-policy','stop','vel','20']), \
-                patch.object(host,'Rig',return_value=rig) as factory, \
+                patch.object(host,'CartRig',return_value=rig) as factory, \
                 patch.object(host,'cmd_vel',side_effect=command),patch('builtins.print',side_effect=printed), \
                 self.assertRaises(SystemExit) as result:
             host.main()
@@ -319,7 +319,7 @@ class TravelMessageObserverTest(unittest.TestCase):
 
 class DefaultTravelCliTest(unittest.TestCase):
     def invoke(self, options):
-        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']+options), patch.object(host,'Rig') as factory, patch.object(host,'cmd_vel',return_value=0) as command:
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']+options), patch.object(host,'CartRig') as factory, patch.object(host,'cmd_vel',return_value=0) as command:
             with self.assertRaises(SystemExit) as exited: host.main()
             self.assertEqual(exited.exception.code,0)
             return command.call_args.args[1]
@@ -348,14 +348,14 @@ class StartToleranceCliTest(unittest.TestCase):
                 factory.assert_not_called()
     def test_value_error_is_friendly_without_motion(self):
         rig=SimpleNamespace(velocity_validity=SimpleNamespace(active=False),close=lambda:None)
-        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'Rig',return_value=rig),patch('travel_limit.run',side_effect=ValueError('起点超限')),contextlib.redirect_stdout(io.StringIO()) as output:
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'CartRig',return_value=rig),patch('travel_limit.run',side_effect=ValueError('起点超限')),contextlib.redirect_stdout(io.StringIO()) as output:
             with self.assertRaises(SystemExit) as exited:host.main()
             self.assertEqual(exited.exception.code,1)
         self.assertIn('起点超限',output.getvalue())
     def test_active_value_error_requests_zero_before_message(self):
         actions=[]
         rig=SimpleNamespace(velocity_validity=SimpleNamespace(active=True),close=lambda:actions.append('close'),send_line=actions.append)
-        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'Rig',return_value=rig),patch('travel_limit.run',side_effect=ValueError('bad')),patch('builtins.print',side_effect=lambda *a:actions.append('print')):
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'CartRig',return_value=rig),patch('travel_limit.run',side_effect=ValueError('bad')),patch('builtins.print',side_effect=lambda *a:actions.append('print')):
             with self.assertRaises(SystemExit):host.main()
         self.assertEqual(actions[:2],['VEL 0','print'])
 
@@ -392,7 +392,7 @@ class TimingHooksTest(unittest.TestCase):
         def cmd(r,a):
             r.timing=host.SessionTiming(lambda:0)
             return 0
-        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'Rig',return_value=rig),patch.object(host,'cmd_vel',side_effect=cmd),patch.object(host.SessionTiming,'summary',side_effect=ValueError('summary')):
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'CartRig',return_value=rig),patch.object(host,'cmd_vel',side_effect=cmd),patch.object(host.SessionTiming,'summary',side_effect=ValueError('summary')):
             with self.assertRaises(SystemExit) as end:host.main()
         self.assertEqual(end.exception.code,0)
         self.assertEqual(actions,['close'])
@@ -554,7 +554,7 @@ class FailureEvidenceTest(unittest.TestCase):
         p.write=write
         p.close=lambda:events.append(('close',None))
         def fail(rig,args):rig._consume(b'VEL_VALID 1 x\n')
-        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'Rig',return_value=r),patch.object(host,'cmd_vel',side_effect=fail),patch('builtins.print',side_effect=lambda *args:events.append(('print',str(args)))):
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'CartRig',return_value=r),patch.object(host,'cmd_vel',side_effect=fail),patch('builtins.print',side_effect=lambda *args:events.append(('print',str(args)))):
             with self.assertRaises(SystemExit):host.main()
         zero=events.index(('write',b'VEL 0\n'))
         diag=next(i for i,e in enumerate(events) if e[0]=='print' and '首个主机诊断' in e[1])
@@ -565,7 +565,7 @@ class FailureEvidenceTest(unittest.TestCase):
         def fail(rig,args):rig._consume(b'VEL_VALID 1 x\n')
         def output(*args):
             if '首个主机诊断' in str(args):raise OSError('stdout unavailable')
-        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'Rig',return_value=r),patch.object(host,'cmd_vel',side_effect=fail),patch('builtins.print',side_effect=output):
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'CartRig',return_value=r),patch.object(host,'cmd_vel',side_effect=fail),patch('builtins.print',side_effect=output):
             with self.assertRaises(SystemExit) as end:host.main()
         self.assertEqual(end.exception.code,1)
         self.assertTrue(p.closed)

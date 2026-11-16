@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """只读收集固件STEP_LOSS证据；不配置、使能或发送运动命令。"""
 import argparse
+from cart_stream import parse_cart_state
 import json
 import re
 import time
@@ -22,6 +23,8 @@ class Capture:
         self.done = False
 
     def feed(self, line):
+        if parse_cart_state(line) is not None:
+            return None
         if line.startswith("ERR "):
             raise ValueError(f"固件拒绝诊断：{line}")
         if BACKGROUND.fullmatch(line):
