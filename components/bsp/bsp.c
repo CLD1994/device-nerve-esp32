@@ -10,6 +10,7 @@
  */
 
 #include "bsp.h"
+#include "bsp_spi_dma.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -235,15 +236,17 @@ static esp_err_t bsp_spi_add_host(spi_host_device_t host,
         .max_transfer_sz = 8,   /* 当前最大单事务 6 字节，8 留余量 */
     };
 
-    esp_err_t err = spi_bus_initialize(host, &bus_cfg, SPI_DMA_CH_AUTO);
+    spi_dma_chan_t dma = bsp_encoder_spi_dma(host);
+    esp_err_t err = spi_bus_initialize(host, &bus_cfg, dma);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "SPI 总线初始化失败（%s，host=%d）：%s",
                  slot, host, esp_err_to_name(err));
         return err;
     }
 
-    ESP_LOGI(TAG, "SPI %s: host=%d MOSI=%d MISO=%d SCLK=%d",
-             slot, host, mosi, miso, sclk);
+    ESP_LOGI(TAG, "SPI %s: host=%d MOSI=%d MISO=%d SCLK=%d DMA=%s",
+             slot, host, mosi, miso, sclk,
+             dma == SPI_DMA_DISABLED ? "disabled" : "AUTO");
     return ESP_OK;
 }
 

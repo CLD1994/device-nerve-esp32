@@ -139,6 +139,16 @@ menu "BSP - Board Support Package"
         int "摆角编码器 SPI CS GPIO（外接 MT6835）"
         default 14
 
+    config BSP_POLE_ENC_SPI_DMA
+        bool "摆杆编码器 SPI3 使用 DMA"
+        default y
+        help
+            默认开启，保持现有摆杆 SPI3 的 DMA 数据传输方式。
+            关闭后使用控制器内部 FIFO 搬运当前 6 字节全双工事务，
+            仅用于软件单变量对照；小车 SPI2 仍使用 DMA。
+            不改变时钟、SPI 模式、帧校验、采样周期或失效保护。
+            修改后需要重新构建并烧录；不能据单次对照直接认定故障根因。
+
     config BSP_POLE_ENC_SPI_HZ
         int "摆角编码器 SPI clock (Hz)"
         default 1000000
