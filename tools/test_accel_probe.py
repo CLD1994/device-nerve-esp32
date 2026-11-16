@@ -16,7 +16,7 @@ class Tests(unittest.TestCase):
         self.assertFalse(any(x.startswith('VEL') for x in f.writes))
     def test_run_fixed(self):
         f,l=self.run_probe();self.assertIn('VEL 400',f.writes);self.assertEqual(f.v,0)
-        self.assertEqual(f.cfg['WDT_DEC'],5000);self.assertNotIn('ENABLE',f.writes)
+        self.assertNotIn('WDT_DEC',f.cfg);self.assertNotIn('ENABLE',f.writes)
         self.assertTrue(any(x['direction']=='result' for x in l.events))
     def test_clearance_reject(self):
         f=Rig();f.x=180000
@@ -94,7 +94,7 @@ class Tests(unittest.TestCase):
         class Changed(Rig):
             def write(self,data):
                 n=super().write(data)
-                if data==b'CONFIG WDT_DEC 5000\n':self.cfg['WDT_DEC']=100
+                if data==b'CONFIG ACC_MAX 5000\n':self.cfg['ACC_MAX']=100
                 return n
         f=Changed()
         with self.assertRaises(Abort):self.run_probe(f)

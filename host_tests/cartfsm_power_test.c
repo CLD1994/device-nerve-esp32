@@ -51,7 +51,6 @@ void cartaxis_stop(void) { assert(power_test_lock_depth==1);velocity=0;resting=t
 bool cartaxis_try_stop_at_rest(void) { assert(power_test_lock_depth==1);if(!resting)return false;velocity=0;stops++;return true; }
 bool cartaxis_at_rest(void) { return resting; }
 void cartaxis_set_accel_mm_s2(long x) { (void)x; }
-void cartaxis_set_decel_mm_s2(long x) { (void)x; }
 void cartaxis_set_wdt_ms(long x) { (void)x; }
 void cartproto_register_exec(cartproto_exec_cb_t cb) { dispatch=cb; }
 void cartproto_send_ok(const char *n,long v) { (void)v;snprintf(reply,sizeof(reply),"OK %s",n); }

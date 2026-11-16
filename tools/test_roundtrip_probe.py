@@ -23,7 +23,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(len(ends),4)
         self.assertTrue(all(0<e['remaining_um']<=5000 for e in ends))
         self.assertEqual(f.v,0);self.assertNotIn('ENABLE',f.writes);self.assertNotIn('RESET',f.writes)
-        self.assertEqual(f.cfg['ACC_MAX'],10000);self.assertEqual(f.cfg['WDT_DEC'],5000)
+        self.assertEqual(f.cfg['ACC_MAX'],10000);self.assertNotIn('WDT_DEC',f.cfg)
         self.assertIn('VEL -1250',f.writes);self.assertIn('VEL -20',f.writes)
     def test_fault_cancels_remaining_and_approach(self):
         class Fault(Bench):

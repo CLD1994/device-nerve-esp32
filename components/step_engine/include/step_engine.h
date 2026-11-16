@@ -3,7 +3,7 @@
  *
  * 消费带符号目标速度（Q16.16 steps/s），ISR 内每步递推
  * （vel_ramp 纯函数），one-shot alarm 排下一拍。换向经零速。
- * 命令看门狗：超时未喂（vel_target）则按 decel 减速到 0 并停表，
+ * 命令看门狗：超时未喂（vel_target）则按 accel 减速到 0 并停表，
  * 引擎只管停，模式语义（保持 READY）由 cartfsm 保证。
  *
  * 急停（step_engine_stop）：停脉冲、清目标与递推状态、冻结位置计数。
@@ -30,7 +30,7 @@ extern "C" {
  * 的核（app_main 于 CPU0 启动，CPU0 布局由此保证）。
  *
  * STEP/DIR GPIO 不重复初始化（bsp 已配 OUT LOW），仅记录引脚号。
- * 上电默认：加速度/减速度 4000 steps/s²、看门狗关闭、目标 0。
+ * 上电默认：统一加速度 4000 steps/s²、看门狗关闭、目标 0。
  * cartfsm 启动后按参数注册表覆盖。
  */
 esp_err_t step_engine_init(int step_gpio, int dir_gpio);
@@ -51,21 +51,16 @@ bool step_engine_try_stop_at_rest(void);
 /* ---- 速度模式 ---- */
 
 /**
- * @brief 设置追踪加速度（ACC_MAX 换算到 steps/s²）。0 按 1 防御。
+ * @brief 设置正常追踪及看门狗停车共用的加速度（ACC_MAX 换算到 steps/s²）。0 按 1 防御。
  * 任务上下文。立即生效于后续递推。
  */
 void step_engine_vel_set_accel(uint32_t accel_steps_s2);
 
 /**
- * @brief 设置看门狗减速用减速度（WDT_DEC 换算到 steps/s²）。
- */
-void step_engine_vel_set_decel(uint32_t decel_steps_s2);
-
-/**
  * @brief 设置命令看门狗超时（µs）。0 = 关闭。
  *
  * 超时判定在 ISR 内做：定时器原始计数 − 最近一次 vel_target 的
- * 时间戳 > wdt_us 即视为超时，有效目标按 0、速率用 decel。
+ * 时间戳 > wdt_us 即视为超时，有效目标按 0、速率用 accel。
  */
 void step_engine_vel_set_wdt_us(uint32_t wdt_us);
 

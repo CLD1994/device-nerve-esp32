@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from probe_link import Link, Abort, preflight
 
-CONFIG = dict(VEL_MAX=400, ACC_MAX=5000, WDT_MS=100, WDT_DEC=5000)
+CONFIG = dict(VEL_MAX=400, ACC_MAX=5000, WDT_MS=100)
 WINDOW_S = .23
 HOLD_S = .1
 CLEARANCE_UM = 250000
@@ -63,7 +63,7 @@ def execute(link, args):
     print('预检 MODE=%s STATE=%s CAL=%s' % (link.mode, link.state, cal))
     print('固定正向400mm/s ACC5000 hold0.1s；理想72mm，不是位移上界。')
     print('非零窗口0.23s；100mm触发停机/200mm严重越界；两侧净空≥250mm。')
-    print('将设VEL_MAX400 ACC_MAX5000 WDT_MS100 WDT_DEC5000；不恢复旧配置。')
+    print('将设VEL_MAX400 ACC_MAX5000 WDT_MS100；不恢复旧配置。')
     print('无实时电压查询；须人工确认20V、真实净空/比例、独立断电可达。')
     if args.command == 'plan':
         print('PLAN完成：只查询，未配置/使能/运动。')

@@ -14,7 +14,7 @@ class Fake:
         elif cmd=='CALIB?':
             self.rx+=b'OK CAL_STATE 2\nOK CAL_LENGTH_UM 853436\nOK CAL_SAVED 1\nOK CAL_STORAGE 0\n'
         elif cmd=='CONFIG?':
-            for k,v in dict(VEL_MAX=20,ACC_MAX=100,WDT_MS=100,WDT_DEC=100,X_MARGIN_UM=10000,POLE_ZERO_URAD=2159697,POLE_INV=1,X_INV=0,STEP_LOSS_UM=3000).items():
+            for k,v in dict(VEL_MAX=20,ACC_MAX=100,WDT_MS=100,X_MARGIN_UM=10000,POLE_ZERO_URAD=2159697,POLE_INV=1,X_INV=0,STEP_LOSS_UM=3000).items():
                 self.rx+=('OK %s %s\n'%(k,v)).encode()
         elif cmd.startswith('CONFIG '):
             _,k,v=cmd.split(); self.rx+=('OK %s %s\n'%(k,v)).encode()
@@ -26,7 +26,7 @@ class Fake:
 
 class Rig(Fake):
     def __init__(self):
-        super().__init__(); self.cfg=dict(VEL_MAX=20,ACC_MAX=100,WDT_MS=100,WDT_DEC=100,X_MARGIN_UM=10000,POLE_ZERO_URAD=0,POLE_INV=1,X_INV=0,STEP_LOSS_UM=3000)
+        super().__init__(); self.cfg=dict(VEL_MAX=20,ACC_MAX=100,WDT_MS=100,X_MARGIN_UM=10000,POLE_ZERO_URAD=0,POLE_INV=1,X_INV=0,STEP_LOSS_UM=3000)
     def write(self,data):
         cmd=data.decode().strip()
         if cmd=='CONFIG?':

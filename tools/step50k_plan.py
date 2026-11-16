@@ -11,21 +11,21 @@ TRAVEL_MM = 853.325
 SOFT_MARGIN_MM = 10.0
 
 
-def calculate(*, acceleration=9000, hold_s=None, normal_decel=None, watchdog_decel=None,
+def calculate(*, acceleration=9000, hold_s=None, braking_decel=None,
               watchdog_ms=None, inflight_ms=None, margin_mm=None,
               window_s=None, start_from_left_mm=None):
     """返回条件预算，不以用户输入的减速度或延迟假设证明物理停止上界。"""
     if isinstance(acceleration, bool) or not isinstance(acceleration, (int,float)) or not math.isfinite(acceleration) or acceleration != int(acceleration) or not 100 <= acceleration <= 30000:
         raise ValueError("acceleration必须是100..30000 mm/s²整数；软件范围不代表物理极限")
-    inputs = dict(acceleration=acceleration, hold_s=hold_s, normal_decel=normal_decel,
-                  watchdog_decel=watchdog_decel, watchdog_ms=watchdog_ms,
+    inputs = dict(acceleration=acceleration, hold_s=hold_s, braking_decel=braking_decel,
+                  watchdog_ms=watchdog_ms,
                   inflight_ms=inflight_ms, margin_mm=margin_mm,
                   window_s=window_s, start_from_left_mm=start_from_left_mm)
     for name, value in inputs.items():
         if value is not None:
             if isinstance(value, bool) or not math.isfinite(value) or value < 0:
                 raise ValueError(name + ' 必须为非负有限数')
-            if name in ('normal_decel', 'watchdog_decel', 'watchdog_ms', 'window_s') and value == 0:
+            if name in ('braking_decel', 'watchdog_ms', 'window_s') and value == 0:
                 raise ValueError(name + ' 必须大于零')
     v, a = TARGET_SPEED_MM_S, acceleration
     ramp_s = v / a
@@ -35,11 +35,11 @@ def calculate(*, acceleration=9000, hold_s=None, normal_decel=None, watchdog_dec
     if start_from_left_mm is not None and not SOFT_MARGIN_MM <= start_from_left_mm <= TRAVEL_MM - SOFT_MARGIN_MM:
         raise ValueError('起点必须位于已标定行程的软件边界内')
     normal_mm = None
-    if hold_s is not None and normal_decel is not None:
-        normal_mm = ramp_mm + v * hold_s + v * v / (2 * normal_decel)
+    if hold_s is not None and braking_decel is not None:
+        normal_mm = ramp_mm + v * hold_s + v * v / (2 * braking_decel)
     watchdog_mm = None
-    if watchdog_ms is not None and watchdog_decel is not None:
-        watchdog_mm = v * watchdog_ms / 1000 + v * v / (2 * watchdog_decel)
+    if watchdog_ms is not None and braking_decel is not None:
+        watchdog_mm = v * watchdog_ms / 1000 + v * v / (2 * braking_decel)
     forward_mm = None if start_from_left_mm is None else TRAVEL_MM - SOFT_MARGIN_MM - start_from_left_mm
     fault_mm = None
     if all(value is not None for value in (watchdog_mm, inflight_ms, margin_mm, window_s)):
@@ -62,7 +62,7 @@ def calculate(*, acceleration=9000, hold_s=None, normal_decel=None, watchdog_dec
                 limitations=[
                     '仅离线条件计算，没有读取设备、验证配置或执行运动。',
                     '保持时间、减速度、命令在途延迟和附加余量未输入时保持未知，不默认为零。',
-                    '普通VEL 0当前使用ACC_MAX；看门狗使用WDT_DEC，二者须分别核对。',
+                    '普通VEL 0、看门狗及受控故障停车均使用ACC_MAX；预算共用实际制动力假设，额外保留看门狗等待时间。',
                     '在途延迟必须包含最后非零命令在主机、USB、串口及固件接收队列中的滞留；晚到命令可再次喂狗。',
                     '预算成立还依赖实际速度不超过目标上限、指定减速度持续可达及在途延迟确有上界；输入值不证明这些条件。',
                     '软限位越界后才钳制目标，不承担提前制动；断电或打滑时受控减速公式可能失效。',
@@ -76,8 +76,7 @@ def main(argv=None):
     parser.add_argument('--acceleration',type=int,default=9000,help='请求加速度mm/s²，100..30000；默认9000，软件上限非物理极限')
     for option, help_text in (
             ('hold-s', '高速保持时间，秒；未指定则未知'),
-            ('normal-decel', '正常停止减速度假设，mm/s²'),
-            ('watchdog-decel', '看门狗停止减速度假设，mm/s²'),
+            ('braking-decel', '统一停车减速度假设，mm/s²'),
             ('watchdog-ms', '看门狗超时，毫秒；0代表关闭，不可用于本预算'),
             ('inflight-ms', '最后非零命令在途延迟上界假设，毫秒'),
             ('margin-mm', '额外距离余量，mm；不包含已计算的延迟和减速'),

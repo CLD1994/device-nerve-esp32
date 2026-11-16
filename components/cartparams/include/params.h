@@ -1,5 +1,5 @@
 /*
- * params — 参数注册表（九项全量）
+ * params — 参数注册表（八项全量）
  *
  * 纯数据层（无 ESP 依赖，宿主可测）：默认值、合法范围、按名设置。
  * 名称/默认值/范围的权威来源：protocol.md 参数注册表。
@@ -20,13 +20,13 @@ extern "C" {
  * 注册表数组以指定初始化器与本枚举锁定一致；作用点分派一律
  * 经 fw_params_find，不得在 cartfsm.c 重复参数名字面量。 */
 enum {
-    FP_VEL_MAX = 0, FP_ACC_MAX, FP_WDT_MS, FP_WDT_DEC,
+    FP_VEL_MAX = 0, FP_ACC_MAX, FP_WDT_MS,
     FP_X_MARGIN_UM, FP_POLE_ZERO_URAD, FP_POLE_INV,
     FP_X_INV, FP_STEP_LOSS_UM, FP_COUNT,
 };
 
 typedef struct {
-    long vel_max, acc_max, wdt_ms, wdt_dec;
+    long vel_max, acc_max, wdt_ms;
     long x_margin_um;                          /* 软限位两端余量 µm */
     long pole_zero_urad, pole_inv, x_inv, step_loss_um;  /* 台位标定项 */
 } fw_params_t;

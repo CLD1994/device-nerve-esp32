@@ -53,7 +53,6 @@ bool cartaxis_try_stop_at_rest(void) { return true; }
 bool axis_rest=true;
 bool cartaxis_at_rest(void) { return axis_rest; }
 void cartaxis_set_accel_mm_s2(long x) { last_accel=x; }
-void cartaxis_set_decel_mm_s2(long x) { (void)x; }
 void cartaxis_set_wdt_ms(long x) { (void)x; }
 void cartproto_register_exec(cartproto_exec_cb_t cb) { dispatch=cb; }
 void cartproto_send_ok(const char *name,long value) { snprintf(reply,sizeof(reply),"OK %s",name);reply_value=value; }

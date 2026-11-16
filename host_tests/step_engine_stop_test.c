@@ -123,7 +123,7 @@ int main(void)
     /* WDT 使用 alarm 时间快照；较新的喂狗不得被无符号减法当超时。 */
     const int64_t cruise = 1000LL * 65536;
     step_engine_vel_set_accel(1000000);
-    step_engine_vel_set_decel(1000000);
+
     step_engine_vel_set_wdt_us(0);
     step_engine_vel_target(cruise);
     reach_velocity(cruise);
@@ -145,5 +145,46 @@ int main(void)
     timer.callbacks.on_alarm(&timer, &event, timer.context);
     assert(step_engine_vel_now_q16() < cruise);
     step_engine_stop();
+    /* 正、反向 WDT 都使用当前加速度；改加速度不喂狗、不换向、不复活目标。 */
+    for (int sign = -1; sign <= 1; sign += 2) {
+        step_engine_vel_set_wdt_us(0);
+        step_engine_vel_set_accel(1000000);
+        step_engine_vel_target(sign * cruise);
+        reach_velocity(sign * cruise);
+        step_engine_vel_set_accel(1000);
+        step_engine_vel_set_wdt_us(10000);
+        unsigned direction = timer.direction;
+        timer.now += 10001;
+        gptimer_alarm_event_data_t expired = { .alarm_value = timer.now,
+                                               .count_value = timer.now };
+        timer.callbacks.on_alarm(&timer, &expired, timer.context);
+        assert(step_engine_vel_now_q16() == sign * 999LL * 65536);
+        assert(timer.direction == direction);
+        step_engine_vel_set_accel(999000);
+        deliver_alarm(); /* 距改加速度仅约1ms，若错误喂狗将重新追踪非零目标。 */
+        assert(step_engine_vel_now_q16() == 0 && !timer.running);
+        assert(timer.direction == direction);
+        unsigned stopped_pulses = timer.pulses;
+        step_engine_vel_set_accel(2000);
+        deliver_alarm(); /* 零速时改档不能启动或换向。 */
+        assert(step_engine_vel_now_q16() == 0 && !timer.running);
+        assert(timer.pulses == stopped_pulses && timer.direction == direction);
+    }
+    /* 普通目标0与HALT同用当前档，不改变WDT设置也不换向。 */
+    for (int halt = 0; halt <= 1; ++halt) {
+        step_engine_vel_set_wdt_us(0);
+        step_engine_vel_set_accel(1000000);
+        step_engine_vel_target(cruise);
+        reach_velocity(cruise);
+        step_engine_vel_set_accel(1000);
+        if (halt) step_engine_vel_halt(); else step_engine_vel_target(0);
+        unsigned direction = timer.direction;
+        deliver_alarm();
+        assert(step_engine_vel_now_q16() == 999LL * 65536);
+        step_engine_vel_set_accel(999000);
+        deliver_alarm();
+        assert(step_engine_vel_now_q16() == 0 && !timer.running);
+        assert(timer.direction == direction);
+    }
     puts("step_engine_stop: public-contract assertions passed");
 }

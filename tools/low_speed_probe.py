@@ -54,7 +54,7 @@ def motion(link, args, bound):
         raise Abort('起步前速度不在静止范围')
     link.velocity_validity.active = True
     for name, value in [('VEL_MAX', args.velocity), ('ACC_MAX', args.acceleration),
-                        ('WDT_MS', 100), ('WDT_DEC', 100)]:
+                        ('WDT_MS', 100)]:
         reply = link.query('CONFIG %s %d' % (name, value), [name])
         if reply[name] != value:
             raise Abort('配置回执值不匹配')
@@ -105,7 +105,7 @@ def execute(link, args):
     link.record('preflight', {'calibration': cal, 'config': cfg})
     print('预计理想位移 %.2f mm，不是上界；非零窗口最多 %.3f s。' %
           (estimate, args.velocity / args.acceleration + args.hold + .1))
-    print('run将设置VEL_MAX=%d ACC_MAX=%d WDT_MS=100 WDT_DEC=100，不恢复旧高值。'
+    print('run将设置VEL_MAX=%d ACC_MAX=%d WDT_MS=100，不恢复旧高值。'
           % (args.velocity, args.acceleration))
     print('无实时电压查询；请人工核实20V、独立断电、位置比例与两侧净空。')
     if args.command == 'plan':

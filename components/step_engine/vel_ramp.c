@@ -39,15 +39,15 @@ uint32_t vel_ramp_start_dt(uint32_t accel)
 }
 
 bool vel_ramp_next(uint64_t v_q16, bool dir, uint64_t target_q16, bool target_dir,
-                   uint32_t accel, uint32_t decel, bool wdt_expired,
+                   uint32_t accel, bool wdt_expired,
                    uint64_t *out_v_q16, uint32_t *out_dt_us, bool *out_dir_change)
 {
     *out_dir_change = false;
 
-    /* 看门狗超时：有效目标 0、速率 decel、方向不变 */
+    /* 看门狗超时：有效目标 0、速率 accel、方向不变 */
     uint64_t eff_target = wdt_expired ? 0 : target_q16;
     bool     eff_dir    = wdt_expired ? dir : target_dir;
-    uint32_t rate       = wdt_expired ? decel : accel;
+    uint32_t rate       = accel;
     if (rate == 0) {
         rate = 1;   /* 防御 */
     }

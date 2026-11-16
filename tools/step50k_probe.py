@@ -10,8 +10,8 @@ from step50k_plan import calculate, TARGET_SPEED_MM_S, TRAVEL_MM, SOFT_MARGIN_MM
 def budget_for(link, args, cal, cfg):
     if cal['CAL_LENGTH_UM'] != round(TRAVEL_MM * 1000) or cfg['X_MARGIN_UM'] != round(SOFT_MARGIN_MM * 1000):
         raise Abort('实机行程/软边界与预算器不一致，拒绝沿用预算')
-    return calculate(acceleration=args.acceleration, hold_s=args.hold_s, normal_decel=args.normal_decel,
-                     watchdog_decel=args.watchdog_decel, watchdog_ms=args.watchdog_ms,
+    return calculate(acceleration=args.acceleration, hold_s=args.hold_s, braking_decel=args.braking_decel,
+                     watchdog_ms=args.watchdog_ms,
                      inflight_ms=args.inflight_ms, margin_mm=args.margin_mm,
                      window_s=args.window_s,
                      start_from_left_mm=link.state[0] / 1000 + TRAVEL_MM / 2)
@@ -21,28 +21,28 @@ def stop_reserve_mm(args):
     """在操作者给定在途上界下，两种停车路径取较大者。"""
     v=TARGET_SPEED_MM_S
     inflight=v*args.inflight_ms/1000
-    normal=inflight+v*v/(2*args.normal_decel)
-    watchdog=inflight+v*args.watchdog_ms/1000+v*v/(2*args.watchdog_decel)
+    normal=inflight+v*v/(2*args.braking_decel)
+    watchdog=inflight+v*args.watchdog_ms/1000+v*v/(2*args.braking_decel)
     return max(normal,watchdog)+args.margin_mm
 
 
 def validate_run(args, budget):
     if not args.confirm_motion or not args.confirm_clearance:
         raise Abort('run需要明确运动与现场净空确认')
-    required = ('hold_s','margin_mm','normal_decel','watchdog_decel','watchdog_ms','inflight_ms','window_s')
+    required = ('hold_s','margin_mm','braking_decel','watchdog_ms','inflight_ms','window_s')
     if any(getattr(args,k) is None for k in required):
         raise Abort('保持时间、制动能力、窗口、在途预算或余量尚未明确')
     if args.watchdog_ms < 100:
         raise Abort('固定25ms续发/50ms截止只支持WDT_MS至少100；拒绝可能超时后重启的节拍')
-    for name in ('normal_decel_evidence','watchdog_decel_evidence','inflight_evidence'):
+    for name in ('braking_decel_evidence','inflight_evidence'):
         if not isinstance(getattr(args,name),str) or not getattr(args,name).strip():
             raise Abort('缺少证据说明: ' + name)
-    if args.margin_mm <= 0 or args.normal_decel > args.acceleration:
-        raise Abort('额外余量必须为正，正常制动能力不能高于将设置的ACC_MAX')
+    if args.margin_mm <= 0 or args.braking_decel > args.acceleration:
+        raise Abort('额外余量必须为正，制动能力假设不能高于将设置的ACC_MAX')
     if not budget['conditional_fault_budget_fits'] or not budget['conditional_normal_budget_fits']:
         raise Abort('条件停止距离预算超出前方可用行程')
     # 达速判断迟到时仍可能走满整个窗口，正常停车同样按整个窗口预算。
-    normal_window = TARGET_SPEED_MM_S * (args.window_s + args.inflight_ms/1000) + TARGET_SPEED_MM_S**2/(2*args.normal_decel) + args.margin_mm
+    normal_window = TARGET_SPEED_MM_S * (args.window_s + args.inflight_ms/1000) + TARGET_SPEED_MM_S**2/(2*args.braking_decel) + args.margin_mm
     if normal_window > budget['forward_clearance_mm']:
         raise Abort('绝对非零窗口后的正常停车预算不足')
 
@@ -94,15 +94,14 @@ def execute(link,args):
     link.record('plan',budget)
     link.record('operator_declaration',dict(
         source='operator_statement',independently_verified=False,
-        normal_decel_evidence=args.normal_decel_evidence,
-        watchdog_decel_evidence=args.watchdog_decel_evidence,
+        braking_decel_evidence=args.braking_decel_evidence,
         inflight_evidence=args.inflight_evidence,parameters=budget['inputs']))
     if args.command=='plan': return budget
     validate_run(args,budget)
-    print("条件预算不是物理停车保证；ACC_MAX也改变正常VEL0减速度，WDT_DEC保持独立。晚到VEL可再次喂狗。现场须核实20V、安装、净空及独立断电。")
+    print("条件预算不是物理停车保证；正常、看门狗及受控故障停车统一使用ACC_MAX；设定值不证明实际制动力。晚到VEL可再次喂狗。现场须核实20V、安装、净空及独立断电。")
     link.fresh()  # 必须READY；不自动使能。
     link.velocity_validity.active=True
-    stop_timeout=TARGET_SPEED_MM_S/min(args.normal_decel,args.watchdog_decel)+args.watchdog_ms/1000+.5
+    stop_timeout=TARGET_SPEED_MM_S/args.braking_decel+args.watchdog_ms/1000+.5
     failure=None
     last_nonzero_attempt=None
     reached=None
@@ -110,7 +109,7 @@ def execute(link,args):
     try:
         stop_bounded(link,stop_timeout)
         desired=dict(VEL_MAX=int(TARGET_SPEED_MM_S),ACC_MAX=args.acceleration,
-                     WDT_MS=args.watchdog_ms,WDT_DEC=args.watchdog_decel)
+                     WDT_MS=args.watchdog_ms)
         for name,value in desired.items():
             if link.query('CONFIG %s %d'%(name,value),[name])[name] != value:
                 raise Abort('配置回执不匹配: '+name)
@@ -213,10 +212,10 @@ def main(argv=None):
     p.add_argument('--acceleration',type=int,default=9000,help='请求加速度mm/s²，100..30000；同时改变正常VEL0减速度，非物理极限')
     p.add_argument('--port',required=True);p.add_argument('--baud',type=int,default=460800)
     p.add_argument('--out',required=True)
-    for key in ('hold-s','margin-mm','normal-decel','inflight-ms','window-s'):
+    for key in ('hold-s','margin-mm','braking-decel','inflight-ms','window-s'):
         p.add_argument('--'+key,type=float)
-    for key in ('watchdog-decel','watchdog-ms'):p.add_argument('--'+key,type=int)
-    for key in ('normal-decel-evidence','watchdog-decel-evidence','inflight-evidence'):p.add_argument('--'+key)
+    for key in ('watchdog-ms',):p.add_argument('--'+key,type=int)
+    for key in ('braking-decel-evidence','inflight-evidence'):p.add_argument('--'+key)
     p.add_argument('--confirm-motion',action='store_true');p.add_argument('--confirm-clearance',action='store_true')
     args=p.parse_args(argv)
     import serial
