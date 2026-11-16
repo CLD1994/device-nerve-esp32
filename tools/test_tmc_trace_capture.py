@@ -73,6 +73,50 @@ class CaptureTests(unittest.TestCase):
         for line in ['ERR TMCTRACE_BUSY','TMCT2 BEGIN 0','TMCT1 ROW bad','nonsense']:
             with self.assertRaises(ValueError):tool.Capture().feed(line)
 
+class Version2Tests(unittest.TestCase):
+    def capture(self, rows):
+        c=tool.Capture()
+        c.feed(f'TMCT2 BEGIN 3 2 1000000 1 {len(rows)} 0 50000 5000000 6000000')
+        for index, fields in enumerate(rows):c.feed(f'TMCT2 ROW 3 {index} {fields}')
+        return c.feed(f'TMCT2 END 3 {len(rows)}')
+    def test_register_specific_decode_statistics(self):
+        r=self.capture(['1 1000000 1001000 0 111 7','2 1001100 1002000 0 1 7',
+                        '3 1052000 1053000 1 111 0','4 1053100 1054000 2 1 0'])
+        self.assertEqual(r['version'],2)
+        self.assertEqual(r['samples'][1]['decoded'],dict(reset=True,drv_err=True,uv_cp=True))
+        self.assertNotIn('reset',r['samples'][0]['decoded'])
+        self.assertIsNone(r['samples'][2]['decoded'])
+        stats=r['statistics']['by_register']
+        self.assertEqual(stats['GSTAT']['sample_interval_us']['max'],52000)
+        self.assertEqual(stats['DRV_STATUS']['busy_count'],1)
+        self.assertEqual(stats['GSTAT']['read_error_count'],1)
+        self.assertNotIn('otpw',stats['GSTAT']['asserted_flag_counts'])
+        self.assertNotIn('sample_interval_us',r['statistics'])
+    def test_same_register_rows_need_not_alternate(self):
+        r=self.capture(['1 1000000 1001000 0 1 1','2 1050000 1051000 0 1 1'])
+        self.assertEqual(r['statistics']['by_register']['GSTAT']['valid_count'],2)
+        self.assertEqual(r['statistics']['by_register']['GSTAT']['asserted_flag_counts']['reset'],2)
+        self.assertEqual(r['statistics']['by_register']['DRV_STATUS']['valid_count'],0)
+    def test_v2_reg_and_field_validation(self):
+        for fields in ['1 1000000 1001000 0 2 7','1 1000000 1001000 0 7',
+                       '1 1000000 1001000 1 1 1','1 1000000 1001000 2 111 1']:
+            with self.subTest(fields=fields),self.assertRaises(ValueError):self.capture([fields])
+    def test_cannot_mix_versions(self):
+        for version in (1,2):
+            c=tool.Capture();c.feed(f'TMCT{version} BEGIN 3 2 1000000 1 0 0 50000 5000000 6000000')
+            with self.assertRaises(ValueError):c.feed(f'TMCT{3-version} END 3 0')
+    def test_capacity_depends_on_version(self):
+        c=tool.Capture();c.feed('TMCT2 BEGIN 3 2 1000000 1 284 80 50000 5000000 6000000')
+        for header in ['TMCT2 BEGIN 3 2 1000000 1 285 80 50000 5000000 6000000',
+                       'TMCT2 BEGIN 3 2 1000000 1 284 81 50000 5000000 6000000',
+                       'TMCT2 BEGIN 3 2 1000000 1 205 0 50000 5000000 6000000']:
+            with self.assertRaises(ValueError):tool.Capture().feed(header)
+    def test_empty_register_has_no_validity_claim(self):
+        r=self.capture(['1 1000000 1001000 0 111 0'])
+        stats=r['statistics']['by_register']['GSTAT']
+        self.assertEqual(stats['valid_count'],0)
+        self.assertIsNone(stats['sample_interval_us'])
+
 class SerialFake:
     def __init__(self,data):self.data=bytearray(data);self.sent=[]
     def read_until(self,end):return b'partial\n'
@@ -85,6 +129,13 @@ class CollectTests(unittest.TestCase):
     def test_fragmented_read_only(self):
         ser=SerialFake(('\n'.join([BEGIN,*ROWS,END])+'\n').encode())
         self.assertEqual(tool.collect(ser)['count'],3)
+        self.assertEqual(ser.sent,[b'TMCTRACE?\n'])
+    def test_v2_fragmented_read_only(self):
+        data=b'TMCT2 BEGIN 3 2 1000000 1 1 0 50000 5000000 6000000\nTMCT2 ROW 3 0 1 1000000 1001000 0 1 4\nTMCT2 END 3 1\n'
+        ser=SerialFake(data)
+        result=tool.collect(ser)
+        self.assertEqual(result['version'],2)
+        self.assertTrue(result['samples'][0]['decoded']['uv_cp'])
         self.assertEqual(ser.sent,[b'TMCTRACE?\n'])
     def test_short_write(self):
         ser=SerialFake(b'');ser.write=lambda data:0

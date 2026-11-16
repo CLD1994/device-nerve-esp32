@@ -42,7 +42,8 @@ void tmc_trace_core_trigger(tmc_trace_core_t *c,uint32_t run,uint32_t event,int6
     c->banks[c->live].head=c->banks[c->live].count=0;
 }
 void tmc_trace_core_sample(tmc_trace_core_t *c,uint32_t run,const tmc_trace_row_t *input) {
-    if(!run || run!=c->run || input->end_us<input->begin_us || input->status>2) return;
+    if(!run || run!=c->run || input->end_us<input->begin_us || input->status>2 ||
+       (input->reg!=1 && input->reg!=111)) return;
     trim(c);
     tmc_trace_row_t r=*input;r.seq=++c->seq;if(r.status)r.raw=0;
     tmc_trace_bank_t *b=&c->banks[c->live];

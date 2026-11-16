@@ -13,13 +13,15 @@ config CARTFSM_TEST_HOOKS
         注入接口。正式固件保持关闭。
 
 config CARTFSM_TMC_TRACE
-    bool "运行期TMC DRV_STATUS低频只读取证"
+    bool "运行期TMC DRV_STATUS/GSTAT低频取证"
     default n
     select CARTFSM_STEP_LOSS_EVENTS
     help
-        CPU0低优先级任务约50ms尝试一次DRV_STATUS读取；UART锁忙时
+        CPU0低优先级任务每轮依次读取DRV_STATUS/GSTAT后等待50ms；
+        两次读取独立取锁和计时，不是同步快照。UART锁忙时
         不等待并记录busy。保存首次STEP_LOSS约2秒前窗、5秒后窗，
-        停稳后TMCTRACE?导出。不会使能、写寄存器或改变任何保护。
+        停稳后TMCTRACE?以TMCT2导出。不会使能、写寄存器或改变保护。
+        GSTAT含历史标志，读取可能改变其历史状态；不执行写1清除。
         成功取锁后的UART事务仍有等待和共享资源开销，不是无扰动保证。
         适用于当前无运行期settings写入口的应用；不得同时增加电流/
         细分写入任务而不重新审计锁等待及控制时序。开启与关闭需对照。

@@ -199,17 +199,28 @@ bool tmc2209_read_reg(uint8_t reg, uint32_t *val)
     return ok;
 }
 
-tmc2209_read_result_t tmc2209_try_read_drv_status(uint32_t *value)
+static tmc2209_read_result_t try_read_diagnostic(uint8_t reg, uint32_t *value)
 {
     if (!s_initialized || value == NULL) return TMC2209_READ_ERROR;
     if (xSemaphoreTake(s_uart_mutex, 0) != pdTRUE) return TMC2209_READ_BUSY;
 
     uint32_t raw;
-    bool ok = uart_read_reg_locked(0x6f, &raw); /* DRV_STATUS，无读清副作用。 */
+    bool ok = uart_read_reg_locked(reg, &raw);
     xSemaphoreGive(s_uart_mutex);
     if (!ok) return TMC2209_READ_ERROR;
     *value = raw;
     return TMC2209_READ_OK;
+}
+
+tmc2209_read_result_t tmc2209_try_read_drv_status(uint32_t *value)
+{
+    return try_read_diagnostic(0x6f, value);
+}
+
+tmc2209_read_result_t tmc2209_try_read_gstat(uint32_t *value)
+{
+    /* 仅发送 GSTAT 读请求，不发送写清命令。 */
+    return try_read_diagnostic(0x01, value);
 }
 
 bool tmc2209_write_reg(uint8_t reg, uint32_t val)

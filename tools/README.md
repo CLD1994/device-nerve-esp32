@@ -8,7 +8,7 @@
 |---|---|
 | `cartpole_host.py` | 查询、标定、配置、使能及速度命令；不同子命令会改变设备状态，先看 `--help` |
 | `step_loss_capture.py` / `step_trace_capture.py` | SL1 / SLT4 只读证据采集；版本匹配见下文 |
-| `tmc_trace_capture.py` | 只读导出运行期 DRV_STATUS 缓存，见[运行期诊断](../docs/tmc-runtime-diagnostic.md) |
+| `tmc_trace_capture.py` | 只读导出 TMCT2 DRV_STATUS/GSTAT 缓存，兼容旧 TMCT1，见[运行期诊断](../docs/tmc-runtime-diagnostic.md) |
 | `tmc_readonly.py` | TMC 寄存器读回，见 [TMC 指南](../docs/tmc-readonly.md)；不证明真实电流或扭矩 |
 | `velocity_validity.py` | 速度有效性检查，见 [测量有效性](../docs/measurement-validity.md) |
 | `max_accel_run.py` | 加速度试验入口，见 [专用指南](../docs/experiments/acceleration.md) |

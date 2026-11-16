@@ -87,6 +87,15 @@ typedef enum {
  */
 tmc2209_read_result_t tmc2209_try_read_drv_status(uint32_t *value);
 
+/**
+ * @brief 诊断专用：尝试读取 GSTAT（0x01），不发送写清命令。
+ *
+ * 互斥锁、结果与输出更新规则同 try_read_drv_status。GSTAT 描述涉及
+ * 上次读取以来的状态，不能将周期读取视为对状态历史完全无影响。
+ */
+tmc2209_read_result_t tmc2209_try_read_gstat(uint32_t *value);
+
+
 
 /**
  * @brief Write a 32-bit register via UART.

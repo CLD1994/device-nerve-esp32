@@ -21,13 +21,24 @@ static void poll_once(void) {
     bool tail=capture.valid && capture.header.state==0;
     portEXIT_CRITICAL(&trace_lock);
     if(!run || ended || (!tail && cartfsm_mode()!=CM_READY))return;
-    tmc_trace_row_t row={.begin_us=esp_timer_get_time()};
-    /* 无FSM输出锁：只读DRV_STATUS，UART忙时直接留busy记录。 */
-    row.status=(uint32_t)tmc2209_try_read_drv_status(&row.raw);
-    row.end_us=esp_timer_get_time();
-    portENTER_CRITICAL(&trace_lock);
-    tmc_trace_core_sample(&capture,run,&row);
-    portEXIT_CRITICAL(&trace_lock);
+    /* 每轮两个独立事务，不是同步快照；GSTAT读取可能改变历史标志。 */
+    for(unsigned i=0;i<2;i++) {
+        now=esp_timer_get_time();
+        portENTER_CRITICAL(&trace_lock);
+        tmc_trace_core_tick(&capture,now);
+        bool same=capture.run==run;
+        bool done=capture.latched && capture.header.state!=0;
+        bool collecting=capture.valid && capture.header.state==0;
+        portEXIT_CRITICAL(&trace_lock);
+        if(!same || done || (!collecting && cartfsm_mode()!=CM_READY))break;
+        tmc_trace_row_t row={.reg=i?1:111,.begin_us=esp_timer_get_time()};
+        row.status=(uint32_t)(i?tmc2209_try_read_gstat(&row.raw):
+                                tmc2209_try_read_drv_status(&row.raw));
+        row.end_us=esp_timer_get_time();
+        portENTER_CRITICAL(&trace_lock);
+        tmc_trace_core_sample(&capture,run,&row);
+        portEXIT_CRITICAL(&trace_lock);
+    }
 }
 static void task(void *arg) {
     (void)arg;
@@ -61,7 +72,7 @@ void cartfsm_tmc_trace_query(void) {
     if(!valid){cartproto_send_err("TMCTRACE_NONE");return;}
     if(!h.state){cartproto_send_err("TMCTRACE_BUSY");return;}
     char line[256];
-    int n=snprintf(line,sizeof(line),"TMCT1 BEGIN %"PRIu32" %"PRIu32" %"PRId64" %u %u %u %"PRId64" %"PRId64" %"PRId64"\n",
+    int n=snprintf(line,sizeof(line),"TMCT2 BEGIN %"PRIu32" %"PRIu32" %"PRId64" %u %u %u %"PRId64" %"PRId64" %"PRId64"\n",
         h.event_id,h.run_id,h.event_us,h.state,h.count,h.pre_count,TMC_TRACE_PERIOD_US,TMC_TRACE_POST_US,h.ended_us);
     if(!send_line(line,n,sizeof(line)))return;
     for(unsigned i=0;i<h.count;i++) {
@@ -71,11 +82,11 @@ void cartfsm_tmc_trace_query(void) {
         bool got=same && tmc_trace_core_row(&capture,i,&row);
         portEXIT_CRITICAL(&trace_lock);
         if(!got){cartproto_send_err("TMCTRACE_CHANGED");return;}
-        n=snprintf(line,sizeof(line),"TMCT1 ROW %"PRIu32" %u %"PRIu64" %"PRId64" %"PRId64" %"PRIu32" %"PRIu32"\n",
-            h.event_id,i,row.seq,row.begin_us,row.end_us,row.status,row.raw);
+        n=snprintf(line,sizeof(line),"TMCT2 ROW %"PRIu32" %u %"PRIu64" %"PRId64" %"PRId64" %"PRIu32" %"PRIu32" %"PRIu32"\n",
+            h.event_id,i,row.seq,row.begin_us,row.end_us,row.status,row.reg,row.raw);
         if(!send_line(line,n,sizeof(line)))return;
     }
-    n=snprintf(line,sizeof(line),"TMCT1 END %"PRIu32" %u\n",h.event_id,h.count);
+    n=snprintf(line,sizeof(line),"TMCT2 END %"PRIu32" %u\n",h.event_id,h.count);
     (void)send_line(line,n,sizeof(line));
 }
 #endif

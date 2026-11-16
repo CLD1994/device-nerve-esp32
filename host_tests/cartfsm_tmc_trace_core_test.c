@@ -3,10 +3,11 @@
 #include "../components/cartfsm/cartfsm_tmc_trace_core.h"
 static tmc_trace_core_t c;
 static void sample(uint32_t run, int64_t begin, int64_t end, unsigned status) {
-    tmc_trace_row_t r={.begin_us=begin,.end_us=end,.status=status,.raw=123};
+    tmc_trace_row_t r={.begin_us=begin,.end_us=end,.status=status,.reg=111,.raw=123};
     tmc_trace_core_sample(&c,run,&r);
 }
 int main(void) {
+    assert(TMC_TRACE_PRE_CAP==80 && TMC_TRACE_POST_CAP==204 && TMC_TRACE_CAP==284);
     tmc_trace_core_begin_run(&c,1,0);
     for(int i=0;i<60;i++) sample(1,i*50000,i*50000+10,0);
     assert(!tmc_trace_core_header(&c));
@@ -78,5 +79,18 @@ int main(void) {
     sample(10,45000001,45000002,0);sample(10,50000001,50000002,0);
     tmc_trace_core_trigger(&c,10,17,45000000);h=tmc_trace_core_header(&c);
     assert(h->count==0); /* rolling 2-second live window already evicted the early row */
+    tmc_trace_core_begin_run(&c,11,60000000);
+    tmc_trace_row_t invalid={.begin_us=60000000,.end_us=60000001,.reg=2};
+    tmc_trace_core_sample(&c,11,&invalid);
+    invalid.reg=1;tmc_trace_core_sample(&c,11,&invalid);
+    tmc_trace_core_trigger(&c,11,18,60000002);h=tmc_trace_core_header(&c);
+    assert(h->count==1 && tmc_trace_core_row(&c,0,&r) && r.reg==1);
+    /* Both register transactions consume rows, not one nominal sample slot. */
+    tmc_trace_core_begin_run(&c,12,70000000);
+    for(unsigned i=0;i<80;i++)sample(12,70000000+i*25000,70000000+i*25000,0);
+    tmc_trace_core_trigger(&c,12,19,72000000);
+    for(unsigned i=0;i<205;i++)sample(12,72000000+i,72000000+i,0);
+    h=tmc_trace_core_header(&c);assert(h->pre_count==80 && h->count==284 && h->state==0);
+    tmc_trace_core_tick(&c,77000000);assert(h->state==1);
     puts("TMC trace core: all assertions passed");
 }

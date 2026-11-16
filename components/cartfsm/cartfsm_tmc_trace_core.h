@@ -5,13 +5,13 @@
 #define TMC_TRACE_PERIOD_US INT64_C(50000)
 #define TMC_TRACE_PRE_US INT64_C(2000000)
 #define TMC_TRACE_POST_US INT64_C(5000000)
-#define TMC_TRACE_PRE_CAP 40u
-#define TMC_TRACE_POST_CAP 102u
+#define TMC_TRACE_PRE_CAP 80u
+#define TMC_TRACE_POST_CAP 204u
 #define TMC_TRACE_CAP (TMC_TRACE_PRE_CAP + TMC_TRACE_POST_CAP)
 typedef struct {
     uint64_t seq;
     int64_t begin_us, end_us;
-    uint32_t status, raw;
+    uint32_t status, reg, raw;
 } tmc_trace_row_t;
 typedef struct {
     uint32_t event_id, run_id;

@@ -29,6 +29,7 @@ static void reject(void) { uint32_t value=0xdeadbeef;assert(!tmc2209_read_reg(0x
 int main(void) {
  uint32_t value=0;
  assert(tmc2209_try_read_drv_status(&value)==TMC2209_READ_ERROR);
+ assert(tmc2209_try_read_gstat(&value)==TMC2209_READ_ERROR);
  assert(value==0 && tmc_test_mutex_calls==0 && uart_calls==0);
  assert(!tmc2209_read_reg(0x6c,&value));
  tmc2209_hw_config_t cfg={.baud=115200};assert(tmc2209_hw_init(&cfg)==ESP_OK);
@@ -66,5 +67,25 @@ int main(void) {
  response[7]^=1;
  assert(tmc2209_try_read_drv_status(&value)==TMC2209_READ_ERROR);
  assert(value==0xdeadbeef && power_test_lock_depth==0);
- puts("TMC UART read and nonblocking DRV_STATUS contracts: OK");
+ /* GSTAT API also sends only a four-byte read request, never write-clear. */
+ before=uart_calls;locks=tmc_test_mutex_calls;
+ assert(tmc2209_try_read_gstat(NULL)==TMC2209_READ_ERROR);
+ assert(tmc_test_mutex_calls==locks && uart_calls==before);
+ tmc_test_mutex_busy=true;value=0xdeadbeef;
+ assert(tmc2209_try_read_gstat(&value)==TMC2209_READ_BUSY);
+ assert(value==0xdeadbeef && uart_calls==before && tmc_test_mutex_wait==0);
+ assert(power_test_lock_depth==0);tmc_test_mutex_busy=false;
+ response[2]=0x01;response[3]=response[4]=response[5]=0;response[6]=7;
+ response[7]=tmc2209_crc8(response,7);
+ assert(tmc2209_try_read_gstat(&value)==TMC2209_READ_OK);
+ assert(value==7 && tmc_test_mutex_wait==0 && power_test_lock_depth==0);
+ assert(request[0]==5 && request[1]==0 && request[2]==0x01);
+ assert(request[3]==tmc2209_crc8(request,3));
+ value=0xdeadbeef;wait_fail=true;
+ assert(tmc2209_try_read_gstat(&value)==TMC2209_READ_ERROR);
+ assert(value==0xdeadbeef && power_test_lock_depth==0);wait_fail=false;
+ response[7]^=1;
+ assert(tmc2209_try_read_gstat(&value)==TMC2209_READ_ERROR);
+ assert(value==0xdeadbeef && power_test_lock_depth==0);
+ puts("TMC UART read and nonblocking DRV_STATUS/GSTAT contracts: OK");
 }

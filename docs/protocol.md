@@ -252,15 +252,15 @@ READY或仍减速时回`ERR STEPLOSS_BUSY`，无记录回`ERR STEPLOSS_NONE`。
 
 ## 可选运行期 TMC 状态缓存
 
-`TMCTRACE?` 只读导出 `CONFIG_CARTFSM_TMC_TRACE` 保存的 DRV_STATUS 事件窗口。
+`TMCTRACE?` 只读导出 `CONFIG_CARTFSM_TMC_TRACE` 保存的 DRV_STATUS 与 GSTAT 事件窗口。
 该配置默认关闭，开启时选择 STEP_LOSS 事件开关，不自动选择软件轨迹或 observe-only。
 仅允许在 DISABLED 或 FAULT 且引擎已停、事件后窗已完成或被新运行截断时读取。
 它不执行现场寄存器读取，不改变运动、故障、标定或配置状态。
 
 ```text
-TMCT1 BEGIN <event_id> <run_id> <event_us> <state> <count> <pre_count> <period_us> <post_window_us> <ended_us>
-TMCT1 ROW <event_id> <index> <seq> <begin_us> <end_us> <status> <raw>
-TMCT1 END <event_id> <count>
+TMCT2 BEGIN <event_id> <run_id> <event_us> <state> <count> <pre_count> <period_us> <post_window_us> <ended_us>
+TMCT2 ROW <event_id> <index> <seq> <begin_us> <end_us> <status> <reg> <raw>
+TMCT2 END <event_id> <count>
 ```
 
 所有字段为非负十进制整数，设备时间单位为 µs。字段含义如下：
@@ -270,11 +270,11 @@ TMCT1 END <event_id> <count>
 | `event_id` / `run_id` | 非零事件与运行身份，须与相应 STEP_LOSS 事件匹配；ROW/END 重复事件身份用于核对 |
 | `event_us` / `ended_us` | 事件触发和窗口结束的设备单调时间；不得用主机到达时间替代 |
 | `state` | 1 表示设备时间已达到 event_us + 5000000；2 表示新运行提前结束旧窗口，不应视作完整后窗 |
-| `count` / `pre_count` | 总记录数最多 142，前窗最多 40，后窗最多 102；允许零条，不代表驱动正常 |
-| `period_us` / `post_window_us` | 目标采样周期 50000、后窗时长 5000000；实际间隔由样本时间计算 |
+| `count` / `pre_count` | 总记录数最多 284，前窗最多 80，后窗最多 204；允许零条，不代表驱动正常 |
+| `period_us` / `post_window_us` | 轮次等待间隔 50000、后窗时长 5000000；实际间隔由样本时间计算 |
 | `index` / `seq` | index 从 0 连续至 count−1；seq 严格递增但允许间断；锁忙/读取失败也有序列 |
 | `begin_us` / `end_us` | MCU 尝试读取前后的时间，end >= begin；锁忙的两时刻也不保证相等 |
-| `status` / `raw` | status=0 时 raw 为有效 uint32 DRV_STATUS；1 为 UART 锁忙，2 为读取错误，后两者 raw=0 仅占位，不得解码为无告警 |
+| `status` / `raw` | status=0 时 raw 为所标寄存器的有效 uint32；1 为 UART 锁忙，2 为读取错误，后两者 raw=0 仅占位，不得解码为无告警 |
 
 前窗记录 end 在 `[event_us−2000000, event_us]` 内，后窗 end 在
 `[event_us, event_us+5000000]` 内。事务跨过事件时刻归后窗；已提交记录与事件同微秒
@@ -286,5 +286,14 @@ TMCT1 END <event_id> <count>
 `CHANGED`（导出期间快照改变）、`FORMAT`（组帧失败）；后五项同样带 `TMCTRACE_` 前缀。
 任何错误、缺行、重复索引、身份混用或 END 计数不符都不能视为有效完整报告。
 
-本协议读取低频缓存，不能排除样本间瞬态或欠压，不提供告警位永久锁存保证。
+本协议读取低频缓存，不能排除样本间瞬态或所有供电问题，不提供告警位永久锁存保证。
 工具、原厂位语义和观测限制见[运行期 TMC 诊断](tmc-runtime-diagnostic.md)。
+
+TMCT2 的 `reg` 为 1（GSTAT/0x01）或 111（DRV_STATUS/0x6F），其他寄存器值非法。
+每轮依次独立尝试 DRV_STATUS、GSTAT，最后等待 50 ms；两个事务各自带时间戳和状态，
+可分属不同事件窗口，不能合并为同步快照。统计间隔必须按寄存器分别计算；运行/模式切换可能取消第二次读取，不能要求行严格交替或成对。
+
+旧 TMCT1 的 BEGIN/END 字段顺序相同，ROW 没有 reg 字段，所有记录均为 DRV_STATUS；
+容量为前 40、后 102、总 142 条。新版采集工具兼容 TMCT1，但输出的 version 仍为 1，
+不宣称拥有 GSTAT 证据；TMCT2 输出 version=2，不能在一次应答中混用版本。
+GSTAT 的 R+WC、上次读取以来措辞及 uv_cp 非锁存限制见运行期诊断指南；本功能不发送寄存器清除写入。
