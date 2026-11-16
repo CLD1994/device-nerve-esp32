@@ -10,13 +10,13 @@ class PlannerTest(unittest.TestCase):
         for velocity in (600, -600):
             p = Plan(C, velocity, 20, 50)
             self.assertEqual(p.target_um, (1 if velocity > 0 else -1)*396970)
-            self.assertAlmostEqual(p.budget_mm(0),170)
+            self.assertAlmostEqual(p.budget_mm(0),50)
     def test_reserve_is_not_added_to_braking_budget(self):
-        self.assertAlmostEqual(Plan(C,600,40,50).budget_mm(0),170)
+        self.assertAlmostEqual(Plan(C,600,40,50).budget_mm(0),50)
     def test_shared_acceleration_changes_watchdog_braking(self):
-        self.assertAlmostEqual(Plan(dict(C, ACC_MAX=10000),600,20,50).budget_mm(0),168)
-        self.assertAlmostEqual(Plan(dict(C, ACC_MAX=5000),600,20,50).budget_mm(0),186)
-        self.assertAlmostEqual(Plan(dict(C, ACC_MAX=10000),600,20,0).budget_mm(0),138)
+        self.assertAlmostEqual(Plan(dict(C, ACC_MAX=10000),600,20,50).budget_mm(0),48)
+        self.assertAlmostEqual(Plan(dict(C, ACC_MAX=5000),600,20,50).budget_mm(0),66)
+        self.assertAlmostEqual(Plan(dict(C, ACC_MAX=10000),600,20,0).budget_mm(0),18)
     def test_invalid_configuration(self):
         for key,value in [('CAL_STATE',3),('CAL_SAVED',0),('CAL_STORAGE',1),('ACC_MAX',0),('CAL_LENGTH_UM',0)]:
             with self.subTest(key=key), self.assertRaises(ValueError): Plan(dict(C,**{key:value}),600,20,50)
@@ -29,12 +29,12 @@ class PlannerTest(unittest.TestCase):
     def test_guard_brakes_before_target(self):
         g=Guard(Plan(C,600,20,50),0)
         self.assertFalse(g.observe(0,0))
-        self.assertTrue(g.observe(227000,600))
+        self.assertTrue(g.observe(347000,600))
     def test_guard_direction_and_soft_limit(self):
         for x,v in [(-3001,0),(417000,0),(0,1251)]:
             with self.assertRaises(RuntimeError): Guard(Plan(C,600,20,50),0).observe(x,v)
     def test_negative_remaining(self):
-        self.assertTrue(Guard(Plan(C,-600,20,50),0).observe(-300000,-600))
+        self.assertTrue(Guard(Plan(C,-600,20,50),0).observe(-350000,-600))
 
 if __name__ == '__main__': unittest.main()
 
@@ -72,7 +72,7 @@ class ExecutorTest(unittest.TestCase):
                 moving=any(s=='VEL 600' for _,s in self.writes)
                 zero=bool(self.writes and self.writes[-1][1]=='VEL 0')
                 if moving and not zero:
-                    x=280000 if self.t>.7 else 1000
+                    x=350000 if self.t>.7 else 1000
                     if mode=='reverse': x=-4000
                     if mode=='timeout': x=1000
                     self.last_state=[str(x),'0','600','0']
@@ -199,3 +199,25 @@ class InitialToleranceChainTest(ExecutorTest):
         r.poll_available=poll
         with self.assertRaises(RuntimeError):run(r,a,s)
         self.assertFalse(any(line.startswith('VEL ') and line!='VEL 0' for _,line in r.writes))
+
+class DynamicNormalBudgetTest(unittest.TestCase):
+    def test_watchdog_wait_is_separate_from_normal_trigger(self):
+        p=Plan(dict(C,ACC_MAX=10000),600,20,50)
+        self.assertAlmostEqual(p.budget_mm(0,0),48)
+        self.assertAlmostEqual(p.watchdog_budget_mm(0,0),108)
+        self.assertAlmostEqual(p.budget_mm(0,.02),60)
+    def test_actual_speed_and_stale_age(self):
+        p=Plan(dict(C,ACC_MAX=10000),600,20,50)
+        self.assertAlmostEqual(p.budget_mm(800,.01),80)
+        for age in (-.001,.101,float('nan')):
+            with self.assertRaises(RuntimeError): p.budget_mm(0,age)
+    def test_latest_age_changes_trigger_without_new_position(self):
+        p=Plan(dict(C,ACC_MAX=10000),600,20,50)
+        g=Guard(p,0)
+        self.assertFalse(g.observe(340000,600,0))
+        self.assertTrue(g.observe(340000,600,.02))
+
+    def test_default_ten_ms_debug_assumption(self):
+        p=Plan(dict(C,ACC_MAX=10000),600,20,10)
+        self.assertAlmostEqual(p.budget_mm(0,0),24)
+        self.assertAlmostEqual(p.watchdog_budget_mm(0,0),84)

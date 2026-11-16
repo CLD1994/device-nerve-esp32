@@ -326,6 +326,7 @@ class DefaultTravelCliTest(unittest.TestCase):
     def test_default_is_travel_not_one_second(self):
         args=self.invoke([])
         self.assertIsNone(args.hold)
+        self.assertEqual(args.inflight_ms,10)
         rig=SimpleNamespace()
         with patch('travel_limit.run',return_value=0) as run:
             self.assertEqual(host.cmd_vel(rig,args),0)
@@ -357,3 +358,14 @@ class StartToleranceCliTest(unittest.TestCase):
         with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'Rig',return_value=rig),patch('travel_limit.run',side_effect=ValueError('bad')),patch('builtins.print',side_effect=lambda *a:actions.append('print')):
             with self.assertRaises(SystemExit):host.main()
         self.assertEqual(actions[:2],['VEL 0','print'])
+
+class TravelBacklogTest(unittest.TestCase):
+    def test_known_backlog_rejected_not_retimestamped_as_fresh(self):
+        rig,port,_,_=session(host.Rig)
+        port.timeout=.2;port.in_waiting=4097
+        with patch.object(port,'read') as read:
+            with self.assertRaises(RuntimeError):rig.poll_available()
+            read.assert_not_called()
+        self.assertTrue(rig.velocity_validity.failed)
+        self.assertEqual(rig.max_rx_waiting,4097)
+        self.assertEqual(port.timeout,.2)

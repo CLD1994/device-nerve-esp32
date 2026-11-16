@@ -24,18 +24,24 @@ class Plan:
         self.physical_um = config['CAL_LENGTH_UM']//2
         self.soft_um = self.physical_um-config['X_MARGIN_UM']
         self.target_um = self.direction*(self.soft_um-reserve_mm*1000)
-        self.inflight = inflight_ms/1000 + .1 # 主机允许STATE接收年龄另计100ms；非设备采样年龄。
+        self.inflight = inflight_ms/1000 # 显式调试延迟余量，不是测得的全链路上界。
         if config['WDT_MS'] <= 20:
             raise ValueError('WDT_MS 必须大于20ms保活间隔')
         if self.soft_um <= 0 or self.direction*self.target_um <= 0:
             raise ValueError('余量覆盖整个可用行程')
 
-    def budget_mm(self, measured_velocity):
+    def budget_mm(self, measured_velocity, state_age_s=0):
+        if not math.isfinite(state_age_s) or not 0 <= state_age_s <= .1:
+            raise RuntimeError('STATE主机接收年龄无效或超过100ms')
         v = max(abs(self.velocity),abs(measured_velocity))
         if v > self.config['VEL_MAX']:
             raise RuntimeError('收到的速度超过 VEL_MAX')
-        # 两条停车路径共用 ACC_MAX；WDT 项只比正常停车多等待窗口。
-        return v*(self.inflight+self.config['WDT_MS']/1000)+v*v/(2*self.config['ACC_MAX'])
+        return v*(state_age_s+self.inflight)+v*v/(2*self.config['ACC_MAX'])
+
+    def watchdog_budget_mm(self, measured_velocity, state_age_s=0):
+        normal=self.budget_mm(measured_velocity,state_age_s)
+        v=max(abs(self.velocity),abs(measured_velocity))
+        return normal+v*self.config['WDT_MS']/1000
 
 
 class Guard:
@@ -51,7 +57,7 @@ class Guard:
         if plan.direction*start_um >= plan.direction*plan.target_um:
             raise ValueError('目标不在请求方向前方')
 
-    def observe(self, x, vx):
+    def observe(self, x, vx, state_age_s=0):
         p = self.plan
         if not self.physical_entered:
             if p.direction*(x-self.extreme)<0:
@@ -66,7 +72,7 @@ class Guard:
             raise RuntimeError('收到的位置反向移动超过 3 mm')
         if p.direction*(x-self.extreme) > 0:
             self.extreme = x
-        return p.direction*(p.target_um-x)/1000 <= p.budget_mm(vx)
+        return p.direction*(p.target_um-x)/1000 <= p.budget_mm(vx,state_age_s)
 
 
 class Stillness:
@@ -111,16 +117,20 @@ def run(rig, args, sleep=time.sleep):
     if rig.last_reply and rig.last_reply[0]=='ERR': raise RuntimeError('查询被固件拒绝')
     if not rig.state_is_fresh(): raise RuntimeError('没有新鲜位置状态')
     x,_,vx,_=map(int,rig.last_state)
+    def state_age():
+        if rig.state_received_at is None: raise RuntimeError('STATE接收时间未知')
+        return rig._clock()-rig.state_received_at
     guard=Guard(p,x,getattr(args,'start_tolerance_mm',.5))
-    if guard.observe(x,vx): raise RuntimeError('起点剩余距离不足制动预算')
-    print('物理端 ±%.3f mm；软件端 ±%.3f mm；目标 %.3f mm；当前制动预算 %.3f mm'
-          %(p.physical_um/1000,p.soft_um/1000,p.target_um/1000,p.budget_mm(vx)))
+    if guard.observe(x,vx,state_age()): raise RuntimeError('起点剩余距离不足制动预算')
+    print('物理端 ±%.3f mm；软件端 ±%.3f mm；目标 %.3f mm；正常提前制动预算 %.3f mm；异常断链条件预算 %.3f mm'
+          %(p.physical_um/1000,p.soft_um/1000,p.target_um/1000,p.budget_mm(vx,state_age()),p.watchdog_budget_mm(vx,state_age())))
+    print('已观察串口最大待接收字节数=%s；不能据此推算设备采样或全链路延迟'%getattr(rig,'max_rx_waiting','未知'))
     if args.plan: return 0
     if rig.last_mode != ('READY','NONE'): raise RuntimeError('行程执行需要 READY NONE；不会自动 ENABLE')
     initial=Stillness(rig)
     def initial_observe():
         x,_,vx,_=map(int,rig.last_state)
-        guard.observe(x,vx)
+        guard.observe(x,vx,state_age())
         initial.observe()
     rig.state_observer=initial_observe
     try:
@@ -134,7 +144,7 @@ def run(rig, args, sleep=time.sleep):
     def observe():
         nonlocal braking
         x,_,vx,_=map(int,rig.last_state)
-        if guard.observe(x,vx): braking=True
+        if guard.observe(x,vx,state_age()): braking=True
     from collections import deque
     messages=deque(maxlen=128)
     old_output=rig._output
@@ -213,5 +223,6 @@ def run(rig, args, sleep=time.sleep):
     final_x=int(rig.last_state[0]) if rig.last_state else None
     print('零速请求位置µm=%s；最终收到位置µm=%s；距目标µm=%s'%
           (stop_x,final_x,None if final_x is None else p.target_um-final_x))
+    print('已观察串口最大待接收字节数=%s'%getattr(rig,'max_rx_waiting','未知'))
     print('收到停稳证据' if confirmed else '停稳未确认；需现场确认停止')
     return 0 if confirmed and error is None else 1

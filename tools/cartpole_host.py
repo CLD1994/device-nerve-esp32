@@ -58,6 +58,7 @@ class Rig:
         self.state_count = 0
         self.state_observer = None
         self.message_observer = None
+        self.max_rx_waiting = 0
         self.unknown_count = 0
         # 跨 pump 调用持久的接收缓冲：未凑齐的半行必须留到下次继续，
         # 不得随窗口丢弃——STATE 流近乎连续，0.2 s 窗口边界几乎必然
@@ -119,11 +120,15 @@ class Rig:
                 raise RuntimeError("活动会话收到失效或损坏数据；停止运动")
 
     def poll_available(self):
-        """行程模式一次最多读取4096字节，不等待补满read。"""
+        """行程模式拒绝超过4096字节的已知积压，其余非阻塞读取。"""
         old_timeout = self.ser.timeout
         try:
             self.ser.timeout = 0
-            size = min(4096, self.ser.in_waiting)
+            size = self.ser.in_waiting
+            self.max_rx_waiting = max(self.max_rx_waiting, size)
+            if size > 4096:
+                self.velocity_validity.failed = True
+                raise RuntimeError('串口待接收积压超过4096字节；禁止以重新接收时间继续运动')
             self._consume(self.ser.read(size) if size else b"")
         finally:
             self.ser.timeout = old_timeout
@@ -424,7 +429,7 @@ def main():
     group.add_argument("--hold", type=float, default=None)
     p.add_argument("--reserve-mm", type=float, default=20)
     p.add_argument("--start-tolerance-mm", type=float, default=.5, help="起点读数容差0..1mm，仅允许向内")
-    p.add_argument("--inflight-ms", type=float, default=50)
+    p.add_argument("--inflight-ms", type=float, default=10, help="调试延迟余量ms，默认10；非实测延迟上界")
     p.add_argument("--max-seconds", type=float, default=30)
     group.add_argument("--plan", action="store_true", help="只读单程规划，不发送运动命令")
     p = sub.add_parser("config"); p.add_argument("name"); p.add_argument("value", type=int)
