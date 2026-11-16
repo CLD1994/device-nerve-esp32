@@ -138,5 +138,148 @@ class DisableCommandTest(unittest.TestCase):
             rig.send_line.assert_called_once_with('DISABLE')
 
 
+class StepLossEventTest(unittest.TestCase):
+    def active(self, **kwargs):
+        rig, port, clock, messages = session(host.Rig, **kwargs)
+        receive(rig, port, 'VEL_VALID 1 1', 'STATE 10 20 0 0')
+        rig.send_line('VEL 20')
+        return rig, port, clock, messages
+
+    def test_default_report_keeps_active_state_and_sends_nothing(self):
+        rig, port, _, messages = self.active()
+        receive(rig, port, 'EVENT STEP_LOSS 2 2 123456789')
+        self.assertEqual(rig.unknown_count, 0)
+        self.assertEqual(rig.state_count, 1)
+        self.assertEqual(rig.last_state, ['10', '20', '0', '0'])
+        self.assertFalse(rig.velocity_validity.failed)
+        self.assertEqual(rig.event_count, 1)
+        self.assertEqual(rig.last_step_loss_event['device_us'], 123456789)
+        self.assertEqual(rig.last_step_loss_event['event_id'], 2)
+        self.assertEqual(rig.last_step_loss_event['run_id'], 2)
+        self.assertIsNone(rig.last_mode)
+        self.assertTrue(any('EVENT STEP_LOSS 2 2 123456789' in m for m in messages))
+        self.assertEqual(port.writes, [b'VEL 20\n'])
+        rig.send_line('VEL 20')
+        self.assertEqual(port.writes[-1], b'VEL 20\n')
+
+    def test_duplicate_event_is_counted_without_inventing_new_run(self):
+        rig, port, _, _ = self.active()
+        receive(rig, port, 'EVENT STEP_LOSS 2 2 123', 'EVENT STEP_LOSS 2 2 123')
+        self.assertEqual(rig.event_count, 2)
+        self.assertEqual(rig.last_step_loss_event['run_id'], 2)
+
+    def test_inactive_stop_reports_without_motion(self):
+        rig, port, _, messages = session(host.Rig, step_loss_policy='stop')
+        receive(rig, port, 'EVENT STEP_LOSS 1 1 0')
+        self.assertEqual(rig.event_count, 1)
+        self.assertFalse(rig.velocity_validity.failed)
+        self.assertTrue(messages)
+        self.assertEqual(port.writes, [])
+
+    def test_uint_boundaries_are_valid(self):
+        rig, port, _, _ = self.active()
+        receive(rig, port, 'EVENT STEP_LOSS 4294967295 4294967295 9223372036854775807')
+        self.assertEqual(rig.event_count, 1)
+        self.assertEqual(rig.unknown_count, 0)
+
+    def test_malformed_and_unknown_events_keep_existing_failure(self):
+        bad = ['EVENT STEP_LOSS 0 1 0','EVENT STEP_LOSS 1 0 0',
+               'EVENT STEP_LOSS -1 1 0','EVENT STEP_LOSS 1 1 -1',
+               'EVENT STEP_LOSS 4294967296 1 0','EVENT STEP_LOSS 1 4294967296 0',
+               'EVENT STEP_LOSS 1 1 9223372036854775808',
+               'EVENT STEP_LOSS +1 1 0','EVENT STEP_LOSS 1_0 1 0',
+               'EVENT STEP_LOSS one 1 0','EVENT OTHER 1 1 0',
+               'EVENT STEP_LOSS 1 1','EVENT STEP_LOSS 1 1 0 extra',
+               'EVENT STEP_LOSS '+'0'*10000+'1 1 0']
+        for line in bad:
+            with self.subTest(line=line[:80]):
+                rig, port, _, messages = self.active()
+                port.feed((line+"\n").encode("ascii"))
+                with self.assertRaises(RuntimeError):rig.pump(.1)
+                self.assertEqual(rig.unknown_count,1)
+                self.assertEqual(rig.event_count,0)
+                self.assertIsNone(rig.last_state)
+                self.assertTrue(rig.velocity_validity.failed)
+                self.assertEqual(messages,[])
+
+    def test_report_does_not_disable_other_gates(self):
+        for fault in ['VEL_VALID 0 1','BAD LINE']:
+            rig, port, _, _ = self.active()
+            receive(rig,port,'EVENT STEP_LOSS 1 1 0')
+            with self.assertRaises(RuntimeError):receive(rig,port,fault)
+            with self.assertRaises(RuntimeError):rig.send_line('VEL 20')
+        rig, port, _, _ = self.active()
+        receive(rig,port,'EVENT STEP_LOSS 1 1 0','MODE FAULT POWER')
+        self.assertEqual(rig.last_mode,('FAULT','POWER'))
+
+    def test_stop_records_then_latches_without_stdout_before_zero_request(self):
+        rig, port, _, messages = self.active(step_loss_policy='stop')
+        with self.assertRaisesRegex(RuntimeError,'STEP_LOSS.*2.*2.*123'):
+            receive(rig,port,'EVENT STEP_LOSS 2 2 123')
+        self.assertEqual(rig.event_count,1)
+        self.assertEqual(rig.last_step_loss_event['event_id'],2)
+        self.assertEqual(messages,[])
+        self.assertTrue(rig.velocity_validity.failed)
+        with self.assertRaises(RuntimeError):rig.send_line('VEL 20')
+        rig.send_line('VEL 0')
+        self.assertEqual(port.writes,[b'VEL 20\n',b'VEL 0\n'])
+
+    def test_invalid_policy_never_opens_port(self):
+        from unittest.mock import Mock
+        factory=Mock()
+        with self.assertRaises(ValueError):host.Rig('unused',serial_factory=factory,step_loss_policy='other')
+        factory.assert_not_called()
+
+    def test_main_stop_sends_zero_before_print_and_no_more_motion(self):
+        rig, port, _, _ = self.active(step_loss_policy='stop')
+        def command(rig,args):
+            receive(rig,port,'EVENT STEP_LOSS 2 2 123')
+            rig.send_line('VEL 20')
+        def printed(*args,**kwargs):
+            self.assertEqual(port.writes[-1],b'VEL 0\n')
+        with patch.object(host.sys,'argv',['tool','--port','memory','--step-loss-policy','stop','vel','20']), \
+                patch.object(host,'Rig',return_value=rig) as factory, \
+                patch.object(host,'cmd_vel',side_effect=command),patch('builtins.print',side_effect=printed), \
+                self.assertRaises(SystemExit) as result:
+            host.main()
+        self.assertEqual(result.exception.code,1)
+        self.assertEqual(port.writes,[b'VEL 20\n',b'VEL 0\n'])
+        self.assertTrue(port.closed)
+        self.assertEqual(factory.call_args.kwargs['step_loss_policy'],'stop')
+
+    def test_report_preserves_reply_mode_and_state_timestamp(self):
+        rig, port, _, _ = self.active()
+        receive(rig,port,'MODE READY NONE','OK VEL_MAX 1250')
+        old=(rig.last_reply,dict(rig.replies),rig.last_mode,rig.state_received_at)
+        receive(rig,port,'EVENT STEP_LOSS 2 99 123')
+        self.assertEqual((rig.last_reply,rig.replies,rig.last_mode,rig.state_received_at),old)
+        self.assertEqual(rig.last_step_loss_event['run_id'],99)
+
+    def test_real_cli_query_uses_report_default_and_serial_bytes(self):
+        rig_type=host.Rig
+        made=[]
+        def factory(port,baud,**kwargs):
+            rig, transport, _, messages=session(rig_type,**kwargs)
+            transport.feed(b'EVENT STEP_LOSS 2 2 123\nMODE DISABLED NONE\n')
+            made.append((rig,transport,messages))
+            return rig
+        with patch.object(host.sys,'argv',['tool','--port','memory','query']), \
+                patch.object(host,'Rig',side_effect=factory),self.assertRaises(SystemExit) as result:
+            host.main()
+        self.assertEqual(result.exception.code,0)
+        rig,transport,messages=made[0]
+        self.assertEqual(rig.step_loss_policy,'report')
+        self.assertEqual(rig.event_count,1)
+        self.assertEqual(transport.writes,[b'QUERY\n'])
+        self.assertTrue(transport.closed)
+        self.assertTrue(any('STEP_LOSS 2 2 123' in m for m in messages))
+
+    def test_invalid_cli_policy_never_opens_port(self):
+        with patch.object(host.sys,'argv',['tool','--port','unused','--step-loss-policy','other','query']), \
+                patch.object(host,'Rig') as factory,contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(SystemExit):host.main()
+        factory.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
