@@ -134,7 +134,7 @@ def preflight(link, args):
     if link.mode not in (('DISABLED', 'NONE'), ('READY', 'NONE')):
         raise Abort('不允许的模式')
     cal = link.query('CALIB?', ['CAL_STATE', 'CAL_LENGTH_UM', 'CAL_SAVED', 'CAL_STORAGE'])
-    cfg = link.query('CONFIG?', ['VEL_MAX', 'ACC_MAX', 'WDT_MS', 'WDT_DEC', 'X_MARGIN_UM',
+    cfg = link.query('CONFIG?', ['VEL_MAX', 'ACC_MAX', 'WDT_MS',  'X_MARGIN_UM',
                                 'POLE_ZERO_URAD', 'POLE_INV', 'X_INV', 'STEP_LOSS_UM'])
     if cal['CAL_STATE'] != 2 or cal['CAL_SAVED'] != 1 or cal['CAL_STORAGE'] != 0:
         raise Abort('本次位置尚未有效标定或存储异常')

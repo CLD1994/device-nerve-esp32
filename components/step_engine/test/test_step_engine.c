@@ -65,14 +65,12 @@ TEST_CASE("纯函数向量", "[step]")
     uint32_t dt;
     bool     dchg;
 
-    TEST_ASSERT_TRUE(vel_ramp_next(STEPS(100), true, STEPS(200), true, 2000, 5000,
-                                   false, &v, &dt, &dchg));
+    TEST_ASSERT_TRUE(vel_ramp_next(STEPS(100), true, STEPS(200), true, 2000, false, &v, &dt, &dchg));
     TEST_ASSERT_EQUAL_UINT64(120ULL * VEL_RAMP_Q16_ONE, v);
     TEST_ASSERT_EQUAL_UINT32(8333, dt);
     TEST_ASSERT_FALSE(dchg);
 
-    TEST_ASSERT_FALSE(vel_ramp_next(STEPS(5), true, 0, true, 2000, 5000,
-                                    false, &v, &dt, &dchg));
+    TEST_ASSERT_FALSE(vel_ramp_next(STEPS(5), true, 0, true, 2000, false, &v, &dt, &dchg));
     TEST_ASSERT_EQUAL_UINT64(0, v);
 
     TEST_ASSERT_EQUAL_UINT32(31622, vel_ramp_start_dt(2000));
@@ -86,7 +84,7 @@ TEST_CASE("静止起步加速收敛到 5000 µs", "[step]")
 
     settle();
     step_engine_vel_set_accel(2000);
-    step_engine_vel_set_decel(2000);
+
     step_engine_vel_set_wdt_us(0);
 
     step_selftest_start_sampling(buf, STEP_SELFTEST_MAX_SAMPLES, &cnt);
@@ -104,9 +102,9 @@ TEST_CASE("静止起步加速收敛到 5000 µs", "[step]")
     uint64_t v;
     uint32_t dt;
     bool     dchg;
-    (void)vel_ramp_next(0, false, STEPS(200), true, 2000, 2000, false,
+    (void)vel_ramp_next(0, false, STEPS(200), true, 2000, false,
                         &v, &dt, &dchg);
-    (void)vel_ramp_next(v, true, STEPS(200), true, 2000, 2000, false,
+    (void)vel_ramp_next(v, true, STEPS(200), true, 2000, false,
                         &v, &dt, &dchg);
     uint32_t expect = dt;
     ESP_LOGI(TAG, "  采样前 6 项：%u %u %u %u %u %u（n=%d，期望首拍 %u µs）",
@@ -142,7 +140,7 @@ TEST_CASE("看门狗断喂减速与命令恢复", "[step]")
 {
     settle();
     step_engine_vel_set_accel(2000);
-    step_engine_vel_set_decel(2000);
+
     step_engine_vel_set_wdt_us(100000);           /* 100 ms */
 
     step_engine_vel_target(STEPS(200));

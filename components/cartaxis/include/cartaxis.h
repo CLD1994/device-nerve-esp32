@@ -33,7 +33,6 @@ bool cartaxis_try_stop_at_rest(void);
 int64_t cartaxis_cmd_position_um(void);
 void cartaxis_set_position_um(long um);   /* 前置：电机静止 */
 void cartaxis_set_accel_mm_s2(long a_mm_s2);
-void cartaxis_set_decel_mm_s2(long d_mm_s2);
 void cartaxis_set_wdt_ms(long t_ms);
 
 #ifdef __cplusplus

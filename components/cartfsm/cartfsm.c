@@ -5,9 +5,8 @@
  * CPU1。共享状态用 s_lock 自旋锁保护写入；模式枚举读取原子。
  * cartaxis / cartproto 发送均为线程安全接口。
  *
- * FAULT 停机次序（契约）：目标斜坡置 0（电机加速度临时切到
- * WDT_DEC 档）→ 监督任务等速度精确为零 → EN 关 → 推 MODE 行。
- * RESET 离开 FAULT 时恢复 ACC_MAX 档并清电机状态。
+ * FAULT 停机次序（契约）：目标按当前 ACC_MAX 斜坡置 0→ 监督任务等速度精确为零 → EN 关 → 推 MODE 行。
+ * RESET 离开 FAULT 时重应用当前参数并清电机状态。
  * POWER故障例外：立即停止STEP并禁用，不能依赖缺电时斜坡制动。
  */
 
@@ -135,7 +134,6 @@ static void params_apply_engine(void)
 {
     const fw_params_t *p = fw_params();
     cartaxis_set_accel_mm_s2(p->acc_max);
-    cartaxis_set_decel_mm_s2(p->wdt_dec);
     cartaxis_set_wdt_ms(p->wdt_ms);
 }
 
@@ -206,9 +204,6 @@ static void params_apply_one(const char *name)
     switch (fw_params_find(name)) {
     case FP_ACC_MAX:
         cartaxis_set_accel_mm_s2(p->acc_max);
-        break;
-    case FP_WDT_DEC:
-        cartaxis_set_decel_mm_s2(p->wdt_dec);
         break;
     case FP_WDT_MS:
         cartaxis_set_wdt_ms(p->wdt_ms);
@@ -289,7 +284,7 @@ static void enter_fault_record(cm_reason_t r, uint32_t run, const cartfsm_step_l
     portEXIT_CRITICAL(&s_lock);
     /* Submit protective braking first; optional evidence never delays it. */
     const fw_params_t *p = fw_params();
-    cartaxis_set_accel_mm_s2(p->wdt_dec);
+    cartaxis_set_accel_mm_s2(p->acc_max);
     cartaxis_halt();
     if (r == CR_STEP_LOSS)
         cartfsm_diag_trigger(run, accepted_at, target_before_stop, candidate);
@@ -513,7 +508,7 @@ static void exec_reset(void)
     cartaxis_stop();               /* 斜坡未完也立即急停 */
     cartaxis_enable(false);
     check_reference();
-    params_apply_engine();       /* 恢复 ACC_MAX 档等 */
+    params_apply_engine();       /* 重应用当前运动参数 */
     xSemaphoreGive(s_output_lock);
     push_mode(CM_DISABLED, CR_NONE);
 }

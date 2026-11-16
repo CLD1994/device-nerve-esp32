@@ -95,7 +95,6 @@ void motor_set_position(motor_handle_t m, int32_t steps)
 }
 
 void motor_set_accel(motor_handle_t m, uint32_t a) { (void)m; (void)a; }
-void motor_set_decel(motor_handle_t m, uint32_t d) { (void)m; (void)d; }
 void motor_set_wdt_ms(motor_handle_t m, uint32_t w) { (void)m; (void)w; }
 
 esp_err_t motor_set_microstep(motor_handle_t m, int microstep)

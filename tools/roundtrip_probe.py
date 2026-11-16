@@ -24,8 +24,8 @@ def plan(cal,cfg):
         outer_endpoint_mm=[-edge,edge],zero_request_position_mm=[-edge+reserve,edge-reserve],
         approach_speeds_mm_s=[100,20],approach_zero_distances_mm=[25,4],endpoint_tolerance_mm=5,
         normal_reserve_mm=reserve,normal_decel_assumption=DECEL_ASSUMPTION,
-        inflight_assumption_ms=50,extra_margin_mm=MARGIN_MM,watchdog_ms=100,watchdog_decel=5000,
-        fault_reserve_mm=SPEED*(INFLIGHT_S+.1)+SPEED*SPEED/(2*5000)+MARGIN_MM,
+        inflight_assumption_ms=50,extra_margin_mm=MARGIN_MM,watchdog_ms=100,braking_decel_assumption=DECEL_ASSUMPTION,
+        fault_reserve_mm=SPEED*(INFLIGHT_S+.1)+SPEED*SPEED/(2*DECEL_ASSUMPTION)+MARGIN_MM,
         per_leg_nonzero_limit_s=LEG_SECONDS,driver_current_requested_ma=1500,
         driver_current_verified_by_script=False,physical_stop_bound_verified=False,
         warning='端点为不可跨越外界，不保证精确抵达；按正常制动假设提前发0。故障/在途/断电时不能保证停距；1.5A须人工核实，脚本不设置电流。')
@@ -37,7 +37,7 @@ def execute(link,args):
     if link.mode not in (('DISABLED','NONE'),('READY','NONE')):raise Abort('当前故障或模式不允许，不自动复位')
     cal=link.query('CALIB?',['CAL_STATE','CAL_LENGTH_UM','CAL_SAVED','CAL_STORAGE'])
     if cal['CAL_STATE']!=2 or cal['CAL_SAVED']!=1 or cal['CAL_STORAGE']!=0:raise Abort('当前位置参考未确认或标定存储异常')
-    keys=['VEL_MAX','ACC_MAX','WDT_MS','WDT_DEC','X_MARGIN_UM','POLE_ZERO_URAD','POLE_INV','X_INV','STEP_LOSS_UM']
+    keys=['VEL_MAX','ACC_MAX','WDT_MS','X_MARGIN_UM','POLE_ZERO_URAD','POLE_INV','X_INV','STEP_LOSS_UM']
     cfg=link.query('CONFIG?',keys)
     p=plan(cal,cfg);link.record('roundtrip_plan',p)
     if args.command=='plan':return p
@@ -52,7 +52,7 @@ def execute(link,args):
           (p['outer_endpoint_mm'][1],p['zero_request_position_mm'][1]))
     try:
         stop_bounded(link,STOP_TIMEOUT)
-        wanted=dict(VEL_MAX=SPEED,ACC_MAX=ACCEL,WDT_MS=100,WDT_DEC=5000)
+        wanted=dict(VEL_MAX=SPEED,ACC_MAX=ACCEL,WDT_MS=100)
         for k,v in wanted.items():
             if link.query('CONFIG %s %d'%(k,v),[k])[k]!=v:raise Abort('配置回执不匹配: '+k)
         actual=link.query('CONFIG?',list(cfg))

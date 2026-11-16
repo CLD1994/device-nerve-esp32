@@ -224,11 +224,11 @@ TEST_CASE("流程：READY 偏差注入 → FAULT/STEP_LOSS", "[cartfsm][flowtest
  * 时序论证：必须先建立运动再注入失联——静止态 vel_now==0 立
  * 即成立，settling 在 FAULT 置位后一个监督拍内完成，5 ms 粒度
  * 的 wait_mode 返回时 EN 已关，目标注入晚于 settling 结束，旧实
- * 现下用例也绿（无法证伪）。运动态下 WDT_DEC 档减速需 ~100 ms
- * （500→0 @5000 mm/s²），注入落在减速窗内；WDT_MS 拉满 1000 ms
+ * 现下用例也绿（无法证伪）。运动态按当前 ACC_MAX 减速，
+ * 注入必须落在减速窗内；WDT_MS 拉满 1000 ms
  * 后旧实现（无 halt 重发）目标持续存活、引擎运动至 WDT 过期，
  * 300 ms 断言窗内 EN 不关（必红）；新实现每拍 halt 吃掉写入，
- * 减速完成即 EN 关（绿，边距约 200 ms）。
+ * 减速完成即 EN 关。
  * 注意：本用例小车自右端向左小幅移动（<50 mm），台位在位时保持
  * 警戒。 */
 TEST_CASE("流程：FAULT settling 吃掉在途目标（WDT 不兜底）", "[cartfsm][flowtest][pd20]")

@@ -357,7 +357,6 @@ void app_main(void)
     s_step_ready = step_engine_init(CONFIG_BSP_STEP_GPIO, CONFIG_BSP_DIR_GPIO) == ESP_OK;
     if (s_step_ready) {
         step_engine_vel_set_accel(10000);
-        step_engine_vel_set_decel(10000);
         step_engine_vel_set_wdt_us(100000);
     }
     magnetic_encoder_mt6835_config_t encoder_cfg = {

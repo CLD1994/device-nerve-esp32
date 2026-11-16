@@ -88,12 +88,6 @@ void motor_set_accel(motor_handle_t m, uint32_t steps_per_s2)
     step_engine_vel_set_accel(steps_per_s2);
 }
 
-void motor_set_decel(motor_handle_t m, uint32_t steps_per_s2)
-{
-    (void)m;
-    step_engine_vel_set_decel(steps_per_s2);
-}
-
 void motor_set_wdt_ms(motor_handle_t m, uint32_t ms)
 {
     (void)m;

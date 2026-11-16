@@ -44,9 +44,8 @@ int32_t motor_position_steps(motor_handle_t m);
 /** 指令位置重定基；前置条件：电机静止（无脉冲发出），违反为未定义。 */
 void motor_set_position(motor_handle_t m, int32_t steps);
 
-/** 追踪加速度 / 减速度档（steps/s²）。 */
+/** 正常追踪与看门狗停车共用的加速度（steps/s²）。 */
 void motor_set_accel(motor_handle_t m, uint32_t steps_per_s2);
-void motor_set_decel(motor_handle_t m, uint32_t steps_per_s2);
 
 /** 命令新鲜度看门狗：超过 ms 未收到有效速度命令，按减速档斜坡停。 */
 void motor_set_wdt_ms(motor_handle_t m, uint32_t ms);

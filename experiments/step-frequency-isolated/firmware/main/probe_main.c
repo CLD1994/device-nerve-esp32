@@ -51,7 +51,6 @@ static void command(const char *line) {
     /* Approximate 100 ms ramp. This also avoids the low-target, huge-accel
        startup corner. The requested duration INCLUDES ramp, not just plateau. */
     step_engine_vel_set_accel(c.hz*10);
-    step_engine_vel_set_decel(c.hz*10);
     step_engine_vel_set_wdt_us(100000);
     /* No UART output during generation: independent monotonic deadline wins. */
     supervise();

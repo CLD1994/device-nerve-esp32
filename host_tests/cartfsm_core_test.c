@@ -134,7 +134,7 @@ static void test_params_ranges(void)
     CHECK(p->vel_max == 1250, "VEL_MAX 默认 1250");
     CHECK(p->acc_max == 10000, "ACC_MAX 默认 10000");
     CHECK(p->wdt_ms == 100, "WDT_MS 默认 100");
-    CHECK(p->wdt_dec == 5000, "WDT_DEC 默认 5000");
+    CHECK(!fw_params_set("WDT_DEC", 5000), "删除的参数拒绝设置");
     CHECK(p->x_margin_um == 10000, "X_MARGIN_UM 默认 10000");
     CHECK(p->pole_zero_urad == 0 && p->pole_inv == 0 && p->x_inv == 0,
           "标定项默认 0");
@@ -155,10 +155,6 @@ static void test_params_ranges(void)
           "WDT_MS 界内");
     CHECK(!fw_params_set("WDT_MS", 9) && !fw_params_set("WDT_MS", 1001),
           "WDT_MS 界外拒绝");
-
-    CHECK(fw_params_set("WDT_DEC", 100) && fw_params_set("WDT_DEC", 30000),
-          "WDT_DEC 界内");
-    CHECK(!fw_params_set("WDT_DEC", 99), "WDT_DEC 界外拒绝");
 
     CHECK(fw_params_set("X_MARGIN_UM", 1000)
           && fw_params_set("X_MARGIN_UM", 50000), "X_MARGIN_UM 界内");
@@ -193,16 +189,16 @@ static void test_params_ranges(void)
 /* ---- 注册表枚举一致性 ---- */
 static void test_registry_enum(void)
 {
-    CHECK(fw_params_count() == 9, "九项");
-    CHECK(fw_params_name(0) != NULL && fw_params_name(8) != NULL,
-          "0..8 有名");
-    CHECK(fw_params_name(9) == NULL, "越界 NULL");
+    CHECK(fw_params_count() == 8, "八项");
+    CHECK(fw_params_name(0) != NULL && fw_params_name(7) != NULL,
+          "0..7 有名");
+    CHECK(fw_params_name(8) == NULL, "越界 NULL");
     /* dump 顺序的 NAME 拼写 */
     const char *expect[] = {
-        "VEL_MAX", "ACC_MAX", "WDT_MS", "WDT_DEC", "X_MARGIN_UM",
+        "VEL_MAX", "ACC_MAX", "WDT_MS", "X_MARGIN_UM",
         "POLE_ZERO_URAD", "POLE_INV", "X_INV", "STEP_LOSS_UM",
     };
-    for (int i = 0; i < 9; i++) {
+    for (int i = 0; i < 8; i++) {
         int ok = fw_params_name(i) != NULL;
         if (ok) {
             const char *a = fw_params_name(i);
@@ -223,7 +219,7 @@ static void test_fw_params_find(void)
 {
     CHECK(fw_params_find("VEL_MAX") == FP_VEL_MAX, "find VEL_MAX");
     CHECK(fw_params_find("ACC_MAX") == FP_ACC_MAX, "find ACC_MAX");
-    CHECK(fw_params_find("WDT_DEC") == FP_WDT_DEC, "find WDT_DEC");
+    CHECK(fw_params_find("WDT_DEC") == -1, "find WDT_DEC");
     CHECK(fw_params_find("STEP_LOSS_UM") == FP_STEP_LOSS_UM, "find 尾项");
     CHECK(fw_params_find("NOPE") == -1, "未知名 -1");
     CHECK(fw_params_find("") == -1, "空名 -1");
