@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+python3 host_tests/test_pole_diagnostic_format.py
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 cc -std=c11 -Wall -Wextra -Werror -Icomponents/magnetic_encoder/include host_tests/pole_diagnostic_test.c -o "$tmp/core"

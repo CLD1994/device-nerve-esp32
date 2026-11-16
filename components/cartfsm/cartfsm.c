@@ -630,11 +630,11 @@ static void pole_diagnostic_point(const char *label, const me_diag_point_t *p)
 {
     char line[512];
     int n=snprintf(line,sizeof(line),
-        "POLED1 %s %lld %lld %lld %u %u %lld %lld %llu %llu %llu %u %u %u %u %u %u %u\n",
+        "POLED1 %s %lld %lld %lld %u %u %lld %lld %llu %llu %llu %u %u %u %u %u %" PRIu32 " %u\n",
         label,(long long)p->observed_us,(long long)p->sampled_us,(long long)p->age_us,
         p->fill,p->required,(long long)p->span_us,(long long)p->gap_us,
         (unsigned long long)p->seq,(unsigned long long)p->failure_seq,(unsigned long long)p->continuity_seq,
-        p->has_sample,p->last_attempt_ok,p->ok,p->valid,p->reason,p->raw,p->status);
+        (unsigned)p->has_sample,(unsigned)p->last_attempt_ok,(unsigned)p->ok,(unsigned)p->valid,p->reason,p->raw,(unsigned)p->status);
     if(n>0 && (size_t)n<sizeof(line)) cartproto_send_raw(line,(int)strlen(line)); else cartproto_send_err("POLEDIAG_FORMAT");
 }
 #endif
@@ -649,7 +649,7 @@ static void exec_pole_diagnostic_query(void)
     me_diag_t d;
     if(!poleang_diagnostic_get(&d)){cartproto_send_err("POLEDIAG_NONE");return;}
     char line[256];
-    snprintf(line,sizeof(line),"POLED1 BEGIN %u %u %llu %llu\n",d.run_id,d.captured,
+    snprintf(line,sizeof(line),"POLED1 BEGIN %" PRIu32 " %u %llu %llu\n",d.run_id,(unsigned)d.captured,
         (unsigned long long)d.transitions,(unsigned long long)d.dropped);
     cartproto_send_raw(line,(int)strlen(line));
     if(d.captured){
@@ -657,10 +657,10 @@ static void exec_pole_diagnostic_query(void)
         const me_diag_failure_t *f=&d.first_failure;
         snprintf(line,sizeof(line),"POLED1 FAIL %u %llu %lld %u %u %u %u %u %u\n",f->kind,
             (unsigned long long)f->seq,(long long)f->at_us,
-            f->frame[0],f->frame[1],f->frame[2],f->frame[3],f->frame[4],f->frame[5]);
+            (unsigned)f->frame[0],(unsigned)f->frame[1],(unsigned)f->frame[2],(unsigned)f->frame[3],(unsigned)f->frame[4],(unsigned)f->frame[5]);
         cartproto_send_raw(line,(int)strlen(line));
     }
-    snprintf(line,sizeof(line),"POLED1 END %u\n",d.run_id); cartproto_send_raw(line,(int)strlen(line));
+    snprintf(line,sizeof(line),"POLED1 END %" PRIu32 "\n",d.run_id); cartproto_send_raw(line,(int)strlen(line));
 #else
     cartproto_send_err("POLEDIAG_DISABLED");
 #endif

@@ -24,5 +24,11 @@ int main(void){
  assert(strstr(diag_output,"POLED1 FAIL 3 7 21000 1 2 3 4 5 6\n"));assert(evidence.captured);
  fputs(diag_output,stdout);
  cmd(CART_CMD_ENABLE);assert(arms==2 && evidence.run_id==2 && !evidence.captured);
+ cmd(CART_CMD_DISABLE);
+ evidence.run_id=UINT32_MAX;evidence.captured=true;evidence.after.raw=2097151;
+ diag_output_len=0;diag_output[0]=0;cmd(CART_CMD_POLEDIAG_QUERY);
+ assert(strstr(diag_output,"POLED1 BEGIN 4294967295 1 "));
+ assert(strstr(diag_output,"POLED1 END 4294967295\n"));
+ assert(strstr(diag_output," 2097151 0\n"));
  puts("pole diagnostic query/rearm passed");
 }

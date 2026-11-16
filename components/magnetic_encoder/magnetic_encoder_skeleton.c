@@ -12,6 +12,7 @@
 #include "magnetic_encoder_impl.h"
 
 #include <stdio.h>
+#include <inttypes.h>
 #include <string.h>
 
 #include "freertos/task.h"
@@ -458,7 +459,7 @@ esp_err_t magnetic_encoder_sampler_init(magnetic_encoder_inst_t *inst,
     uint8_t status = 0;
     if (impl->read_frame(impl_ctx, &raw, &status)) {
         publish_sample(inst, raw, status);
-        ESP_LOGI(name, "在线——首读 raw=%u（种子，pos=0）", raw);
+        ESP_LOGI(name, "在线——首读 raw=%" PRIu32 "（种子，pos=0）", raw);
     } else {
         /* 首读失败计入序列，但保持原 is_ok 初始为 true 的语义。 */
         inst->failure_seq++;

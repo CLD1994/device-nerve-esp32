@@ -33,5 +33,8 @@ Get-Content $poleReport -Raw -Encoding utf8
 离线回归入口：
 ```bash
 bash host_tests/test_mt6835_hw.sh
+bash host_tests/test_pole_diagnostic.sh
 ```
 该测试验证读帧契约与保守全零处理，不连接设备。
+
+POLED1 格式检查同时模拟目标工具链 `uint32_t` 为 `unsigned long` 的参数类型，并以 `-Werror=format` 编译诊断开/关路径；这只是宿主类型拼写回归，不替代 ESP32-S3 的 ESP-IDF 目标构建。
