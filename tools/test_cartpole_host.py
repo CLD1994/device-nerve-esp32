@@ -302,7 +302,7 @@ class TravelReceiveTest(unittest.TestCase):
             with self.assertRaises(RuntimeError): rig.poll_available()
         self.assertEqual(port.timeout,.2)
     def test_cli_rejects_conflicting_modes_before_port(self):
-        for argv in (['--to-limit','--hold','1'],['--to-limit','--max-seconds','nan'],['--plan']):
+        for argv in (['--to-limit'],['--max-seconds','nan'],['--hold','1','--plan']):
             with patch.object(host.sys,'argv',['tool','--port','X','vel','600']+argv), patch.object(host,'Rig') as factory, contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit): host.main()
                 factory.assert_not_called()
@@ -315,3 +315,26 @@ class TravelMessageObserverTest(unittest.TestCase):
         self.assertEqual(seen,['MODE FAULT STEP_LOSS','MODE READY NONE','ERR BUSY','OK VEL 0'])
         self.assertEqual(rig.last_mode,('READY','NONE'))
         self.assertEqual(rig.last_reply,('OK','VEL',0))
+
+
+class DefaultTravelCliTest(unittest.TestCase):
+    def invoke(self, options):
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']+options), patch.object(host,'Rig') as factory, patch.object(host,'cmd_vel',return_value=0) as command:
+            with self.assertRaises(SystemExit) as exited: host.main()
+            self.assertEqual(exited.exception.code,0)
+            return command.call_args.args[1]
+    def test_default_is_travel_not_one_second(self):
+        args=self.invoke([])
+        self.assertIsNone(args.hold)
+        rig=SimpleNamespace()
+        with patch('travel_limit.run',return_value=0) as run:
+            self.assertEqual(host.cmd_vel(rig,args),0)
+            run.assert_called_once_with(rig,args)
+    def test_plan_works_without_selector(self):
+        args=self.invoke(['--plan'])
+        self.assertTrue(args.plan)
+        self.assertIsNone(args.hold)
+    def test_explicit_hold_keeps_duration(self):
+        args=self.invoke(['--hold','2'])
+        self.assertEqual(args.hold,2)
+        self.assertFalse(args.plan)

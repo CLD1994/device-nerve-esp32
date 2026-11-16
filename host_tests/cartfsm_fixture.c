@@ -53,7 +53,6 @@ bool cartaxis_try_stop_at_rest(void) { return true; }
 bool axis_rest=true;
 bool cartaxis_at_rest(void) { return axis_rest; }
 void cartaxis_set_accel_mm_s2(long x) { last_accel=x; }
-void cartaxis_set_decel_mm_s2(long x) { (void)x; }
 void cartaxis_set_wdt_ms(long x) { (void)x; }
 void cartproto_register_exec(cartproto_exec_cb_t cb) { dispatch=cb; }
 void cartproto_send_ok(const char *name,long value) { snprintf(reply,sizeof(reply),"OK %s",name);reply_value=value; }
@@ -101,3 +100,4 @@ void config(const char *name,long value) { cart_req_t q={.cmd=CART_CMD_CONFIG_SE
 /* 本 fixture 不发起 TMC 查询，诊断契约由 tmc_readonly_test 覆盖。 */
 bool tmc2209_read_reg(uint8_t reg, uint32_t *out) { (void)reg; (void)out; assert(!"unexpected TMC query"); return false; }
 bool cartaxis_peek_at_rest(void) { return axis_rest; }
+

@@ -58,7 +58,7 @@ static int s_dir_gpio  = -1;
 static bool s_last_out_dir = false;
 
 /* ---- 速度模式状态 ----
- * 任务写 / ISR 读：s_target_q16、s_target_dir、s_accel、s_decel、
+ * 任务写 / ISR 读：s_target_q16、s_target_dir、s_accel、
  * s_wdt_us、s_last_kick_us（经 s_spinlock）。
  * ISR 单写：s_v_q16、s_dir、s_stopped、s_chain_remaining_us
  * （vel_target 的静止启动路径也在持锁下写，此时定时器停止、
@@ -68,7 +68,6 @@ static volatile bool     s_target_dir = true;
 static uint64_t s_v_q16 = 0;                 /* 最近一步速率幅值 */
 static bool     s_dir = false;               /* 当前运动方向 */
 static uint32_t s_accel = DEFAULT_ACCEL;     /* steps/s² */
-static uint32_t s_decel = DEFAULT_ACCEL;
 static uint32_t s_wdt_us = 0;                /* 0 = 看门狗关闭 */
 static volatile uint64_t s_last_kick_us = 0; /* 最近喂狗时刻（µs 域） */
 
@@ -268,7 +267,7 @@ static bool gptimer_alarm_cb(gptimer_handle_t timer,
                     && (edata->count_value >= s_last_kick_us)
                     && (edata->count_value - s_last_kick_us > s_wdt_us);
     moving = vel_ramp_next(s_v_q16, s_dir, s_target_q16, s_target_dir,
-                           s_accel, s_decel, wdt_expired,
+                           s_accel, wdt_expired,
                            &nv, &dt, &dchg);
     if (dchg) {
         s_dir = !s_dir;
@@ -327,7 +326,6 @@ esp_err_t step_engine_init(int step_gpio, int dir_gpio)
     s_v_q16 = 0;
     s_dir = false;
     s_accel = DEFAULT_ACCEL;
-    s_decel = DEFAULT_ACCEL;
     s_wdt_us = 0;
     s_last_kick_us = 0;
     s_position = 0;
@@ -375,13 +373,6 @@ void step_engine_vel_set_accel(uint32_t accel_steps_s2)
     portEXIT_CRITICAL(&s_spinlock);
 }
 
-void step_engine_vel_set_decel(uint32_t decel_steps_s2)
-{
-    portENTER_CRITICAL(&s_spinlock);
-    s_decel = decel_steps_s2 ? decel_steps_s2 : 1;
-    portEXIT_CRITICAL(&s_spinlock);
-}
-
 void step_engine_vel_set_wdt_us(uint32_t wdt_us)
 {
     portENTER_CRITICAL(&s_spinlock);
@@ -425,7 +416,7 @@ void step_engine_vel_target(int64_t v_q16)
             uint32_t dt;
             bool     dchg;
 
-            (void)vel_ramp_next(0, s_dir, mag, dir, s_accel, s_decel, false,
+            (void)vel_ramp_next(0, s_dir, mag, dir, s_accel, false,
                                 &nv, &dt, &dchg);
             if (dchg) {
                 s_dir = !s_dir;
@@ -592,3 +583,4 @@ void step_selftest_reset_isr_cycles(void)
 }
 
 #endif /* CONFIG_STEP_ENGINE_TEST_HOOKS */
+

@@ -5,13 +5,15 @@ import time
 
 class Plan:
     def __init__(self, config, velocity, reserve_mm, inflight_ms):
+        if 'WDT_DEC' in config:
+            raise ValueError('检测到旧 WDT_DEC；行程工具要求统一 ACC_MAX 的新固件')
         required = ('CAL_STATE','CAL_SAVED','CAL_STORAGE','CAL_LENGTH_UM',
-                    'VEL_MAX','ACC_MAX','WDT_MS','WDT_DEC','X_MARGIN_UM')
+                    'VEL_MAX','ACC_MAX','WDT_MS','X_MARGIN_UM')
         if any(k not in config or not isinstance(config[k], int) for k in required):
             raise ValueError('标定/配置回执缺失或格式错误')
         if (config['CAL_STATE'],config['CAL_SAVED'],config['CAL_STORAGE']) != (2,1,0):
             raise ValueError('标定状态不支持行程规划')
-        if any(config[k] <= 0 for k in ('CAL_LENGTH_UM','VEL_MAX','ACC_MAX','WDT_MS','WDT_DEC')) or config['X_MARGIN_UM'] < 0:
+        if any(config[k] <= 0 for k in ('CAL_LENGTH_UM','VEL_MAX','ACC_MAX','WDT_MS')) or config['X_MARGIN_UM'] < 0:
             raise ValueError('配置范围无效')
         if not velocity or abs(velocity) > config['VEL_MAX']:
             raise ValueError('目标速度为零或超过 VEL_MAX')
@@ -32,8 +34,8 @@ class Plan:
         v = max(abs(self.velocity),abs(measured_velocity))
         if v > self.config['VEL_MAX']:
             raise RuntimeError('收到的速度超过 VEL_MAX')
-        return max(v*self.inflight+v*v/(2*self.config['ACC_MAX']),
-                   v*(self.inflight+self.config['WDT_MS']/1000)+v*v/(2*self.config['WDT_DEC']))
+        # 两条停车路径共用 ACC_MAX；WDT 项只比正常停车多等待窗口。
+        return v*(self.inflight+self.config['WDT_MS']/1000)+v*v/(2*self.config['ACC_MAX'])
 
 
 class Guard:

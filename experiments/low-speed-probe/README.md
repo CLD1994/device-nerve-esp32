@@ -18,7 +18,7 @@ plan只查询QUERY、CALIB?、CONFIG?，不配置、不使能、不发送VEL。r
 python tools/low_speed_probe.py --port COM11 --baud 460800 --out low-speed-run.jsonl run --velocity 20 --acceleration 100 --hold 0.5 --confirm-motion
 ```
 
-run将VEL_MAX设为20、ACC_MAX设为100、WDT_MS设为100、WDT_DEC设为100；每项回执须匹配，不恢复旧的高值。ACC_MAX用于正常速度变化及VEL0，WDT_DEC用于命令超时减速，两者不是同一参数。试验后电机仍可能使能。
+run将VEL_MAX设为20、ACC_MAX设为100、WDT_MS设为100；每项回执须匹配，不恢复旧的高值。ACC_MAX统一用于正常速度变化、VEL0、命令超时与受控故障停车。试验后电机仍可能使能。
 
 ## 轨迹与中止
 

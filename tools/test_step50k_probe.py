@@ -6,9 +6,8 @@ from step50k_probe import execute
 
 
 def options(**kw):
-    d=dict(command='run',acceleration=9000,hold_s=0.,margin_mm=50.,normal_decel=9000,watchdog_decel=5000,
-           watchdog_ms=100,inflight_ms=20.,window_s=.3,
-           normal_decel_evidence='现场记录编号A',watchdog_decel_evidence='现场记录编号B',
+    d=dict(command='run',acceleration=9000,hold_s=0.,margin_mm=50.,braking_decel=9000,watchdog_ms=100,inflight_ms=20.,window_s=.3,
+           braking_decel_evidence='现场记录编号A',
            inflight_evidence='延迟预算记录C',confirm_motion=True,confirm_clearance=True)
     d.update(kw);return SimpleNamespace(**d)
 
@@ -20,7 +19,7 @@ class ProbeTests(unittest.TestCase):
         f,l=self.run_probe(a=options(acceleration=30000))
         self.assertIn('CONFIG ACC_MAX 30000',f.writes)
         self.assertEqual(f.cfg['ACC_MAX'],30000)
-        self.assertEqual(f.cfg['WDT_DEC'],5000)
+        self.assertNotIn('WDT_DEC',f.cfg)
         b=next(e['value'] for e in l.events if e['direction']=='plan')
         self.assertAlmostEqual(b['ramp_s'],1250/30000)
         self.assertEqual(b['inputs']['acceleration'],30000)
@@ -41,7 +40,7 @@ class ProbeTests(unittest.TestCase):
             with self.subTest(value=value),self.assertRaises(ValueError):
                 self.run_probe(f,options(acceleration=value))
             self.assertFalse(any(c.startswith(('CONFIG ','VEL ')) for c in f.writes))
-    def test_normal_decel_above_selected_acceleration_rejected(self):
+    def test_braking_decel_above_selected_acceleration_rejected(self):
         f=Bench()
         with self.assertRaises(Abort):self.run_probe(f,options(acceleration=5000))
         self.assertNotIn('VEL 1250',f.writes)
@@ -50,7 +49,7 @@ class ProbeTests(unittest.TestCase):
         from step50k_probe import validate_run, stop_reserve_mm, budget_for
         f=Bench();l=Link(f,f.clock,f.sleep);l.state=(-326662,0,0,0)
         a=options(acceleration=11000,hold_s=.3,window_s=.5,margin_mm=100,
-                  normal_decel=5000,inflight_ms=50)
+                  braking_decel=5000,inflight_ms=50)
         b=budget_for(l,a,{'CAL_LENGTH_UM':853325},{'X_MARGIN_UM':10000})
         self.assertFalse(b['conditional_fault_budget_fits'])
         with self.assertRaises(Abort):validate_run(a,b)
@@ -76,10 +75,10 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(end['reason'],'approx_target_hold_completed')
 
     def test_plan_only_queries(self):
-        f,l=self.run_probe(a=options(command='plan',hold_s=None,watchdog_decel=None))
+        f,l=self.run_probe(a=options(command='plan',hold_s=None,))
         self.assertEqual(f.writes,['QUERY','CALIB?','CONFIG?'])
     def test_missing_inputs_reject_before_any_configuration(self):
-        for key in ('hold_s','margin_mm','normal_decel','watchdog_decel','inflight_ms','window_s','normal_decel_evidence','watchdog_decel_evidence','inflight_evidence'):
+        for key in ('hold_s','margin_mm','braking_decel','inflight_ms','window_s','braking_decel_evidence','inflight_evidence'):
             f=Bench()
             with self.subTest(key=key),self.assertRaises(Abort): self.run_probe(f,options(**{key:None}))
             self.assertFalse(any(s.startswith(('CONFIG ','VEL ')) for s in f.writes))
@@ -88,7 +87,7 @@ class ProbeTests(unittest.TestCase):
         self.assertIn('VEL 1250',f.writes);self.assertEqual(f.v,0)
         self.assertNotIn('ENABLE',f.writes);self.assertNotIn('RESET',f.writes)
         self.assertEqual(f.cfg['ACC_MAX'],9000)
-        self.assertEqual(f.cfg['WDT_DEC'],5000)
+        self.assertNotIn('WDT_DEC',f.cfg)
         self.assertTrue(any(e['direction']=='result' for e in l.events))
     def test_distance_rejection(self):
         f=Bench();f.x=0
@@ -139,7 +138,7 @@ class ProbeTests(unittest.TestCase):
     def test_forward_boundary_cannot_be_hidden_by_next_frame(self):
         class Jump(Bench):
             def read(self,n):
-                if self.v:self.rx+=b'STATE 100000 0 1250 0\nSTATE -300000 0 1250 0\n'
+                if self.v:self.rx+=b'STATE 200000 0 1250 0\nSTATE -300000 0 1250 0\n'
                 return super().read(n)
         f=Jump()
         with self.assertRaises(Abort):self.run_probe(f)
@@ -229,42 +228,38 @@ class ProbeTests(unittest.TestCase):
                     _,self.v=self.queue.pop(0)
                 return super().read(n)
         f=DelayedFIFO();link=Link(f,f.clock,f.sleep)
-        with self.assertRaises(Abort):execute(link,options(hold_s=0,margin_mm=1,watchdog_decel=9000,
-                                                        inflight_ms=280,window_s=.139))
+        with self.assertRaises(Abort):execute(link,options(hold_s=0,margin_mm=1,inflight_ms=280,window_s=.139))
         stops=[event for event in link.events if event['direction']=='stop']
         self.assertTrue(stops)
         self.assertGreaterEqual(stops[-1]['t'],f.first+.280+.2)
         self.assertEqual(f.v,0)
         self.assertFalse(any(v!=0 for _,v in f.queue))
-    def test_normal_window_includes_inflight_even_when_watchdog_is_stronger(self):
+    def test_normal_window_includes_inflight_with_shared_braking(self):
         from step50k_plan import calculate
         from step50k_probe import validate_run
-        a=options(hold_s=0,margin_mm=10,normal_decel=2500,watchdog_decel=9000,
-                  watchdog_ms=100,inflight_ms=200,window_s=.2)
-        budget=calculate(hold_s=0,normal_decel=2500,watchdog_decel=9000,
-                         watchdog_ms=100,inflight_ms=200,window_s=.2,margin_mm=10,
+        a=options(hold_s=0,margin_mm=10,braking_decel=2500,watchdog_ms=100,inflight_ms=200,window_s=.2)
+        budget=calculate(hold_s=0,braking_decel=2500,watchdog_ms=100,inflight_ms=200,window_s=.2,margin_mm=10,
                          start_from_left_mm=100)
         with self.assertRaises(Abort):validate_run(a,budget)
     def test_dynamic_reserve_includes_inflight_on_normal_branch(self):
         from step50k_probe import stop_reserve_mm
-        a=options(margin_mm=10,normal_decel=2500,watchdog_decel=9000,inflight_ms=200)
-        self.assertAlmostEqual(stop_reserve_mm(a),572.5)
+        a=options(margin_mm=10,braking_decel=2500,inflight_ms=200)
+        self.assertAlmostEqual(stop_reserve_mm(a),697.5)
     def test_evidence_is_logged_verbatim_as_unverified_declaration(self):
-        a=options(normal_decel_evidence='A：9000 ±误差',watchdog_decel_evidence='B\n复测',inflight_evidence='C 未做硬件认证')
+        a=options(braking_decel_evidence='A：9000 ±误差',inflight_evidence='C 未做硬件认证')
         f,link=self.run_probe(a=a)
         record=next(e['value'] for e in link.events if e['direction']=='operator_declaration')
         self.assertFalse(record['independently_verified'])
-        for key in ('normal_decel_evidence','watchdog_decel_evidence','inflight_evidence'):
+        for key in ('braking_decel_evidence','inflight_evidence'):
             self.assertEqual(record[key],getattr(a,key))
-        self.assertEqual(record['parameters']['normal_decel'],9000)
+        self.assertEqual(record['parameters']['braking_decel'],9000)
     def test_short_write_still_waits_declared_inflight_horizon(self):
         class Short(Bench):
             def write(self,data):
                 if data==b'VEL 1250\n':return 2
                 return super().write(data)
         f=Short();link=Link(f,f.clock,f.sleep)
-        with self.assertRaises(Abort):execute(link,options(margin_mm=1,watchdog_decel=9000,
-                                                        inflight_ms=280,window_s=.139))
+        with self.assertRaises(Abort):execute(link,options(margin_mm=1,inflight_ms=280,window_s=.139))
         attempt=next(e['value'] for e in link.events if e['direction']=='nonzero_attempt')
         horizon=next(e['value'] for e in link.events if e['direction']=='inflight_horizon')
         stopped=next(e['t'] for e in link.events if e['direction']=='stop')

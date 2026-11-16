@@ -302,7 +302,7 @@ def cmd_enable(rig, args):
 
 
 def cmd_vel(rig, args):
-    if getattr(args, "to_limit", False):
+    if args.hold is None:
         from travel_limit import run
         return run(rig, args)
     m = rig.query()
@@ -422,11 +422,10 @@ def main():
     p = sub.add_parser("vel"); p.add_argument("v", type=int)
     group = p.add_mutually_exclusive_group()
     group.add_argument("--hold", type=float, default=None)
-    group.add_argument("--to-limit", action="store_true")
     p.add_argument("--reserve-mm", type=float, default=20)
     p.add_argument("--inflight-ms", type=float, default=50)
     p.add_argument("--max-seconds", type=float, default=30)
-    p.add_argument("--plan", action="store_true")
+    group.add_argument("--plan", action="store_true", help="只读单程规划，不发送运动命令")
     p = sub.add_parser("config"); p.add_argument("name"); p.add_argument("value", type=int)
     sub.add_parser("dump")
     p = sub.add_parser("state"); p.add_argument("--secs", type=float, default=10.0)
@@ -438,14 +437,12 @@ def main():
 
     args = ap.parse_args()
     if args.cmd == "vel":
-        if args.plan and not args.to_limit:
-            ap.error("--plan 需要 --to-limit")
-        if args.to_limit:
+        if args.hold is None:
             if not args.v or not all(math.isfinite(v) and v >= 0 for v in
                     (args.reserve_mm, args.inflight_ms)) or not math.isfinite(args.max_seconds) or args.max_seconds <= 0:
                 ap.error("行程速度须非零，余量/在途预算须非负有限，期限须正有限")
-        elif args.hold is None:
-            args.hold = 1.0
+        elif not math.isfinite(args.hold) or args.hold <= 0:
+            ap.error("--hold 必须是正的有限秒数")
     if args.cmd == "state":
         if not math.isfinite(args.secs) or args.secs <= 0:
             ap.error("--secs 必须是正的有限秒数")

@@ -176,11 +176,6 @@ void cartaxis_set_accel_mm_s2(long a_mm_s2)
     motor_set_accel(s_m, cartaxis_accel_to_steps(a_mm_s2, spm()));
 }
 
-void cartaxis_set_decel_mm_s2(long d_mm_s2)
-{
-    motor_set_decel(s_m, cartaxis_accel_to_steps(d_mm_s2, spm()));
-}
-
 void cartaxis_set_wdt_ms(long t_ms)
 {
     motor_set_wdt_ms(s_m, (uint32_t)t_ms);

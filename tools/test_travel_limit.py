@@ -3,26 +3,33 @@ import unittest
 from travel_limit import Plan, Guard
 
 C = dict(CAL_STATE=2, CAL_SAVED=1, CAL_STORAGE=0, CAL_LENGTH_UM=853940,
-         VEL_MAX=1250, ACC_MAX=9000, WDT_MS=100, WDT_DEC=5000, X_MARGIN_UM=10000)
+         VEL_MAX=1250, ACC_MAX=9000, WDT_MS=100, X_MARGIN_UM=10000)
 
 class PlannerTest(unittest.TestCase):
     def test_positive_and_negative(self):
         for velocity in (600, -600):
             p = Plan(C, velocity, 20, 50)
             self.assertEqual(p.target_um, (1 if velocity > 0 else -1)*396970)
-            self.assertAlmostEqual(p.budget_mm(0),186)
+            self.assertAlmostEqual(p.budget_mm(0),170)
     def test_reserve_is_not_added_to_braking_budget(self):
-        self.assertAlmostEqual(Plan(C,600,40,50).budget_mm(0),186)
+        self.assertAlmostEqual(Plan(C,600,40,50).budget_mm(0),170)
+    def test_shared_acceleration_changes_watchdog_braking(self):
+        self.assertAlmostEqual(Plan(dict(C, ACC_MAX=10000),600,20,50).budget_mm(0),168)
+        self.assertAlmostEqual(Plan(dict(C, ACC_MAX=5000),600,20,50).budget_mm(0),186)
+        self.assertAlmostEqual(Plan(dict(C, ACC_MAX=10000),600,20,0).budget_mm(0),138)
     def test_invalid_configuration(self):
-        for key,value in [('CAL_STATE',3),('CAL_SAVED',0),('CAL_STORAGE',1),('WDT_DEC',0),('ACC_MAX',0),('CAL_LENGTH_UM',0)]:
+        for key,value in [('CAL_STATE',3),('CAL_SAVED',0),('CAL_STORAGE',1),('ACC_MAX',0),('CAL_LENGTH_UM',0)]:
             with self.subTest(key=key), self.assertRaises(ValueError): Plan(dict(C,**{key:value}),600,20,50)
+    def test_old_firmware_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'WDT_DEC'):
+            Plan(dict(C,WDT_DEC=5000),600,20,50)
     def test_invalid_request(self):
         for v,reserve,lag in [(0,20,50),(1300,20,50),(600,-1,50),(600,500,50),(600,20,float('nan'))]:
             with self.assertRaises(ValueError): Plan(C,v,reserve,lag)
     def test_guard_brakes_before_target(self):
         g=Guard(Plan(C,600,20,50),0)
         self.assertFalse(g.observe(0,0))
-        self.assertTrue(g.observe(211000,600))
+        self.assertTrue(g.observe(227000,600))
     def test_guard_direction_and_soft_limit(self):
         for x,v in [(-3001,0),(417000,0),(0,1251)]:
             with self.assertRaises(RuntimeError): Guard(Plan(C,600,20,50),0).observe(x,v)
@@ -89,6 +96,16 @@ class ExecutorTest(unittest.TestCase):
                 self.assertEqual(run(r,a,s),1)
                 self.assertEqual(r.writes[-1][1],'VEL 0')
                 self.assertTrue(r.velocity_validity.failed)
+    def test_old_firmware_sends_no_motion(self):
+        from travel_limit import run
+        r,a,s=self.fixture()
+        original=r.poll_available
+        def old_poll():
+            original()
+            r.replies['WDT_DEC']=5000
+        r.poll_available=old_poll
+        with self.assertRaisesRegex(ValueError, 'WDT_DEC'):run(r,a,s)
+        self.assertEqual([line for _,line in r.writes],['CALIB?','CONFIG?','QUERY'])
     def test_plan_read_only(self):
         from travel_limit import run
         r,a,s=self.fixture();a.plan=True

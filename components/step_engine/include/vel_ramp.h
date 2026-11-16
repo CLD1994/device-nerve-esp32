@@ -6,7 +6,7 @@
  *
  * 量纲与类型：
  *   v_q16 / target_q16 — Q16.16 steps/s 幅值（非负）。
- *   accel / decel      — steps/s²。
+ *   accel              — steps/s²。
  *   全部用 64 位：注册表 VEL_MAX 上限 2000 mm/s = 80000 steps/s，
  *   在 Q16.16 下超出 32 位表示范围。
  *
@@ -43,7 +43,7 @@ uint32_t vel_ramp_start_dt(uint32_t accel);
  * 输入 v_q16 为「刚发出的那一步」的速率幅值，输出为下一步。
  *  - 同方向：向目标幅值加速/减速（钳位，不过冲/不下穿），用 accel；
  *  - 目标为零或方向相反：向零减速（换向经零速），用 accel；
- *  - wdt_expired：有效目标按 0、速率用 decel、方向不变（看门狗
+ *  - wdt_expired：有效目标按 0、速率用 accel、方向不变（看门狗
  *    是瞬态保护；命令恢复即下次调用回到正常追踪）；
  *  - 到零且有效目标非零反向：out_dir_change = true，out_dt_us 为
  *    dt0 语义（调用方换 DIR 并自行加 2 µs setup）。
@@ -52,7 +52,7 @@ uint32_t vel_ramp_start_dt(uint32_t accel);
  *         （调用方停表）。
  */
 bool vel_ramp_next(uint64_t v_q16, bool dir, uint64_t target_q16, bool target_dir,
-                   uint32_t accel, uint32_t decel, bool wdt_expired,
+                   uint32_t accel, bool wdt_expired,
                    uint64_t *out_v_q16, uint32_t *out_dt_us, bool *out_dir_change);
 
 #ifdef __cplusplus
