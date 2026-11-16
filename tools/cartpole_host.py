@@ -453,6 +453,16 @@ def cmd_console(rig, args):
     return 0
 
 
+def latest_velocity_for_timing(rig):
+    """纯读取观测资格；不调用会改变运动失败锁存的ready。"""
+    validity=rig.velocity_validity
+    if (rig.last_state is None or not rig.state_is_fresh()
+            or validity.flags != (1,1) or validity.received_at is None
+            or not 0 <= rig._clock()-validity.received_at <= .3):
+        return None
+    return int(rig.last_state[2])
+
+
 def main():
     ap = argparse.ArgumentParser(description="cartpole 固件串口联调工具")
     ap.add_argument("--port", required=True, help="串口（如 COM7）")
@@ -527,7 +537,7 @@ def main():
         timing = getattr(rig, 'timing', None)
         if isinstance(timing, SessionTiming):
             try:
-                timing.finish()
+                timing.finish(latest_velocity=latest_velocity_for_timing(rig))
                 print(timing.summary())
             except Exception:
                 # 旁路统计不能覆盖命令结果；串口关闭及异常零速已先执行。

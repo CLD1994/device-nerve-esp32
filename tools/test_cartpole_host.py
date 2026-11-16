@@ -478,3 +478,19 @@ class StopAwaitHeartbeatTest(unittest.TestCase):
         rig.begin_stop_observation();rig._consume(b'VEL_VALID 1 1\n')
         clock.advance(.301)
         with self.assertRaises(RuntimeError):rig._consume(b'STATE 10 0 0 0\n')
+
+class LatestTimingVelocityTest(unittest.TestCase):
+    def test_fresh_valid_last_received_value_even_if_failed_latched(self):
+        rig,port,_,_=session(host.Rig)
+        receive(rig,port,'VEL_VALID 1 1');receive(rig,port,'STATE 0 0 -800 0')
+        rig.velocity_validity.failed=True
+        self.assertEqual(host.latest_velocity_for_timing(rig),-800)
+        self.assertTrue(rig.velocity_validity.failed)
+    def test_missing_invalid_and_old_telemetry_are_unconfirmed(self):
+        rig,port,clock,_=session(host.Rig)
+        self.assertIsNone(host.latest_velocity_for_timing(rig))
+        receive(rig,port,'VEL_VALID 1 1');receive(rig,port,'STATE 0 0 0 0')
+        clock.advance(.101)
+        self.assertIsNone(host.latest_velocity_for_timing(rig))
+        receive(rig,port,'VEL_VALID 0 1')
+        self.assertIsNone(host.latest_velocity_for_timing(rig))
