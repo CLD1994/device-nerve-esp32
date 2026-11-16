@@ -68,7 +68,7 @@ class Tests(unittest.TestCase):
                     self.sent.append(self.t);self.t+=.02
                 return super().write(data)
             def read(self,n):
-                return super().read(n).replace(b' 00000190 00000000\n',b' 00000064 00000000\n')
+                return super().read(n).replace(b' 400 0\n',b' 100 0\n')
         f=Slow()
         with self.assertRaisesRegex(Abort,'窗口'):self.run_probe(f)
         self.assertLessEqual(f.sent[-1]-f.sent[0],.23)

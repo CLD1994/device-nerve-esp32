@@ -437,13 +437,13 @@ class StopObservationTest(unittest.TestCase):
         self.assertTrue(rig.velocity_validity.failed)
         with self.assertRaises(RuntimeError):rig.send_line('ENABLE')
         with self.assertRaises(RuntimeError):rig.send_line('VEL 100')
-    def test_stop_entry_requires_new_sample_not_previous_one(self):
+    def test_stop_entry_requires_new_receive_not_distinct_values(self):
         rig,port,_,_=session(host.Rig)
         old=measurement_bytes(rig,10,0,0,0);rig._consume(old)
         rig.begin_stop_observation()
         self.assertIsNone(rig.last_state)
         rig._consume(old)
-        self.assertIsNone(rig.last_state)
+        self.assertIsNotNone(rig.last_state)
     def test_backlog_and_buffer_errors_invalidate_stop_qualification(self):
         for source in ('backlog','buffer'):
             rig,port,_,_=session(host.Rig)
@@ -458,7 +458,7 @@ class StopObservationTest(unittest.TestCase):
 
 
 class StopAtomicStateTest(unittest.TestCase):
-    def test_duplicate_state_cannot_start_stop_window(self):
+    def test_repeated_received_state_can_start_stop_window(self):
         from travel_limit import Stillness
         rig,port,clock,_=session(host.Rig)
         old=measurement_bytes(rig,10,0,0,0);rig._consume(old)
@@ -466,7 +466,7 @@ class StopAtomicStateTest(unittest.TestCase):
         rig.begin_stop_observation()
         stationary=Stillness(rig);rig.state_observer=stationary.observe
         rig._consume(old+old)
-        self.assertIsNone(rig.last_state)
+        self.assertIsNotNone(rig.last_state)
         self.assertFalse(rig.velocity_validity.failed)
         self.assertFalse(stationary.confirmed)
         for _ in range(6):

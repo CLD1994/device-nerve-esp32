@@ -65,7 +65,7 @@ class ProbeTests(unittest.TestCase):
                 data=super().read(n)
                 if self.v and self.first is not None and self.t-self.first>=.05 and self.dipped is None:
                     self.dipped=self.t
-                    data=data.replace(b' 000004e2 00000000\n',b' 000004b0 00000000\n')
+                    data=data.replace(b' 1250 0\n',b' 1200 0\n')
                 return data
         f=Dip();a=options(hold_s=.1,window_s=.3)
         _,l=self.run_probe(f,a)
@@ -147,7 +147,7 @@ class ProbeTests(unittest.TestCase):
         class Slow(Bench):
             def read(self,n):
                 data=super().read(n)
-                return data.replace(b' 000004e2 00000000\n',b' 000003e8 00000000\n')
+                return data.replace(b' 1250 0\n',b' 1000 0\n')
         f=Slow()
         _,l=self.run_probe(f)
         end=next(e['value'] for e in l.events if e['direction']=='motion_end')
@@ -158,7 +158,7 @@ class ProbeTests(unittest.TestCase):
         for speed in (1225,1233):
             class Near(Bench):
                 def read(self,n):
-                    return super().read(n).replace(b' 000004e2 00000000\n',(' %08x 00000000\n'%speed).encode())
+                    return super().read(n).replace(b' 1250 0\n',(' %d 0\n'%speed).encode())
             f,l=self.run_probe(Near())
             end=next(e['value'] for e in l.events if e['direction']=='motion_end')
             self.assertEqual(end['reason'],'approx_target_hold_completed')
@@ -168,7 +168,7 @@ class ProbeTests(unittest.TestCase):
     def test_below_approximate_threshold_is_not_target_completion(self):
         class Near(Bench):
             def read(self,n):
-                return super().read(n).replace(b' 000004e2 00000000\n',b' 000004c8 00000000\n')
+                return super().read(n).replace(b' 1250 0\n',b' 1224 0\n')
         _,l=self.run_probe(Near())
         end=next(e['value'] for e in l.events if e['direction']=='motion_end')
         self.assertEqual(end['reason'],'window_elapsed')

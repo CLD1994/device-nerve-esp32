@@ -145,9 +145,8 @@ class MotionSafetyTest(unittest.TestCase):
         self.pumps = 0
 
     def refresh_measurement(self):
-        self.sequence=getattr(self,'sequence',0)+1
-        lane=dict(seq=self.sequence,age_us=0)
-        self.rig.velocity_validity.update(dict(boot=1,tick=int(self.now*1000000),flags=3,
+        lane=dict()
+        self.rig.velocity_validity.update(dict(flags=3,
             cart=dict(lane,x_um=0,vx_mm_s=0),pole=dict(lane,theta_urad=0,vth_mrad_s=0)))
 
     def pump(self, duration):

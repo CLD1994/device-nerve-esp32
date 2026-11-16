@@ -125,7 +125,7 @@ class Tests(unittest.TestCase):
         class Slow(Fake):
             def read(self,n):
                 data=super().read(n)
-                return data.replace(b' 00000014 00000000\n',b' 00000001 00000000\n')
+                return data.replace(b' 20 0\n',b' 1 0\n')
         f,l=self.setup_link(Slow())
         with self.assertRaisesRegex(Abort,'窗口'):execute(l,args())
         self.assertEqual(f.v,0);self.assertLess(f.t,2)

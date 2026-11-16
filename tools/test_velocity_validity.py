@@ -11,130 +11,48 @@ from velocity_validity import VelocityValidity
 from state_test_support import state_line
 
 
-def frame(seq=1, tick=2000, flags=3, boot=1, age=0, pole_seq=None):
-    return dict(boot=boot,tick=tick,flags=flags,
-        cart=dict(seq=seq,age_us=age,x_um=1,vx_mm_s=0) if flags&1 else None,
-        pole=dict(seq=seq if pole_seq is None else pole_seq,age_us=age,theta_urad=2,vth_mrad_s=0) if flags&2 else None)
-
-
-def wire(seq=1,tick=2000,flags=3):
-    return state_line(x=1,theta=2,vx=0,vth=0,boot=1,tick=tick,seq=seq,
-                      flags=flags).decode().rstrip('\n')
-
-
+def frame(flags=3):
+    return dict(flags=flags,cart=dict(x_um=1,vx_mm_s=0) if flags&1 else None,
+                pole=dict(theta_urad=2,vth_mrad_s=0) if flags&2 else None)
+def wire(flags=3):
+    return state_line(x=1,theta=2,flags=flags).decode().rstrip('\n')
 class IdentityValidityTest(unittest.TestCase):
     def setUp(self):
-        self.now=[123456.]
-        self.v=VelocityValidity(lambda:self.now[0])
+        self.now=[123456.];self.v=VelocityValidity(lambda:self.now[0])
     def advance(self,s):self.now[0]+=s
     def test_initial_invalid_recovers_before_motion(self):
-        self.assertFalse(self.v.update(frame(flags=0)))
-        self.assertTrue(self.v.update(frame(2,4000)))
+        self.assertFalse(self.v.update(frame(0)));self.assertTrue(self.v.update(frame()))
     def test_cart_requirement_independent_of_pole(self):
         v=VelocityValidity(lambda:0.,required_mask=1)
-        self.assertTrue(v.update(frame(flags=1)))
-        self.assertFalse(self.v.update(frame(flags=1)))
-    def test_joint_requires_both_new_samples(self):
+        self.assertTrue(v.update(frame(1)));self.assertFalse(self.v.update(frame(1)))
+    def test_joint_requires_both_valid_lanes(self):
+        self.assertFalse(self.v.update(frame(1)));self.assertFalse(self.v.update(frame(2)))
         self.assertTrue(self.v.update(frame()))
-        self.advance(.002)
-        f=frame(2,4000,pole_seq=1);f['pole']['age_us']=2000
-        self.assertFalse(self.v.update(f))
-        f=frame(2,6000,pole_seq=2);f['cart']['age_us']=2000
-        self.assertTrue(self.v.update(f))
-    def test_duplicate_does_not_refresh(self):
-        f=frame();self.v.update(f);stamp=self.v.received_at
-        self.advance(.05);self.assertFalse(self.v.update(f))
-        self.assertEqual(self.v.received_at,stamp)
-        self.advance(.051);self.assertFalse(self.v.ready())
-    def test_new_tick_same_sample_does_not_refresh(self):
-        self.v.update(frame());stamp=self.v.received_at
-        self.advance(.01);self.assertFalse(self.v.update(frame(1,12000,age=10000)))
-        self.assertEqual(stamp,self.v.received_at)
-    def test_sequence_wrap_is_new(self):
-        self.v.update(frame(65535));self.advance(.002)
-        self.assertTrue(self.v.update(frame(0,4000)))
-    def test_tick_wrap_is_forward(self):
-        self.v.update(frame(1,0xfffffff0));self.advance(.000032)
-        self.assertTrue(self.v.update(frame(2,0x10)))
-    def test_boot_change_latches(self):
-        self.v.update(frame())
-        with self.assertRaises(RuntimeError):self.v.update(frame(2,4000,boot=2))
-        self.assertTrue(self.v.failed)
-    def test_seq_reverse_and_half_range_rejected(self):
-        for seq in (0,32769):
-            with self.subTest(seq=seq):
-                v=VelocityValidity(lambda:0.);v.update(frame())
-                with self.assertRaises(RuntimeError):v.update(frame(seq,4000))
-    def test_tick_reverse_and_half_range_rejected(self):
-        for tick in (1999,2000+0x80000000):
-            with self.subTest(tick=tick):
-                v=VelocityValidity(lambda:0.);v.update(frame())
-                with self.assertRaises(RuntimeError):v.update(frame(2,tick))
-    def test_same_tick_contradiction_rejected(self):
-        self.v.update(frame())
-        with self.assertRaises(RuntimeError):self.v.update(frame(2))
-    def test_same_seq_changed_measurement_rejected(self):
-        self.v.update(frame());f=frame(1,4000);f['cart']['x_um']=2
-        with self.assertRaises(RuntimeError):self.v.update(f)
+    def test_repeated_values_refresh_receive_time(self):
+        self.v.update(frame());self.advance(.05)
+        self.assertTrue(self.v.update(frame()));self.assertEqual(self.v.received_at,self.now[0])
+        self.assertEqual(self.v.age(),0)
+    def test_only_receive_age_no_source_age_or_identity_claim(self):
+        self.v.update(frame());self.advance(.03);self.assertAlmostEqual(self.v.age(),.03)
+        self.assertFalse(hasattr(self.v,'tick'));self.assertFalse(hasattr(self.v,'boot'))
     def test_late_frame_does_not_unlatch(self):
         self.v.update(frame());self.v.command('VEL 20');self.advance(.101)
-        self.assertFalse(self.v.update(frame(2,103000)))
-        self.assertTrue(self.v.failed)
+        self.assertFalse(self.v.update(frame()));self.assertTrue(self.v.failed)
         with self.assertRaises(RuntimeError):self.v.require()
         self.v.command('VEL 0')
     def test_invalid_during_motion_latches(self):
         self.v.update(frame());self.v.command('VEL 20')
-        self.assertFalse(self.v.update(frame(2,4000,flags=1)))
-        self.assertFalse(self.v.update(frame(3,6000)))
+        self.assertFalse(self.v.update(frame(1)));self.assertFalse(self.v.update(frame()))
         self.assertTrue(self.v.failed)
-    def test_source_age_plus_host_age_not_absolute_clock(self):
-        self.v.update(frame(tick=7,age=20000));self.advance(.03)
-        self.assertAlmostEqual(self.v.age(),.05)
-        self.assertTrue(self.v.ready())
-    def test_relative_queue_growth_added(self):
-        self.v.update(frame());self.advance(.05)
-        self.v.update(frame(2,12000,age=9999))
-        self.assertAlmostEqual(self.v.relative_backlog_s,.04)
-        self.assertAlmostEqual(self.v.age(),.049999)
-    def test_stopped_copy_preserves_identity_not_motion_permission(self):
+    def test_stopped_copy_needs_new_receive_not_distinct_sample(self):
         self.v.update(frame());self.v.command('VEL 20');self.v.failed=True
-        out=self.v.stopped_copy();self.assertFalse(out.ready())
-        self.assertFalse(out.update(frame()))
-        self.assertTrue(out.update(frame(2,4000)))
+        out=self.v.stopped_copy();self.assertFalse(out.ready());self.assertTrue(out.update(frame()))
         self.assertTrue(self.v.failed)
         with self.assertRaises(RuntimeError):self.v.command('VEL 20')
-    def test_new_sequence_requires_strictly_new_sample_time(self):
-        for age in (2000, 20000):
-            with self.subTest(age=age):
-                v=VelocityValidity(lambda:0.);v.update(frame(100,100000))
-                with self.assertRaises(RuntimeError):v.update(frame(101,102000,age=age))
-                self.assertTrue(v.failed)
-    def test_duplicate_sequence_requires_same_sample_time(self):
-        for age in (0, 2001):
-            with self.subTest(age=age):
-                v=VelocityValidity(lambda:0.);v.update(frame(100,100000))
-                with self.assertRaises(RuntimeError):v.update(frame(100,102000,age=age))
-    def test_sample_watermark_survives_invalid_and_stopped_copy(self):
-        self.v.update(frame(100,100000))
-        self.v.update(frame(101,101000,flags=0))
-        out=self.v.stopped_copy()
-        with self.assertRaises(RuntimeError):out.update(frame(101,102000,age=20000))
-        self.assertFalse(self.v.failed)
-    def test_sample_time_unwrap_with_sequence_wrap(self):
-        self.v.update(frame(65535,0xfffffff0,age=5))
-        self.advance(.000032)
-        self.assertTrue(self.v.update(frame(0,0x10,age=5)))
-        self.advance(.000010)
-        self.assertFalse(self.v.update(frame(0,0x1a,age=15)))
-    def test_independent_lane_sample_watermarks(self):
-        self.v.update(frame(100,100000))
-        f=frame(101,102000,pole_seq=100);f['pole']['age_us']=2000
-        self.assertFalse(self.v.update(f))
-        f=frame(101,104000,pole_seq=101);f['cart']['age_us']=2000
-        self.assertTrue(self.v.update(f))
-        f=frame(102,106000,pole_seq=102);f['pole']['age_us']=3000
-        with self.assertRaises(RuntimeError):self.v.update(f)
-
+    def test_expiry_boundary_and_clock_regression(self):
+        v=VelocityValidity(lambda:self.now[0]);self.now[0]=0;v.update(frame())
+        self.now[0]=.1;self.assertTrue(v.ready());self.now[0]=.100001;self.assertFalse(v.ready())
+        self.now[0]=-.001;self.assertFalse(v.ready())
     def test_old_validity_message_rejected(self):
         with self.assertRaises(RuntimeError):self.v.update(['VEL_VALID','1','1'])
 
@@ -146,7 +64,7 @@ class HostFailureTest(unittest.TestCase):
         self.assertEqual(port.writes,[])
     def test_invalid_does_not_resume_after_good_frame(self):
         rig,port,_,_=session(host.Rig);receive(rig,port,wire());rig.send_line('VEL 20')
-        for line in (wire(2,4000,flags=0),wire(3,6000)):
+        for line in (wire(flags=0),wire()):
             with self.assertRaises(RuntimeError):receive(rig,port,line)
         self.assertIsNone(rig.last_state)
         with self.assertRaises(RuntimeError):rig.send_line('VEL 20')

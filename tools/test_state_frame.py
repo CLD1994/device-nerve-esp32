@@ -1,63 +1,61 @@
-"""统一状态帧解析与只读消费者契约。"""
+"""十进制状态帧解析与只读消费者契约。"""
 import unittest
 import importlib
-
-VALID='STATE 00000001 00000002 3 0000 ffff 4e20 0000 ffffffff 002fefd8 80000000 7fffffff'
-INVALID='STATE 00000001 00000002 0 0000 0000 ffff ffff 00000000 00000000 00000000 00000000'
+VALID='STATE 3 -1 3141592 -2147483648 2147483647'
+INVALID='STATE 0 0 0 0 0'
 CAPTURES=('step_loss_capture','step_trace_capture','tmc_trace_capture','pole_diag_capture')
 class CaptureStateTest(unittest.TestCase):
     def test_ignores_only_new_valid_state(self):
         for module in CAPTURES:
-            c=importlib.import_module(module).Capture()
             for line in (VALID,INVALID):
-                with self.subTest(module=module):self.assertIsNone(c.feed(line))
+                with self.subTest(module=module):self.assertIsNone(importlib.import_module(module).Capture().feed(line))
     def test_rejects_old_frames(self):
         for module in CAPTURES:
-            for line in ('STATE 1 2 3 4','VEL_VALID 1 1','CART_STATE1 100 0'):
-                with self.subTest(module=module,line=line),self.assertRaises(ValueError):
-                    importlib.import_module(module).Capture().feed(line)
+            for line in ('STATE 1 2 3 4','VEL_VALID 1 1','CART_STATE1 100 0','STATE 00000002 3 4e20 0000 ffffffff 002fefd8 80000000 7fffffff'):
+                with self.subTest(module=module,line=line),self.assertRaises(ValueError):importlib.import_module(module).Capture().feed(line)
 class ParserTest(unittest.TestCase):
     def parse(self,s):
         from state_frame import parse_state_frame
         return parse_state_frame(s)
+    def test_exact_wire_bounds_and_removed_fields(self):
+        from state_test_support import state_line
+        shortest=state_line(flags=0);longest=state_line(-2147483648,-3141592,-2147483648,-2147483648)
+        self.assertEqual(len(shortest),16);self.assertEqual(len(longest),53)
+        self.assertEqual(len(longest.split()),6)
+        self.assertEqual(set(self.parse(longest.decode().rstrip('\n'))),{'flags','cart','pole'})
     def test_valid_signed_and_boundaries(self):
-        r=self.parse(VALID)
-        self.assertEqual(r,dict(boot=1,tick=2,flags=3,
-            cart=dict(seq=0,age_us=20000,x_um=-1,vx_mm_s=-2147483648),
-            pole=dict(seq=65535,age_us=0,theta_urad=3141592,vth_mrad_s=2147483647)))
-        self.assertEqual(self.parse(VALID.upper()),r)
+        self.assertEqual(self.parse(VALID),dict(flags=3,
+            cart=dict(x_um=-1,vx_mm_s=-2147483648),pole=dict(theta_urad=3141592,vth_mrad_s=2147483647)))
     def test_invalid_lanes_are_none(self):
         r=self.parse(INVALID);self.assertIsNone(r['cart']);self.assertIsNone(r['pole'])
-        p=INVALID.split();p[3]='1';p[6]='0000';self.assertIsNotNone(self.parse(' '.join(p))['cart'])
-        p=INVALID.split();p[3]='2';p[7]='0000';self.assertIsNotNone(self.parse(' '.join(p))['pole'])
+        self.assertIsNotNone(self.parse('STATE 1 0 0 0 0')['cart'])
+        self.assertIsNotNone(self.parse('STATE 2 0 0 0 0')['pole'])
+    def test_negative_zero_rejected_in_every_measurement_slot(self):
+        for i in range(2,6):
+            parts=['STATE','3','0','0','0','0'];parts[i]='-0'
+            with self.subTest(slot=i),self.assertRaises(ValueError):self.parse(' '.join(parts))
     def test_other_tag_none(self):self.assertIsNone(self.parse('MODE DISABLED NONE'))
     def test_strict_layout_and_digits(self):
-        for s in (VALID+' ', ' '+VALID,VALID+'\n',VALID.replace(' ','\t',1),VALID.replace(' ','  ',1),
-                  VALID.replace('00000001','0x000001'),VALID.replace('00000001','０００００００１'),'STATE 1 2 3 4'):
+        for s in (VALID+' ',' '+VALID,VALID+'\n',VALID.replace(' ','\t',1),VALID.replace(' ','  ',1),
+                  'STATE 3 +1 0 0 0','STATE 3 01 0 0 0','STATE 3 -0 0 0 0','STATE 3 １ 0 0 0','STATE 3 ff 0 0 0','STATE 3 0x01 0 0 0'):
             with self.subTest(s=s),self.assertRaises(ValueError):self.parse(s)
-    def test_invalid_flags_age_angle_and_sentinel(self):
-        for index,value in ((3,'4'),(6,'4e21'),(7,'ffff'),(9,'002fefd9'),(9,'ffd01027')):
-            p=VALID.split();p[index]=value
-            with self.subTest(index=index,value=value),self.assertRaises(ValueError):self.parse(' '.join(p))
-        for index,value in ((4,'0001'),(5,'0001'),(6,'0000'),(7,'0000'),(8,'00000001'),(9,'00000001'),(10,'00000001'),(11,'00000001')):
-            p=INVALID.split();p[index]=value
-            with self.subTest(index=index),self.assertRaises(ValueError):self.parse(' '.join(p))
-
-if __name__=='__main__':unittest.main()
-
+    def test_invalid_flags_angle_int32_and_sentinel(self):
+        for s in ('STATE 4 0 0 0 0','STATE 3 2147483648 0 0 0','STATE 3 -2147483649 0 0 0',
+                  'STATE 3 0 3141593 0 0','STATE 3 0 -3141593 0 0','STATE 0 1 0 0 0',
+                  'STATE 0 0 1 0 0','STATE 0 0 0 1 0','STATE 0 0 0 0 1'):
+            with self.subTest(s=s),self.assertRaises(ValueError):self.parse(s)
 class ProbeStateTest(unittest.TestCase):
-    def test_new_double_valid_state_updates_once(self):
+    def test_repeated_values_are_new_received_observations(self):
         from probe_link import Link
         class Port:
-            data=(VALID+'\n').encode()
-            def read(self,n):return self.data
+            def read(self,n):return (VALID+'\n').encode()
         r=Link(Port(),clock=lambda:1);r.aligned=True;r.poll()
         self.assertEqual(r.state,(-1,3141592,-2147483648,2147483647))
-        self.assertEqual(r.states,1);r.poll();self.assertEqual(r.states,1)
+        self.assertEqual(r.states,1);r.poll();self.assertEqual(r.states,2)
     def test_invalid_lane_cannot_enable_probe(self):
         from probe_link import Link,Abort
         class Port:
             def read(self,n):return (INVALID+'\n').encode()
-        r=Link(Port(),clock=lambda:1);r.aligned=True;r.poll()
-        self.assertIsNone(r.state)
+        r=Link(Port(),clock=lambda:1);r.aligned=True;r.poll();self.assertIsNone(r.state)
         with self.assertRaises(Abort):r.send('VEL 20')
+if __name__=='__main__':unittest.main()

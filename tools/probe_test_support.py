@@ -7,7 +7,7 @@ from state_test_support import state_line
 
 class Fake:
     def __init__(self):
-        self.t = 0.; self.writes = []; self.rx = b'\n'; self.v = 0; self.x = 0; self.seq = 0; self.tick = 0
+        self.t = 0.; self.writes = []; self.rx = b'\n'; self.v = 0; self.x = 0
     def clock(self): return self.t
     def sleep(self, n): self.t += n; self.x += self.v * n * 1000
     def write(self, data):
@@ -23,10 +23,8 @@ class Fake:
         elif cmd.startswith('VEL '): self.v=int(cmd.split()[1])
         return len(data)
     def frame(self,x=None,theta=3141592,vx=None,vth=0,flags=3):
-        self.seq=(self.seq+1)&65535
-        self.tick=max(self.tick+1,int(self.t*1000000))
         return state_line(self.x if x is None else x,theta,self.v if vx is None else vx,vth,
-                          tick=self.tick&0xffffffff,seq=self.seq,flags=flags)
+                          flags=flags)
     def read(self,n):
         data=self.rx+self.frame();self.rx=b'';return data
 

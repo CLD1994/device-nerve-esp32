@@ -70,10 +70,7 @@ def receive(rig, transport, *lines):
 def measurement_bytes(rig, x=0, theta=0, vx=0, vth=0, *, flags=3):
     """生成一个新的测量样本；不转换传入的旧协议文本。"""
     from state_test_support import state_line
-    seq=(getattr(rig,'_fixture_seq',0)+1)&65535
-    tick=max(getattr(rig,'_fixture_tick',0)+1,int(rig._clock()*1000000))
-    rig._fixture_seq=seq;rig._fixture_tick=tick
-    return state_line(x,theta,vx,vth,seq=seq,tick=tick&0xffffffff,flags=flags)
+    return state_line(x,theta,vx,vth,flags=flags)
 
 
 def receive_measurements(rig, transport, x=0, theta=0, vx=0, vth=0, *, flags=3):

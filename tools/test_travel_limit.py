@@ -74,7 +74,7 @@ class ExecutorTest(unittest.TestCase):
             def poll_available(self):
                 self.state_received_at=self.t
                 self.replies.update(C); self.last_mode=('READY','NONE')
-                self.velocity_validity.update(parse_state_frame(state_line(tick=int(self.t*1e6)&0xffffffff,seq=round(self.t*1000)&0xffff).decode().strip()))
+                self.velocity_validity.update(parse_state_frame(state_line().decode().strip()))
                 moving=any(s=='VEL 600' for _,s in self.writes)
                 zero=bool(self.writes and self.writes[-1][1]=='VEL 0')
                 if moving and not zero:
@@ -333,7 +333,7 @@ class StopHeartbeatRunTest(unittest.TestCase):
             if zero:
                 stop_polls+=1;x=380000
             if not (zero and stop_polls<=3):
-                r._consume(state_line(x,0,vx,0,tick=int(clock.value*1e6)&0xffffffff,seq=int(clock.value*1000)&0xffff))
+                r._consume(state_line(x,0,vx,0,))
         r.poll_available=poll
         a=SimpleNamespace(v=600,reserve_mm=20,inflight_ms=10,max_seconds=1,plan=False)
         self.assertEqual(run(r,a,clock.advance),0)
