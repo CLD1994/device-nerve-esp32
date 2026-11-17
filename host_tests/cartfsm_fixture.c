@@ -40,7 +40,8 @@ bool cartpos_apply_reference(const cartpos_reference_t *r,int64_t target) { if (
 bool cartpos_reference_is_valid(void) { return referenced && healthy; }
 int64_t cartpos_position_um(void) { return raw-offset; }
 bool cartpos_is_ok(void) { return healthy; }
-bool poleang_is_ok(void) { return true; }
+bool pole_healthy = true;
+bool poleang_is_ok(void) { return pole_healthy; }
 esp_err_t cartaxis_enable(bool on) { enabled=on; return ESP_OK; }
 void cartaxis_set_position_um(long x) { command_pos=x; }
 int64_t cartaxis_cmd_position_um(void) { return command_pos; }

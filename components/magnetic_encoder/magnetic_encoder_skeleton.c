@@ -42,7 +42,7 @@ static me_diag_point_t diagnostic_point(magnetic_encoder_inst_t *inst, int64_t n
         .required=MAGNETIC_ENCODER_HIST_LEN,.has_sample=inst->has_sample,
         .last_attempt_ok=inst->last_attempt_ok,.ok=inst->fail.ok};
     if(!p.has_sample) p.reason|=1;
-    if(!p.last_attempt_ok) p.reason|=2;
+    if(!p.last_attempt_ok && !inst->impl->retain_velocity_window_on_failure) p.reason|=2;
     if(!p.ok) p.reason|=4;
     if(p.fill<p.required) p.reason|=8;
     if(p.span_us>MAGNETIC_ENCODER_MAX_VELOCITY_SPAN_US) p.reason|=16;
@@ -128,9 +128,16 @@ static bool fail_step_unlocked(magnetic_encoder_inst_t *inst, bool read_ok)
     inst->last_attempt_ok = read_ok;
     if (!read_ok) {
         inst->failure_seq++;
-        magnetic_encoder_vel_win_reset(&inst->vel);
-        inst->velocity_valid = false;
-        inst->velocity_span_us = 0;
+        int64_t now = inst->now_us(inst->clock_ctx);
+        bool retain = inst->impl->retain_velocity_window_on_failure && inst->has_sample
+            && now > inst->sampled_at_us
+            && now - inst->sampled_at_us <= inst->continuous_gap_us;
+        if (!retain) {
+            magnetic_encoder_vel_win_reset(&inst->vel);
+            inst->velocity_span_us = 0;
+            inst->velocity_valid = false;
+        }
+        /* Retained estimates keep their original successful timestamp. */
     }
     return event;
 }
@@ -431,7 +438,8 @@ bool magnetic_encoder_inst_get_sample(magnetic_encoder_handle_t enc,
         .status = inst->status,
         .velocity_counts_per_s = inst->vel_counts_per_s,
         .velocity_span_us = inst->velocity_span_us,
-        .velocity_valid = inst->velocity_valid && fresh && inst->last_attempt_ok,
+        .velocity_valid = inst->velocity_valid && fresh && inst->fail.ok
+            && (inst->last_attempt_ok || inst->impl->retain_velocity_window_on_failure),
         .position_counts = inst->pos_counts,
         .sampled_at_us = inst->sampled_at_us,
         .sample_seq = inst->sample_seq,

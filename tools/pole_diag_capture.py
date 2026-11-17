@@ -55,7 +55,7 @@ class Capture:
             self.expected='BEFORE' if captured else 'END'
         elif kind in ('BEFORE','AFTER'):
             s=sample(v)
-            if (kind=='BEFORE' and (s['reason_bits']!=0 or not s['velocity_valid'] or not all(s[k] for k in ('has_sample','last_attempt_ok','ok')) or s['fill']!=s['required'] or not 0<=s['age_us']<=s['gap_us'] or not 0<s['span_us']<=32000)) or (kind=='AFTER' and (not s['reason_bits'] or s['velocity_valid'])):
+            if (kind=='BEFORE' and (s['reason_bits']!=0 or not s['velocity_valid'] or not all(s[k] for k in ('has_sample','ok')) or s['fill']!=s['required'] or not 0<=s['age_us']<=s['gap_us'] or not 0<s['span_us']<=32000)) or (kind=='AFTER' and (not s['reason_bits'] or s['velocity_valid'])):
                 raise ValueError('有效到无效的快照条件矛盾')
             if kind=='AFTER':
                 before=self.record['before']
