@@ -568,6 +568,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("query")
+    sub.add_parser("calibrate-pole-down", help="自然下垂静止时校准摆杆零点，仅DISABLED")
     sub.add_parser("mark-left")
     sub.add_parser("mark-right")
     sub.add_parser("confirm-left")
@@ -606,6 +607,14 @@ def main():
         if args.expected_hz is not None and (
                 not math.isfinite(args.expected_hz) or args.expected_hz <= 0):
             ap.error("--expected-hz 必须是正的有限频率")
+    if args.cmd == "calibrate-pole-down":
+        from pole_zero import calibrate_port
+        try:
+            sys.exit(calibrate_port(args.port, args.baud))
+        except (RuntimeError, ValueError, OSError) as exc:
+            print(f"标定中止：{exc}", file=sys.stderr)
+            sys.exit(1)
+
     rig = (CartRig if args.cmd == "vel" else Rig)(args.port, args.baud, step_loss_policy=args.step_loss_policy)
     try:
         table = {

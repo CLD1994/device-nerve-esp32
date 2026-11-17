@@ -179,3 +179,7 @@ python -m unittest discover -s tools -p 'test_*.py'
 采样和参考点单元测试命令见[对应替身说明](../host_tests/encoder_reference_stubs/README.md)。存储测试覆盖记录缺失、损坏、版本、范围、失效记录与各存储阶段失败；FSM测试覆盖保存、重启、禁用门、确认、原点同步、配置写失败与重试。
 
 宿主通过不能证明ESP-IDF目标构建、NVS物理断电一致性、实际传感器采样连续性或电机安全。真机验收应保持电机禁用，分别验证：两点保存后重启不能直接ENABLE；左确认后坐标恢复；断电后移动再确认；存储记录清除后拒绝恢复；标定期间移动/传感器失败拒绝操作。最后单独完成低速限位与加速度验收。不要由测试脚本自动使能或撞挡块。
+
+## 自然下垂零点
+
+在 `DISABLED NONE` 下，让摆杆自然下垂静止，运行 `python tools/cartpole_host.py --port COM11 calibrate-pole-down`。它保留方向配置，使下垂角为 ±π、直立角为 0，只修改零点，由固件保存到 NVS 并读回确认。采样条件、失败处理与独占要求见 [工具说明](../tools/README.md#自然下垂标定摆杆零点)。
