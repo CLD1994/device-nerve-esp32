@@ -52,7 +52,9 @@ int main(void) {
     assert(supervision.position_um==retained.position_um && supervision.sample.sample_seq==retained.sample.sample_seq);
     assert(!cartpos_get_supervision(NULL));
     available=true; sample.last_attempt_ok=false;
-    assert(!cartpos_get_measurement(&cart)); assert(!poleang_get_measurement(&pole));
+    assert(!cartpos_get_measurement(&cart)); assert(poleang_get_measurement(&pole));
+    assert(pole.sampled_at_us==sample.sampled_at_us && pole.sample_seq==sample.sample_seq);
+    sample.ok=false; assert(!poleang_get_measurement(&pole)); sample.ok=true;
     sample.last_attempt_ok=true; upr=0; callback(SET_MM_PER_REV,0);
     assert(!cartpos_get_measurement(&cart));
     assert(!cartpos_get_measurement(NULL)); assert(!poleang_get_measurement(NULL));

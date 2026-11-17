@@ -11,6 +11,7 @@
  */
 
 #include "cartfsm.h"
+#include "cartfsm_fault_trigger.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -287,6 +288,7 @@ static void enter_fault_record(cm_reason_t r, uint32_t run, const cartfsm_step_l
     const fw_params_t *p = fw_params();
     cartaxis_set_accel_mm_s2(p->acc_max);
     cartaxis_halt();
+    cartfsm_fault_trigger_accepted(r);
     if (r == CR_STEP_LOSS)
         cartfsm_diag_trigger(run, accepted_at, target_before_stop, candidate);
     xSemaphoreGive(s_output_lock);
@@ -917,6 +919,8 @@ esp_err_t cartfsm_start(void)
         return ESP_OK;
     }
 
+    esp_err_t trigger_result = cartfsm_fault_trigger_init();
+    if (trigger_result != ESP_OK) return trigger_result;
     s_output_lock = xSemaphoreCreateMutex();
     if (s_output_lock == NULL) return ESP_ERR_NO_MEM;
 

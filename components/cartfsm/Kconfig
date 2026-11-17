@@ -77,4 +77,22 @@ config CARTFSM_TMC_TRACE
         前最多2秒与后最多5秒的记录；停机后通过 TMCTRACE? 导出。
         GSTAT 读取可能影响驱动历史标志；记录不是故障瞬间的同步快照。
 
+config CARTFSM_MT6835_FAULT_TRIGGER
+    bool "GPIO: latch accepted FAULT MT6835"
+    depends on IDF_TARGET_ESP32S3
+    default n
+    help
+        Boot drives the configured GPIO low. The first accepted transition to FAULT MT6835
+        drives it high after protective stopping is requested, until reboot.
+        The pin must be free and accessible. No ENABLE/RESET rearm.
+
+config CARTFSM_MT6835_FAULT_TRIGGER_GPIO
+    int "FAULT MT6835 trigger GPIO"
+    depends on CARTFSM_MT6835_FAULT_TRIGGER
+    range 0 48
+    default 39
+    help
+        Use an available output-capable pin. Board wiring and memory pins
+        must be checked separately; default GPIO39.
+
 endmenu

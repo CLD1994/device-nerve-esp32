@@ -63,7 +63,7 @@ bool poleang_get_measurement(poleang_measurement_t *out)
 {
     magnetic_encoder_sample_t sample;
     if (out == NULL || !magnetic_encoder_get_sample(s_enc, &sample)
-        || !sample.valid || !sample.ok || !sample.last_attempt_ok || !sample.velocity_valid) return false;
+        || !sample.valid || !sample.ok || !sample.velocity_valid) return false;
     int32_t cpr = magnetic_encoder_counts_per_rev(s_enc);
     if (cpr <= 0 || sample.raw_counts >= (uint32_t)cpr) return false;
     const fw_params_t *p = fw_params();

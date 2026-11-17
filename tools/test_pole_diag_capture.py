@@ -12,6 +12,22 @@ class CaptureTest(unittest.TestCase):
   for line in lines():r=c.feed(line)
   self.assertEqual(r['run_id'],4);self.assertEqual(r['after']['failure_seq'],1)
   self.assertEqual(r['failure']['bytes'],[0,1,2,3,4,5]);self.assertEqual(r['raw_lines'],lines())
+ def test_ninth_failed_read_retained_until_tenth_failure(self):
+  # Device keeps the same successful sample/time through failures 1..9.
+  before='104500 100000 4500 33 33 16000 20000 40 9 0 1 0 1 1 0 123 0'
+  after='105000 100000 5000 33 33 16000 20000 40 10 0 1 0 0 0 4 123 0'
+  frames=['POLED2 BEGIN 4 8 1 1 1 0','POLED2 BEFORE '+before,
+          'POLED2 AFTER '+after,'POLED2 FAIL 3 10 105000 0 1 2 3 4 5','POLED2 END 4 8']
+  c=Capture()
+  for line in frames:r=c.feed(line)
+  self.assertEqual(r['before']['last_attempt_ok'],0)
+  self.assertEqual(r['before']['velocity_valid'],1)
+  self.assertEqual(r['after']['ok'],0)
+  self.assertEqual(r['failure']['sequence'],10)
+  self.assertEqual(r['before']['sampled_us'],r['after']['sampled_us'])
+  # Removing the last-read gate must not relax boolean validation.
+  c=Capture();c.feed(frames[0]);bad=before.split();bad[11]='2'
+  with self.assertRaises(ValueError):c.feed('POLED2 BEFORE '+' '.join(bad))
  def test_no_event(self):
   c=Capture();c.feed('POLED2 BEGIN 0 0 0 0 0 7');r=c.feed('POLED2 END 0 0')
   self.assertFalse(r['captured']);self.assertIsNone(r['before'])
@@ -55,7 +71,7 @@ class CaptureTest(unittest.TestCase):
   for line in ['STATE '+'1'*2050+' 2 3 4','ERR '+'x'*2050]:
    with self.assertRaisesRegex(ValueError,'过长'):Capture().feed(line)
  def test_before_must_be_consistently_valid(self):
-  for index,value in [(10,'0'),(11,'0'),(12,'0'),(3,'32'),(2,'20001'),(5,'32001')]:
+  for index,value in [(10,'0'),(12,'0'),(3,'32'),(2,'20001'),(5,'32001')]:
    fields=BEFORE.split();fields[index]=value;c=Capture();c.feed(lines()[0])
    with self.subTest(index=index),self.assertRaises(ValueError):c.feed('POLED2 BEFORE '+' '.join(fields))
  def test_background(self):

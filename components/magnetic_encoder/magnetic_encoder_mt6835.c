@@ -23,6 +23,7 @@
 /* ---- 实现实例：骨架实例 + 帧层句柄 + STATUS 告警去重 ---- */
 typedef struct {
     magnetic_encoder_inst_t skel;      /* 骨架实例（首成员，句柄即其地址） */
+    magnetic_encoder_impl_t impl;   /* Per-instance sampling policy. */
     mt6835_hw_handle_t      hw;
     const char             *name;      /* 日志标签（任务名） */
     uint8_t                 last_status;
@@ -151,7 +152,9 @@ esp_err_t magnetic_encoder_mt6835_init(const magnetic_encoder_mt6835_config_t *c
         return err;
     }
 
-    err = magnetic_encoder_skeleton_start(&me->skel, &s_impl, me, me->name);
+    me->impl = s_impl;
+    me->impl.retain_velocity_window_on_failure = cfg->retain_velocity_window_on_failure;
+    err = magnetic_encoder_skeleton_start(&me->skel, &me->impl, me, me->name);
     if (err != ESP_OK) {
         free(me);
         return err;
