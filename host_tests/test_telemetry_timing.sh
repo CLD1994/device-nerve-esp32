@@ -26,3 +26,9 @@ while IFS= read -r path; do includes+=("-I$path"); done < <(find components -typ
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -DconfigTICK_RATE_HZ=1000 \
   -Ihost_tests/power_stubs -Icomponents/cartfsm/host_stub -Ihost_tests/stub \
   "${includes[@]}" -fsyntax-only components/telemetry/telemetry.c
+
+for test in telemetry_format_test telemetry_validity_test; do
+ "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Ihost_tests/stub -Icomponents/telemetry/include \
+  "host_tests/$test.c" components/telemetry/telemetry_format.c -o "$tmp/$test"
+ "$tmp/$test"
+done

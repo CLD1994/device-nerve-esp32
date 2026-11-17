@@ -1,48 +1,20 @@
-/*
- * telemetry_format — STATE 行组帧纯函数（无 ESP 依赖，宿主可测）
- */
-
 #include "telemetry.h"
-
 #include <stdio.h>
-
-int telemetry_format_state(char *buf, size_t len, int32_t x_um,
-                           int32_t theta_urad, int32_t vx_mm_s,
-                           int32_t vth_mrad_s)
+#include <inttypes.h>
+static bool lane_valid(telemetry_lane_t p,int64_t now)
 {
-    if (buf == NULL || len < 40) {
-        return -1;
-    }
-    int n = snprintf(buf, len, "STATE %ld %ld %ld %ld",
-                     (long)x_um, (long)theta_urad,
-                     (long)vx_mm_s, (long)vth_mrad_s);
-    if (n < 0 || (size_t)n >= len) {
-        return -1;
-    }
-    return n;
+ return p.valid && p.sampled_at_us>=0 && p.sampled_at_us<=now && now-p.sampled_at_us<=20000;
 }
-
-
-int telemetry_format_measurement(char *buf, size_t len, telemetry_validity_t *gate,
-    int64_t now_us, bool cart_valid, bool pole_valid,
-    int32_t x, int32_t theta, int32_t vx, int32_t vth)
+int telemetry_format_state(char *buf,size_t len,int64_t now,
+                           telemetry_lane_t cart,telemetry_lane_t pole)
 {
-    if (!buf || !gate || len == 0) return -1;
-    bool report = !gate->initialized || gate->cart_valid != cart_valid
-        || gate->pole_valid != pole_valid
-        || now_us < gate->last_report_us || now_us - gate->last_report_us >= 100000;
-    size_t used = 0;
-    if (report) {
-        int n = snprintf(buf, len, "VEL_VALID %d %d\n", cart_valid, pole_valid);
-        if (n < 0 || (size_t)n >= len) return -1;
-        used = (size_t)n;
-    }
-    if (cart_valid && pole_valid) {
-        int n = telemetry_format_state(buf + used, len - used, x, theta, vx, vth);
-        if (n < 0 || (size_t)n + 1 >= len - used) return -1;
-        used += (size_t)n;
-        buf[used++] = '\n'; buf[used] = '\0';
-    }
-    if (report) *gate = (telemetry_validity_t){true, cart_valid, pole_valid, now_us};
-    return (int)used;
+ if(!buf || len==0 || now<0) return -1;
+ bool c=lane_valid(cart,now),p=lane_valid(pole,now)
+     && pole.position>=-3141592 && pole.position<=3141592;
+ int n=snprintf(buf,len,
+  "STATE %u %" PRId32 " %" PRId32 " %" PRId32 " %" PRId32 "\n",
+  (unsigned)(c|(p<<1)),
+  c?cart.position:INT32_C(0),p?pole.position:INT32_C(0),
+  c?cart.velocity:INT32_C(0),p?pole.velocity:INT32_C(0));
+ return n>0 && (size_t)n<len ? n : -1;
 }

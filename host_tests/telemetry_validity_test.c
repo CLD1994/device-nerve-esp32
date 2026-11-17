@@ -1,27 +1,31 @@
 #include <assert.h>
 #include <string.h>
+#include <stdint.h>
 #include <stdio.h>
 #include "telemetry.h"
-int main(void) {
-    telemetry_validity_t gate={0}; char buf[128];
-    assert(telemetry_format_measurement(buf,sizeof(buf),&gate,0,false,false,1,2,3,4)>0);
-    assert(strcmp(buf,"VEL_VALID 0 0\n")==0);
-    assert(telemetry_format_measurement(buf,sizeof(buf),&gate,99999,false,false,1,2,3,4)==0);
-    assert(telemetry_format_measurement(buf,sizeof(buf),&gate,100000,false,false,1,2,3,4)>0);
-    assert(strcmp(buf,"VEL_VALID 0 0\n")==0);
-    assert(telemetry_format_measurement(buf,sizeof(buf),&gate,100001,true,false,1,2,3,4)>0);
-    assert(strcmp(buf,"VEL_VALID 1 0\n")==0);
-    assert(telemetry_format_measurement(buf,sizeof(buf),&gate,100002,true,true,1,2,3,4)>0);
-    assert(strcmp(buf,"VEL_VALID 1 1\nSTATE 1 2 3 4\n")==0);
-    assert(telemetry_format_measurement(buf,sizeof(buf),&gate,102002,true,true,5,6,7,8)>0);
-    assert(strcmp(buf,"STATE 5 6 7 8\n")==0);
-    assert(telemetry_format_measurement(buf,sizeof(buf),&gate,102003,false,true,5,6,0,8)>0);
-    assert(strcmp(buf,"VEL_VALID 0 1\n")==0);
-    assert(telemetry_format_measurement(buf,sizeof(buf),&gate,102004,true,true,1,2,3,4)>0);
-    assert(telemetry_format_measurement(buf,sizeof(buf),&gate,202004,true,true,1,2,3,4)>0);
-    assert(strcmp(buf,"VEL_VALID 1 1\nSTATE 1 2 3 4\n")==0);
-    assert(telemetry_format_measurement(buf,1,&gate,102004,true,true,1,2,3,4)<0);
-    assert(telemetry_format_measurement(buf,sizeof(buf),&gate,202005,true,true,1,2,3,4)>0);
-    assert(strcmp(buf,"STATE 1 2 3 4\n")==0); /* 失败的组帧没有提交心跳状态。 */
-    puts("telemetry validity passed");
+int main(void){
+ char b[80];telemetry_lane_t c={true,100,1,2},p={true,100,3,4};
+ assert(telemetry_format_state(b,sizeof(b),20100,c,p)>0); assert(!strcmp(b,"STATE 3 1 3 2 4\n"));
+
+ assert(telemetry_format_state(b,sizeof(b),20101,c,p)>0); assert(!strcmp(b,"STATE 0 0 0 0 0\n"));
+
+ p.valid=false; assert(telemetry_format_state(b,sizeof(b),100,c,p)>0); assert(!strcmp(b,"STATE 1 1 0 2 0\n"));
+
+ c.valid=false;p.valid=true;assert(telemetry_format_state(b,sizeof(b),100,c,p)>0); assert(!strcmp(b,"STATE 2 0 3 0 4\n"));
+
+ c.valid=true;c.sampled_at_us=101;p.sampled_at_us=-1;
+ assert(telemetry_format_state(b,sizeof(b),100,c,p)>0); assert(!strcmp(b,"STATE 0 0 0 0 0\n"));
+ c.sampled_at_us=INT64_C(0x100000000);
+ assert(telemetry_format_state(b,sizeof(b),INT64_C(0x100000000),c,p)>0); assert(!strcmp(b,"STATE 1 1 0 2 0\n"));
+
+ c=(telemetry_lane_t){true,100,INT32_MAX,INT32_MIN};
+ for(int sign=-1;sign<=1;sign+=2){
+  p=(telemetry_lane_t){true,100,sign*3141592,INT32_MIN};
+  assert(telemetry_format_state(b,sizeof(b),100,c,p)>0);
+  assert(!strncmp(b,"STATE 3 ",8));
+  p.position=sign*3141593;
+  assert(telemetry_format_state(b,sizeof(b),100,c,p)>0); assert(!strcmp(b,"STATE 1 2147483647 0 -2147483648 0\n"));
+
+ }
+ puts("independent lane validity passed");
 }

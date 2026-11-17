@@ -6,13 +6,31 @@ import unittest
 from unittest.mock import patch
 
 import cartpole_host as host
-from host_test_support import session, receive
+from host_test_support import session, receive, receive_measurements, measurement_bytes
 
 
 class RigStateTest(unittest.TestCase):
     def make_rig(self):
         rig, self.port, _, _ = session(host.Rig)
         return rig
+
+    def test_byte_entry_rejects_noncanonical_state_whitespace(self):
+        for line in (' STATE 3 1 2 3 4', 'STATE 3 1 2 3 4 ',
+                     '\tSTATE 3 1 2 3 4\t', 'STATE 3 1 2 3 4\r\r'):
+            with self.subTest(line=line):
+                rig = self.make_rig()
+                receive(rig, self.port, line)
+                self.assertIsNone(rig.last_state)
+                self.assertEqual(rig.state_count, 0)
+                self.assertEqual(rig.unknown_count, 1)
+
+    def test_byte_entry_accepts_lf_crlf_and_empty_lines(self):
+        rig = self.make_rig()
+        self.port.feed(b'\n\r\nSTATE 3 1 2 3 4\r\nSTATE 3 5 6 7 8\n')
+        rig.pump(.005)
+        self.assertEqual(rig.state_count, 2)
+        self.assertEqual(rig.last_state, ['5','6','7','8'])
+        self.assertEqual(rig.unknown_count, 0)
 
     def test_no_initial_state(self):
         rig = self.make_rig()
@@ -28,8 +46,8 @@ class RigStateTest(unittest.TestCase):
 
     def test_valid_state_sets_latest_sample(self):
         rig = self.make_rig()
-        receive(rig, self.port, "STATE 80 -3141593 0 0")
-        self.assertEqual(rig.last_state, ["80", "-3141593", "0", "0"])
+        receive_measurements(rig,self.port,80,-3141592,0,0)
+        self.assertEqual(rig.last_state, ["80", "-3141592", "0", "0"])
         self.assertEqual(rig.state_count, 1)
 
     def test_state_without_frames_returns_failure(self):
@@ -41,6 +59,7 @@ class RigStateTest(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertEqual(rig.state_count, 0)
         self.assertNotIn("x_um", output.getvalue())
+        self.assertIn("有效 STATE", output.getvalue())
         self.assertEqual(self.port.writes, [])
 
 
@@ -141,7 +160,7 @@ class DisableCommandTest(unittest.TestCase):
 class StepLossEventTest(unittest.TestCase):
     def active(self, **kwargs):
         rig, port, clock, messages = session(host.Rig, **kwargs)
-        receive(rig, port, 'VEL_VALID 1 1', 'STATE 10 20 0 0')
+        receive_measurements(rig,port,10,20,0,0)
         rig.send_line('VEL 20')
         return rig, port, clock, messages
 
@@ -209,7 +228,7 @@ class StepLossEventTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):receive(rig,port,fault)
             with self.assertRaises(RuntimeError):rig.send_line('VEL 20')
         rig, port, _, _ = self.active()
-        receive(rig,port,'EVENT STEP_LOSS 1 1 0','MODE FAULT POWER')
+        with self.assertRaises(RuntimeError):receive(rig,port,'EVENT STEP_LOSS 1 1 0','MODE FAULT POWER')
         self.assertEqual(rig.last_mode,('FAULT','POWER'))
 
     def test_stop_records_then_latches_without_stdout_before_zero_request(self):
@@ -238,7 +257,7 @@ class StepLossEventTest(unittest.TestCase):
         def printed(*args,**kwargs):
             self.assertEqual(port.writes[-1],b'VEL 0\n')
         with patch.object(host.sys,'argv',['tool','--port','memory','--step-loss-policy','stop','vel','20']), \
-                patch.object(host,'Rig',return_value=rig) as factory, \
+                patch.object(host,'CartRig',return_value=rig) as factory, \
                 patch.object(host,'cmd_vel',side_effect=command),patch('builtins.print',side_effect=printed), \
                 self.assertRaises(SystemExit) as result:
             host.main()
@@ -283,3 +302,295 @@ class StepLossEventTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TravelReceiveTest(unittest.TestCase):
+    def test_split_frames_and_each_state_callback(self):
+        rig,port,_,_=session(host.Rig)
+        seen=[]
+        rig.state_observer=lambda:seen.append(int(rig.last_state[0]))
+        first=measurement_bytes(rig,1);second=measurement_bytes(rig,2)
+        rig._consume(first[:30])
+        rig._consume(first[30:]+second)
+        self.assertEqual(seen,[1,2])
+    def test_poll_restores_timeout_after_error(self):
+        rig,port,_,_=session(host.Rig)
+        port.timeout=.2
+        port.in_waiting=0
+        rig.poll_available()
+        self.assertEqual(port.timeout,.2)
+        with patch.object(rig,'_consume',side_effect=RuntimeError('bad')):
+            with self.assertRaises(RuntimeError): rig.poll_available()
+        self.assertEqual(port.timeout,.2)
+    def test_cli_rejects_conflicting_modes_before_port(self):
+        for argv in (['--to-limit'],['--max-seconds','nan'],['--hold','1','--plan']):
+            with patch.object(host.sys,'argv',['tool','--port','X','vel','600']+argv), patch.object(host,'Rig') as factory, contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit): host.main()
+                factory.assert_not_called()
+
+class TravelMessageObserverTest(unittest.TestCase):
+    def test_observer_sees_each_line_before_overwrite(self):
+        rig,port,_,_=session(host.Rig)
+        seen=[];rig.message_observer=seen.append
+        rig._consume(b'MODE FAULT STEP_LOSS\nMODE READY NONE\nERR BUSY\nOK VEL 0\n')
+        self.assertEqual(seen,['MODE FAULT STEP_LOSS','MODE READY NONE','ERR BUSY','OK VEL 0'])
+        self.assertEqual(rig.last_mode,('READY','NONE'))
+        self.assertEqual(rig.last_reply,('OK','VEL',0))
+
+
+class DefaultTravelCliTest(unittest.TestCase):
+    def invoke(self, options):
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']+options), patch.object(host,'CartRig') as factory, patch.object(host,'cmd_vel',return_value=0) as command:
+            with self.assertRaises(SystemExit) as exited: host.main()
+            self.assertEqual(exited.exception.code,0)
+            return command.call_args.args[1]
+    def test_default_is_travel_not_one_second(self):
+        args=self.invoke([])
+        self.assertIsNone(args.hold)
+        self.assertEqual(args.inflight_ms,10)
+        rig=SimpleNamespace()
+        with patch('travel_limit.run',return_value=0) as run:
+            self.assertEqual(host.cmd_vel(rig,args),0)
+            run.assert_called_once_with(rig,args)
+    def test_plan_works_without_selector(self):
+        args=self.invoke(['--plan'])
+        self.assertTrue(args.plan)
+        self.assertIsNone(args.hold)
+    def test_explicit_hold_keeps_duration(self):
+        args=self.invoke(['--hold','2'])
+        self.assertEqual(args.hold,2)
+        self.assertFalse(args.plan)
+
+class StartToleranceCliTest(unittest.TestCase):
+    def test_invalid_tolerance_rejected_before_port(self):
+        for value in ('-1','1.1','nan','inf'):
+            with patch.object(host.sys,'argv',['tool','--port','X','vel','600','--start-tolerance-mm',value]),patch.object(host,'Rig') as factory,contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):host.main()
+                factory.assert_not_called()
+    def test_value_error_is_friendly_without_motion(self):
+        rig=SimpleNamespace(velocity_validity=SimpleNamespace(active=False),close=lambda:None)
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'CartRig',return_value=rig),patch('travel_limit.run',side_effect=ValueError('起点超限')),contextlib.redirect_stdout(io.StringIO()) as output:
+            with self.assertRaises(SystemExit) as exited:host.main()
+            self.assertEqual(exited.exception.code,1)
+        self.assertIn('起点超限',output.getvalue())
+    def test_active_value_error_requests_zero_before_message(self):
+        actions=[]
+        rig=SimpleNamespace(velocity_validity=SimpleNamespace(active=True),close=lambda:actions.append('close'),send_line=actions.append)
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'CartRig',return_value=rig),patch('travel_limit.run',side_effect=ValueError('bad')),patch('builtins.print',side_effect=lambda *a:actions.append('print')):
+            with self.assertRaises(SystemExit):host.main()
+        self.assertEqual(actions[:2],['VEL 0','print'])
+
+class TravelBacklogTest(unittest.TestCase):
+    def test_known_backlog_rejected_not_retimestamped_as_fresh(self):
+        rig,port,_,_=session(host.Rig)
+        port.timeout=.2;port.in_waiting=4097
+        with patch.object(port,'read') as read:
+            with self.assertRaises(RuntimeError):rig.poll_available()
+            read.assert_not_called()
+        self.assertTrue(rig.velocity_validity.failed)
+        self.assertEqual(rig.max_rx_waiting,4097)
+        self.assertEqual(port.timeout,.2)
+
+class TimingHooksTest(unittest.TestCase):
+    def test_short_write_records_attempt_not_success(self):
+        rig,port,_,_=session(host.Rig)
+        rig.timing=host.SessionTiming(rig._clock)
+        receive_measurements(rig,port,0,0,0,0)
+        with patch.object(port,'write',return_value=2):
+            with self.assertRaises(RuntimeError):rig.send_line('VEL 600')
+        self.assertEqual(rig.timing.report()['nonzero_write_attempts'],1)
+        self.assertIsNone(rig.timing.report()['first_nonzero_complete_s'])
+    def test_hold_keeps_existing_pumps_without_zero(self):
+        writes=[];pumps=[]
+        rig=SimpleNamespace(query=lambda:('READY','NONE'),send_line=writes.append,pump=pumps.append,last_state=None)
+        with patch.object(host.time,'time',side_effect=[0,0,.5,1]),contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(host.cmd_vel(rig,SimpleNamespace(hold=1,v=600)),0)
+        self.assertEqual(writes,['VEL 600','VEL 600'])
+        self.assertEqual(pumps,[.005,.005,.3])
+        self.assertIsNone(rig.timing.report()['stop_observed_s'])
+    def test_summary_failure_does_not_change_result_or_skip_close(self):
+        actions=[];rig=SimpleNamespace(close=lambda:actions.append('close'))
+        def cmd(r,a):
+            r.timing=host.SessionTiming(lambda:0)
+            return 0
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'CartRig',return_value=rig),patch.object(host,'cmd_vel',side_effect=cmd),patch.object(host.SessionTiming,'summary',side_effect=ValueError('summary')):
+            with self.assertRaises(SystemExit) as end:host.main()
+        self.assertEqual(end.exception.code,0)
+        self.assertEqual(actions,['close'])
+    def test_no_timing_does_not_parse_or_change_console_payload(self):
+        rig,port,_,_=session(host.Rig)
+        receive_measurements(rig,port,0,0,0,0)
+        rig.send_line('VEL invalid')
+        self.assertEqual(port.writes[-1],b'VEL invalid\n')
+        self.assertIsNone(rig.timing)
+
+class StopObservationTest(unittest.TestCase):
+    def test_failed_motion_can_observe_new_valid_state_not_resume(self):
+        rig,port,_,_=session(host.Rig)
+        rig.velocity_validity.active=True;rig.velocity_validity.failed=True
+        rig.begin_stop_observation()
+        rig._consume(measurement_bytes(rig,10,0,0,0))
+        self.assertEqual(rig.last_state,['10','0','0','0'])
+        self.assertTrue(rig.velocity_validity.failed)
+        with self.assertRaises(RuntimeError):rig.send_line('VEL 1')
+        rig.send_line('VEL 0')
+    def test_bad_frame_requires_new_atomic_state(self):
+        rig,port,_,_=session(host.Rig)
+        rig.velocity_validity.active=True;rig.velocity_validity.failed=True
+        rig.begin_stop_observation()
+        rig._consume(measurement_bytes(rig,10,0,0,0))
+        for bad in (b'UNKNOWN\n',b'VEL_VALID 0 1\n',b'STATE invalid\n'):
+            with self.assertRaises(RuntimeError):rig._consume(bad)
+            self.assertIsNone(rig.last_state)
+            rig._consume(measurement_bytes(rig,10,0,0,0))
+            self.assertEqual(rig.last_state,['10','0','0','0'])
+    def test_failed_gate_can_collect_full_stillness_window(self):
+        from travel_limit import Stillness
+        rig,port,clock,_=session(host.Rig)
+        rig.velocity_validity.active=True;rig.velocity_validity.failed=True
+        rig.begin_stop_observation()
+        stable=Stillness(rig);rig.state_observer=stable.observe
+        for _ in range(6):
+            rig._consume(measurement_bytes(rig,10,0,0,0))
+            clock.advance(.05)
+        self.assertTrue(stable.confirmed)
+        self.assertTrue(rig.velocity_validity.failed)
+        with self.assertRaises(RuntimeError):rig.send_line('ENABLE')
+        with self.assertRaises(RuntimeError):rig.send_line('VEL 100')
+    def test_stop_entry_requires_new_receive_not_distinct_values(self):
+        rig,port,_,_=session(host.Rig)
+        old=measurement_bytes(rig,10,0,0,0);rig._consume(old)
+        rig.begin_stop_observation()
+        self.assertIsNone(rig.last_state)
+        rig._consume(old)
+        self.assertIsNotNone(rig.last_state)
+    def test_backlog_and_buffer_errors_invalidate_stop_qualification(self):
+        for source in ('backlog','buffer'):
+            rig,port,_,_=session(host.Rig)
+            rig.begin_stop_observation()
+            rig._consume(measurement_bytes(rig,10,0,0,0))
+            with self.subTest(source=source),self.assertRaises(RuntimeError):
+                if source=='backlog':
+                    port.timeout=.2;port.in_waiting=4097;rig.poll_available()
+                else:rig._consume(b'x'*65537)
+            self.assertIsNone(rig.last_state)
+            self.assertIsNone(rig.stop_observation.received_at)
+
+
+class StopAtomicStateTest(unittest.TestCase):
+    def test_repeated_received_state_can_start_stop_window(self):
+        from travel_limit import Stillness
+        rig,port,clock,_=session(host.Rig)
+        old=measurement_bytes(rig,10,0,0,0);rig._consume(old)
+        rig.velocity_validity.active=True
+        rig.begin_stop_observation()
+        stationary=Stillness(rig);rig.state_observer=stationary.observe
+        rig._consume(old+old)
+        self.assertIsNotNone(rig.last_state)
+        self.assertFalse(rig.velocity_validity.failed)
+        self.assertFalse(stationary.confirmed)
+        for _ in range(6):
+            rig._consume(measurement_bytes(rig,10,0,0,0));clock.advance(.05)
+        self.assertTrue(stationary.confirmed)
+        # 原运动有效性在这个构造中未知，会按原规则锁存；观测不修改它。
+    def test_expired_observation_cannot_extend_old_stillness(self):
+        from travel_limit import Stillness
+        rig,port,clock,_=session(host.Rig)
+        rig.begin_stop_observation();stable=Stillness(rig);rig.state_observer=stable.observe
+        rig._consume(measurement_bytes(rig,10))
+        clock.advance(.101)
+        rig._consume(measurement_bytes(rig,10))
+        self.assertFalse(stable.confirmed)
+        self.assertAlmostEqual(stable.since,clock())
+
+class LatestTimingVelocityTest(unittest.TestCase):
+    def test_fresh_valid_last_received_value_even_if_failed_latched(self):
+        rig,port,_,_=session(host.Rig)
+        receive_measurements(rig,port,0,0,-800,0)
+        rig.velocity_validity.failed=True
+        self.assertEqual(host.latest_velocity_for_timing(rig),-800)
+        self.assertTrue(rig.velocity_validity.failed)
+    def test_missing_invalid_and_old_telemetry_are_unconfirmed(self):
+        rig,port,clock,_=session(host.Rig)
+        self.assertIsNone(host.latest_velocity_for_timing(rig))
+        receive_measurements(rig,port,0,0,0,0)
+        clock.advance(.101)
+        self.assertIsNone(host.latest_velocity_for_timing(rig))
+        receive_measurements(rig,port,flags=2)
+        self.assertIsNone(host.latest_velocity_for_timing(rig))
+
+class FailureEvidenceTest(unittest.TestCase):
+    def active(self):
+        r,p,c,m=session(host.Rig)
+        r._consume(measurement_bytes(r,0,0,0,0))
+        r.velocity_validity.active=True
+        return r,p,c,m
+    def test_old_heartbeat_is_unknown_and_first_evidence_sticky(self):
+        r,p,c,m=self.active()
+        with self.assertRaises(RuntimeError):r._consume(b'VEL_VALID 1 x\r\n')
+        self.assertEqual(r.first_failure['reason'],'unknown_line')
+        self.assertEqual(r.first_failure['raw'],b'VEL_VALID 1 x\r')
+        first=r.first_failure
+        with self.assertRaises(RuntimeError):r._consume(measurement_bytes(r))
+        self.assertIs(r.first_failure,first)
+    def test_late_good_frame_not_blamed_as_bad_raw(self):
+        r,p,c,m=self.active();c.advance(.101)
+        with self.assertRaises(RuntimeError):r._consume(measurement_bytes(r))
+        self.assertEqual(r.first_failure['reason'],'measurement_expired')
+        self.assertGreater(r.first_failure['measurements']['age_s'],.1)
+        self.assertIsNone(r.first_failure['raw'])
+    def test_existing_failed_not_attributed_to_current_state(self):
+        r,p,c,m=self.active();r.velocity_validity.failed=True
+        with self.assertRaises(RuntimeError):r._consume(measurement_bytes(r,0,0,0,0))
+        self.assertEqual(r.first_failure['reason'],'existing_failure_latch')
+        self.assertIsNone(r.first_failure['raw'])
+    def test_high_bytes_are_escaped_and_context_is_bounded(self):
+        r,p,c,m=self.active()
+        for _ in range(10):r._consume(measurement_bytes(r,0,0,0,0))
+        with self.assertRaises(RuntimeError):r._consume(b'\x1b[2J\xff'+b'x'*500+b'\n')
+        evidence=r.first_failure
+        self.assertEqual(len(evidence['raw']),256)
+        self.assertEqual(len(evidence['context']),4)
+        text=r.failure_summary()
+        self.assertNotIn('\x1b',text);self.assertIn('\\x1b',text);self.assertIn('\\xff',text)
+        self.assertIn('截断',text)
+    def test_short_write_has_no_received_raw(self):
+        r,p,c,m=self.active();p.write_limit=2
+        with self.assertRaises(RuntimeError):r.send_line('VEL 100')
+        self.assertEqual(r.first_failure['reason'],'short_write')
+        self.assertIsNone(r.first_failure['raw'])
+    def test_classified_flags_and_malformed_protocol(self):
+        for raw,reason in [(b'VEL_VALID 0 1','unknown_line'),(b'STATE bad','malformed_state'),(b'MODE bad','malformed_mode'),(b'EVENT STEP_LOSS 0 1 2','malformed_event')]:
+            r,p,c,m=self.active()
+            with self.subTest(raw=raw),self.assertRaises(RuntimeError):r._consume(raw+b'\n')
+            self.assertEqual(r.first_failure['reason'],reason)
+            self.assertEqual(r.first_failure['raw'],raw)
+    def test_no_fault_for_valid_data_and_no_raw_for_limits(self):
+        r,p,c,m=self.active();r._consume(measurement_bytes(r,10,0,2,0))
+        self.assertIsNone(r.first_failure)
+        p.timeout=.2;p.in_waiting=4097
+        with self.assertRaises(RuntimeError):r.poll_available()
+        self.assertEqual(r.first_failure['reason'],'serial_backlog_limit')
+        self.assertIsNone(r.first_failure['raw'])
+    def test_diagnostic_output_follows_zero_request_and_close(self):
+        r,p,c,m=self.active();events=[]
+        original_write=p.write
+        def write(data):events.append(('write',data));return original_write(data)
+        p.write=write
+        p.close=lambda:events.append(('close',None))
+        def fail(rig,args):rig._consume(b'VEL_VALID 1 x\n')
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'CartRig',return_value=r),patch.object(host,'cmd_vel',side_effect=fail),patch('builtins.print',side_effect=lambda *args:events.append(('print',str(args)))):
+            with self.assertRaises(SystemExit):host.main()
+        zero=events.index(('write',b'VEL 0\n'))
+        diag=next(i for i,e in enumerate(events) if e[0]=='print' and '首个主机诊断' in e[1])
+        self.assertLess(zero,diag)
+        self.assertLess(events.index(('close',None)),diag)
+    def test_diagnostic_stdout_failure_keeps_original_result(self):
+        r,p,c,m=self.active()
+        def fail(rig,args):rig._consume(b'VEL_VALID 1 x\n')
+        def output(*args):
+            if '首个主机诊断' in str(args):raise OSError('stdout unavailable')
+        with patch.object(host.sys,'argv',['tool','--port','X','vel','600']),patch.object(host,'CartRig',return_value=r),patch.object(host,'cmd_vel',side_effect=fail),patch('builtins.print',side_effect=output):
+            with self.assertRaises(SystemExit) as end:host.main()
+        self.assertEqual(end.exception.code,1)
+        self.assertTrue(p.closed)
+        self.assertIn(b'VEL 0\n',p.writes)
