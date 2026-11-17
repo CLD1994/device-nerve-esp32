@@ -49,6 +49,8 @@ typedef struct {
      * 任务上下文调用，publish 之后。
      */
     void (*on_sample)(void *ctx, uint8_t status);
+    /** 仅采样线程复制失败原文；不格式化、不阻塞。 */
+    void (*failure_snapshot)(void *ctx, me_diag_failure_t *out);
 } magnetic_encoder_impl_t;
 
 /** 骨架实例：契约操作表为首成员（句柄即其地址），余为骨架状态。 */
@@ -63,6 +65,10 @@ typedef struct magnetic_encoder_inst_s {
     /* 以下状态由 lock 保护，仅采样任务写、契约面读 */
     portMUX_TYPE                 lock;
     magnetic_encoder_sampling_stats_t sampling_stats;
+ #ifdef CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS
+    me_diag_t diagnostic;
+ #endif
+    uint8_t logged_status;
 #ifdef CONFIG_MAGNETIC_ENCODER_SAMPLING_2KHZ
     TaskHandle_t sample_task;
     esp_timer_handle_t sample_timer;

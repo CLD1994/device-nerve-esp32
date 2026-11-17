@@ -15,6 +15,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "magnetic_encoder_diagnostic.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -45,6 +46,8 @@ typedef struct {
 
 /** 操作表：实现填写类别函数指针；必须作为实例结构的首成员。 */
 struct magnetic_encoder_s {
+    void (*diagnostic_arm)(magnetic_encoder_handle_t enc, uint32_t run);
+    bool (*diagnostic_get)(magnetic_encoder_handle_t enc, me_diag_t *out);
     int32_t (*counts_per_rev)(magnetic_encoder_handle_t enc);
     uint32_t (*angle_counts)(magnetic_encoder_handle_t enc);
     int64_t  (*position_counts)(magnetic_encoder_handle_t enc);

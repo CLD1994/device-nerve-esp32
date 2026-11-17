@@ -79,3 +79,12 @@ bool poleang_get_measurement(poleang_measurement_t *out)
         .velocity_span_us = sample.velocity_span_us };
     return true;
 }
+
+void poleang_diagnostic_arm(uint32_t run)
+{
+    if(s_enc && s_enc->diagnostic_arm) s_enc->diagnostic_arm(s_enc,run);
+}
+bool poleang_diagnostic_get(me_diag_t *out)
+{
+    return s_enc && s_enc->diagnostic_get && s_enc->diagnostic_get(s_enc,out);
+}

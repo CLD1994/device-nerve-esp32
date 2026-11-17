@@ -175,3 +175,9 @@ WDT_MS不大于20会拒绝，主机续发间隔及写入耗时不得达到min(50
 `vel`（默认单程、显式 `--hold` 定时）仅依赖统一 STATE 内有效、新鲜的小车路。摆杆无效会有界计数并在结束后汇总，不构造虚假的摆角；真实 FAULT、小车无效、损坏/未知帧、接收过期仍停止。`--plan` 仍只读。其它双路运动工具及模型要求两路有效。固件与工具必须一起升级，不再需要独立小车流开关，旧帧不兼容。
 
 行程预算、接收年龄与断链限制见[单程规划](#按标定行程规划单向运行)，计时解释见[主机计时](#vel-的主机计时观测)。没有样本身份或设备时钟，不能保证识别重启、旧帧或重复采样。正常 `--hold` 结束不主动请求零速；单程与异常清理请求零速，但收到停稳证据不解除失败锁存。
+
+### 可选的停止态取证
+
+`pole_diag_capture.py --port COM11 --out pole.json` 导出摆杆第一次有效到无效的 POLED2 证据，需固件开启 `MAGNETIC_ENCODER_POLE_DIAGNOSTICS`。
+`tmc_trace_capture.py --port COM11 --out tmc.json` 导出 STEP_LOSS 周边 TMCT2 寄存器记录，需开启 `CARTFSM_TMC_TRACE`。
+两者只读，不使能或运动。应在下次 ENABLE 前保存；详细语义见 [摆杆诊断](../docs/pole-diagnostics.md) 与 [TMC诊断](../docs/tmc-runtime-diagnostics.md)。

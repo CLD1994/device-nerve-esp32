@@ -39,6 +39,10 @@ bool poleang_get_measurement(poleang_measurement_t *out);
 /** 连续 ≥10 次读取失败为 false；一次成功即恢复 true。 */
 bool poleang_is_ok(void);
 
+/** 仅诊断元数据，绝不复位编码器窗口。 */
+void poleang_diagnostic_arm(uint32_t run);
+bool poleang_diagnostic_get(me_diag_t *out);
+
 #ifdef __cplusplus
 }
 #endif
