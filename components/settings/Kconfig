@@ -1,0 +1,17 @@
+menu "settings - 启动电流请求"
+
+config SETTINGS_STARTUP_RUN_CURRENT_OVERRIDE
+    bool "启动时覆盖运行电流请求并持久保存到NVS"
+    default n
+    help
+        每次启动在settings初始化后、设备初始化前检查运行电流请求。
+        仅请求不同才写NVS；保持电流不变，保持请求大于目标时启动失败。
+        关闭此选项不会恢复以前的NVS值。这里的请求不是实测相电流。
+
+config SETTINGS_STARTUP_RUN_CURRENT_MA
+    int "启动运行电流目标（mA RMS）"
+    depends on SETTINGS_STARTUP_RUN_CURRENT_OVERRIDE
+    range 1 2000
+    default 1000
+
+endmenu
