@@ -25,10 +25,10 @@ config MAGNETIC_ENCODER_SAMPLING_STATS
         日志任务本身仍有调度和UART开销，性能比较须保持此选项一致。
 
 config MAGNETIC_ENCODER_POLE_DIAGNOSTICS
-    bool "摆杆速度有效性首失效诊断（只读POLEDIAG?）"
+    bool "Capture pole validity transition diagnostics"
     default n
     help
-        记录有效到无效的首个观测及窗口和失败帧副本。
-        成功ENABLE按run重新布防；不改变速度有效性、保护或采样频率。
+        Keep bounded run-scoped raw failure evidence for stopped-state POLEDIAG?.
+        Adds RAM snapshots and a low-priority log consumer; disabled removes them.
 
 endmenu

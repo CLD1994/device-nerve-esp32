@@ -102,7 +102,7 @@ class Rig:
     def failure_summary(self):
         e=self.first_failure
         if e is None:return None
-        labels={'measurement_invalid':'STATE所需测量通道无效','measurement_missing':'尚未收到完整有效STATE','measurement_expired':'STATE观测年龄超限','measurement_identity_or_time_error':'STATE设备/采样身份或时钟异常', 'invalid_velocity_fields':'速度有效性心跳字段错误',
+        labels={'measurement_invalid':'STATE所需测量通道无效','measurement_missing':'尚未收到完整有效STATE','measurement_expired':'STATE观测年龄超限','measurement_gate_error':'STATE测量门禁异常', 'invalid_velocity_fields':'速度有效性心跳字段错误',
                 'invalid_velocity_flags':'速度窗口报告无效',
                 'velocity_heartbeat_expired':'速度有效性心跳超时或时间无效',
                 'velocity_heartbeat_missing':'尚未收到速度有效性心跳',
@@ -204,7 +204,7 @@ class Rig:
             raise RuntimeError("接收缓冲超过上限")
         while b"\n" in self._rx_buf:
             raw, self._rx_buf = self._rx_buf.split(b"\n", 1)
-            line = raw.decode("ascii", "replace").strip()
+            line = raw.decode("ascii", "replace").removesuffix("\r")
             if not line:
                 continue
             self._current_raw=(self._clock(),raw[:256],len(raw))
@@ -295,7 +295,7 @@ class Rig:
             if self.stop_observation is None and self.velocity_validity.active:self.note_velocity_gate()
             try:fresh=gate.update(frame)
             except RuntimeError:
-                self.note_failure('measurement_identity_or_time_error',current_raw=True)
+                self.note_failure('measurement_gate_error',current_raw=True)
                 self.velocity_validity.failed=True
                 self.clear_motion_state()
                 raise
@@ -478,7 +478,7 @@ def cmd_dump(rig, args):
     rig.state_count = 0
     rig.send_line("CONFIG?")
     rig.pump(0.8)
-    print("STATE 行（dump 窗口内）：%d" % rig.state_count)
+    print("有效 STATE 行（dump 窗口内）：%d" % rig.state_count)
     return 0
 
 
@@ -495,7 +495,7 @@ def cmd_state(rig, args):
             ths.append(th)
     dt = time.time() - t0
     rate = rig.state_count / dt
-    print("时长 %.1f s，STATE %d 行 → %.1f Hz" %
+    print("时长 %.1f s，有效 STATE %d 行 → %.1f Hz" %
           (dt, rig.state_count, rate))
     print("UNKNOWN 行：%d（要求 0）" % rig.unknown_count)
     if xs:
@@ -512,7 +512,7 @@ def cmd_state(rig, args):
         print("目标 %.1f Hz（容差 ±1 Hz）：%s" %
               (expected, "通过" if rate_ok else "未通过"))
     else:
-        print("未指定目标频率，仅检查有数据且 UNKNOWN 为 0。")
+        print("未指定目标频率，仅检查收到有效 STATE 且 UNKNOWN 为 0；不证明期间没有无效帧。")
     ok = rig.state_count > 0 and rate_ok and rig.unknown_count == 0
     return 0 if ok else 1
 
@@ -568,6 +568,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("query")
+    sub.add_parser("calibrate-pole-down", help="自然下垂静止时校准摆杆零点，仅DISABLED")
     sub.add_parser("mark-left")
     sub.add_parser("mark-right")
     sub.add_parser("confirm-left")
@@ -606,6 +607,14 @@ def main():
         if args.expected_hz is not None and (
                 not math.isfinite(args.expected_hz) or args.expected_hz <= 0):
             ap.error("--expected-hz 必须是正的有限频率")
+    if args.cmd == "calibrate-pole-down":
+        from pole_zero import calibrate_port
+        try:
+            sys.exit(calibrate_port(args.port, args.baud))
+        except (RuntimeError, ValueError, OSError) as exc:
+            print(f"标定中止：{exc}", file=sys.stderr)
+            sys.exit(1)
+
     rig = (CartRig if args.cmd == "vel" else Rig)(args.port, args.baud, step_loss_policy=args.step_loss_policy)
     try:
         table = {

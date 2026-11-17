@@ -55,7 +55,7 @@ static me_diag_point_t diagnostic_point(magnetic_encoder_inst_t *inst, int64_t n
 static void diagnostic_observe(magnetic_encoder_inst_t *inst, uint64_t generation)
 {
     portENTER_CRITICAL(&inst->lock);
-    if(generation==inst->diagnostic.generation) {
+    if(generation!=0 && generation==inst->diagnostic.generation) {
         inst->diagnostic.ready=true;
         me_diag_observe(&inst->diagnostic,diagnostic_point(inst,inst->now_us(inst->clock_ctx)));
     }
@@ -73,13 +73,14 @@ static bool diagnostic_get(magnetic_encoder_handle_t enc, me_diag_t *out)
     portENTER_CRITICAL(&inst->lock); *out=inst->diagnostic; portEXIT_CRITICAL(&inst->lock);
     return true;
 }
-#endif
 static void queue_log(magnetic_encoder_inst_t *inst, unsigned kind, int value)
 {
     portENTER_CRITICAL(&inst->lock);
     me_diag_enqueue(&inst->diagnostic,(me_diag_log_t){.kind=kind,.value=value,.failure=inst->diagnostic.failure});
     portEXIT_CRITICAL(&inst->lock);
 }
+
+#endif
 
 static bool publish_sample(magnetic_encoder_inst_t *inst,
                            uint32_t raw, uint8_t status)
@@ -121,9 +122,8 @@ static bool publish_sample(magnetic_encoder_inst_t *inst,
 }
 
 /* 失败计数推进（与契约 is_ok 读同锁，保证 NOT OK 可见性同步） */
-static bool fail_step_locked(magnetic_encoder_inst_t *inst, bool read_ok)
+static bool fail_step_unlocked(magnetic_encoder_inst_t *inst, bool read_ok)
 {
-    portENTER_CRITICAL(&inst->lock);
     bool event = magnetic_encoder_fail_step(&inst->fail, read_ok);
     inst->last_attempt_ok = read_ok;
     if (!read_ok) {
@@ -132,9 +132,17 @@ static bool fail_step_locked(magnetic_encoder_inst_t *inst, bool read_ok)
         inst->velocity_valid = false;
         inst->velocity_span_us = 0;
     }
+    return event;
+}
+#ifndef CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS
+static bool fail_step_locked(magnetic_encoder_inst_t *inst, bool read_ok)
+{
+    portENTER_CRITICAL(&inst->lock);
+    bool event=fail_step_unlocked(inst,read_ok);
     portEXIT_CRITICAL(&inst->lock);
     return event;
 }
+#endif
 
 static void fail_desc_of(const magnetic_encoder_inst_t *inst,
                          char *buf, size_t len)
@@ -159,29 +167,39 @@ static bool sample_once_timed(magnetic_encoder_inst_t *inst, int64_t *read_end)
     if (read_end) *read_end = inst->now_us(inst->clock_ctx);
     if (read_ok) {
         if (publish_sample(inst, raw, status)) {
+            #ifdef CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS
             queue_log(inst,2,MAGNETIC_ENCODER_FAIL_LIMIT);
+#else
+            ESP_LOGI(inst->name,"编码器读取恢复");
+#endif
         }
         if (inst->impl->on_sample != NULL)
             inst->impl->on_sample(inst->impl_ctx, status);
+#ifdef CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS
         if(status!=inst->logged_status) {
             queue_log(inst,3,status);
             inst->logged_status=status;
         }
-#ifdef CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS
         diagnostic_observe(inst,generation);
 #endif
         return true;
     }
+#ifdef CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS
     me_diag_failure_t failure={0};
     if(inst->impl->failure_snapshot) inst->impl->failure_snapshot(inst->impl_ctx,&failure);
-    failure.at_us=inst->now_us(inst->clock_ctx);
     portENTER_CRITICAL(&inst->lock);
-    failure.seq=inst->failure_seq+1;
-    inst->diagnostic.failure=failure;
+    failure.at_us=inst->now_us(inst->clock_ctx);
+    bool failed_limit=fail_step_unlocked(inst,false);
+    failure.seq=inst->failure_seq;
+    me_diag_record_failure(&inst->diagnostic,generation,failure);
     portEXIT_CRITICAL(&inst->lock);
-    if (fail_step_locked(inst, false)) queue_log(inst,1,MAGNETIC_ENCODER_FAIL_LIMIT);
-#ifdef CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS
+    if (failed_limit) queue_log(inst,1,MAGNETIC_ENCODER_FAIL_LIMIT);
     diagnostic_observe(inst,generation);
+#else
+    if(fail_step_locked(inst,false)) {
+        char desc[96]; fail_desc_of(inst,desc,sizeof(desc));
+        ESP_LOGE(inst->name,"编码器连续读取失败：%s",desc);
+    }
 #endif
     return false;
 }
@@ -208,12 +226,16 @@ static void sampling_tick(void *arg)
 #endif
 
 /* 采样任务只聚合RAM；日志格式化/写出不在采样路径执行。 */
+#if defined(CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS) || defined(CONFIG_MAGNETIC_ENCODER_SAMPLING_STATS)
 static void sampling_stats_task(void *arg)
 {
     magnetic_encoder_inst_t *inst = arg;
+ #ifdef CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS
     unsigned ticks=0;
     uint64_t printed_dropped=0;
+#endif
     for (;;) {
+#ifdef CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS
         vTaskDelay(pdMS_TO_TICKS(100));
         for(unsigned i=0;i<8;i++) {
             me_diag_log_t event;
@@ -235,6 +257,9 @@ static void sampling_stats_task(void *arg)
             ESP_LOGW(inst->name,"编码器日志队列累计丢弃=%llu",(unsigned long long)dropped);
             printed_dropped=dropped;
         }
+#else
+        vTaskDelay(pdMS_TO_TICKS(5000));
+#endif
 #ifdef CONFIG_MAGNETIC_ENCODER_SAMPLING_STATS
         portENTER_CRITICAL(&inst->lock);
         magnetic_encoder_sampling_stats_t s = inst->sampling_stats;
@@ -253,6 +278,8 @@ static void sampling_stats_task(void *arg)
 #endif
     }
 }
+
+#endif
 
 static void skeleton_task(void *arg)
 {
@@ -287,7 +314,11 @@ static void skeleton_task(void *arg)
         if (!wdt_attempted) {
             wdt_attempted = true;
             wdt_ok = (esp_task_wdt_add(NULL) == ESP_OK);
+#ifdef CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS
             if (!wdt_ok) queue_log(inst,4,0);
+#else
+            if (!wdt_ok) ESP_LOGW(inst->name,"采样任务未加入看门狗");
+#endif
         }
         int64_t begin = esp_timer_get_time();
         int64_t read_end;
@@ -464,10 +495,12 @@ esp_err_t magnetic_encoder_sampler_init(magnetic_encoder_inst_t *inst,
         /* 首读失败计入序列，但保持原 is_ok 初始为 true 的语义。 */
         inst->failure_seq++;
         inst->last_attempt_ok = false;
+#ifdef CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS
         if(inst->impl->failure_snapshot)
             inst->impl->failure_snapshot(inst->impl_ctx,&inst->diagnostic.failure);
         inst->diagnostic.failure.seq=inst->failure_seq;
         inst->diagnostic.failure.at_us=inst->now_us(inst->clock_ctx);
+#endif
         char desc[96];
         fail_desc_of(inst, desc, sizeof(desc));
         ESP_LOGW(name, "首读失败（%s）——采样任务将继续重试", desc);
@@ -521,11 +554,13 @@ esp_err_t magnetic_encoder_skeleton_start(magnetic_encoder_inst_t *inst,
         return err;
     }
 #endif
+#if defined(CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS) || defined(CONFIG_MAGNETIC_ENCODER_SAMPLING_STATS)
     if (xTaskCreatePinnedToCore(sampling_stats_task, "encoder_stats", 3072, inst,
                                1, NULL, ME_SKELETON_TASK_CORE) != pdPASS) {
         ESP_LOGW(name, "日志消费者创建失败；采样继续，RAM队列满时累计丢弃");
     }
 
+#endif
     ESP_LOGI(name, "采样任务已启动：目标 %d Hz，优先级 %d，CPU%d，%d counts/rev",
              ME_SAMPLE_RATE_HZ, ME_SKELETON_TASK_PRIO, ME_SKELETON_TASK_CORE,
              (int)impl->counts_per_rev(impl_ctx));

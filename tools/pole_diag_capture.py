@@ -37,31 +37,45 @@ class Capture:
             return None
         if BACKGROUND.fullmatch(line):return None
         if line.startswith('ERR '):raise ValueError('固件拒绝诊断：'+line)
-        p=line.split()
-        if self.done or len(p)<2 or p[0]!='POLED1' or p[1]!=self.expected:
+        p=line.split(' ')
+        if any(not token or any(ch.isspace() for ch in token) for token in p):
+            raise ValueError('诊断字段必须由单个空格分隔')
+        if self.done or len(p)<2 or p[0]!='POLED2' or p[1]!=self.expected:
             raise ValueError('未知、重复或顺序错误的诊断行：'+repr(line[:256]))
         kind=p[1];v=p[2:]
         if kind=='BEGIN':
-            if len(v)!=4:raise ValueError('BEGIN字段数量错误')
-            run=number(v[0],0,2**32-1);captured=number(v[1],0,1)
-            transitions=number(v[2]);dropped=number(v[3])
+            if len(v)!=6:raise ValueError('BEGIN字段数量错误')
+            run=number(v[0],0,2**32-1);generation=number(v[1])
+            captured=number(v[2],0,1);has_failure=number(v[3],0,1)
+            transitions=number(v[4]);dropped=number(v[5])
+            if has_failure and not captured:raise ValueError('没有事件却声明关联失败')
             if bool(transitions)!=bool(captured):raise ValueError('首事件与转换计数矛盾')
-            self.record=dict(version=1,run_id=run,captured=bool(captured),transitions=transitions,
+            self.record=dict(version=2,run_id=run,generation=generation,captured=bool(captured),has_failure=bool(has_failure),transitions=transitions,
                              dropped=dropped,before=None,after=None,failure=None)
             self.expected='BEFORE' if captured else 'END'
         elif kind in ('BEFORE','AFTER'):
             s=sample(v)
             if (kind=='BEFORE' and (s['reason_bits']!=0 or not s['velocity_valid'] or not all(s[k] for k in ('has_sample','last_attempt_ok','ok')) or s['fill']!=s['required'] or not 0<=s['age_us']<=s['gap_us'] or not 0<s['span_us']<=32000)) or (kind=='AFTER' and (not s['reason_bits'] or s['velocity_valid'])):
                 raise ValueError('有效到无效的快照条件矛盾')
+            if kind=='AFTER':
+                before=self.record['before']
+                for key in ('observed_us','sampled_us','seq','failure_seq','continuity_seq'):
+                    if s[key]<before[key]:raise ValueError('前后快照序列或时间倒退')
             self.record[kind.lower()]=s
-            self.expected='AFTER' if kind=='BEFORE' else 'FAIL'
+            self.expected=('AFTER' if kind=='BEFORE' else
+                           'FAIL' if self.record['has_failure'] else 'END')
         elif kind=='FAIL':
             if len(v)!=9:raise ValueError('FAIL字段数量错误')
-            self.record['failure']=dict(kind=number(v[0],0,3),sequence=number(v[1]),
+            self.record['failure']=dict(kind=number(v[0],1,3),sequence=number(v[1]),
                 observed_us=number(v[2],-2**63,2**63-1),bytes=[number(x,0,255) for x in v[3:]])
+            failure=self.record['failure'];before=self.record['before'];after=self.record['after']
+            if not (before['failure_seq']<failure['sequence']<=after['failure_seq']
+                    and before['observed_us']<=failure['observed_us']<=after['observed_us']):
+                raise ValueError('失败记录不属于本次有效性转换')
             self.expected='END'
         else:
-            if len(v)!=1 or number(v[0],0,2**32-1)!=self.record['run_id']:
+            if (len(v)!=2 or number(v[0],0,2**32-1)!=self.record['run_id']
+                    or number(v[1])!=self.record['generation']):
                 raise ValueError('END运行身份不一致')
             self.done=True
         self.raw.append(line)
@@ -84,7 +98,7 @@ def collect(ser, timeout=3.0, clock=time.monotonic):
         if len(pending)>16384:raise ValueError('串口缓冲超限')
         while b'\n' in pending:
             line,_,tail=pending.partition(b'\n');pending=bytearray(tail)
-            result=capture.feed(line.decode('ascii').rstrip('\r'))
+            result=capture.feed(line.decode('ascii').removesuffix('\r'))
             if result is not None:return result
     raise TimeoutError('未收到完整摆杆诊断；不保存部分结果')
 
@@ -103,5 +117,5 @@ def main():
     with a.out.open('x',encoding='utf-8') as f:json.dump(record,f,ensure_ascii=False,indent=2);f.write('\n')
     print('已保存运行 %d 的摆杆首因观测：%s'%(record['run_id'],a.out))
     print('首事件已捕获' if record['captured'] else '尚未捕获有效到无效事件；不代表运行中从未失效')
-    print('FAIL是冻结时最近失败，需核对序列与时间；全零帧不能区分合法零角和线路全低。')
+    print('FAIL仅在本次转换关联到新失败时出现；全零帧不能区分合法零角和线路全低。')
 if __name__=='__main__':main()

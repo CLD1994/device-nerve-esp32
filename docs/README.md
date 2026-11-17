@@ -22,7 +22,7 @@
 - [遥测](telemetry.md)：状态输出时序，与采样/控制频率的区别。
 - [连续增长判据](following-error-window.md)：STEP_LOSS 判定开关与测试。
 - [STEP_LOSS 诊断](step-loss-diagnostic.md)：事件、运行身份、轨迹、observe-only 的独立开关及限制。
-- [TMC 运行期诊断](tmc-runtime-diagnostic.md)：事件前后低频 DRV_STATUS/GSTAT 缓存与证据限制。
+- [TMC 运行期状态记录](tmc-runtime-diagnostics.md)：默认关闭的事件前后寄存器证据。
 - [TMC 只读诊断](tmc-readonly.md)：寄存器读回能力与证据边界。
 
 ## 实验工具
@@ -43,5 +43,3 @@
 - 当前代码变化时同步更新相关指南；不要将临时聊天步骤作为新的长期文档。
 - 有独特测量/验证价值的结果注明版本、条件和未验证范围后归档；无独特事实的过程文档删除，保留 Git 历史。
 - 保留顶层 `protocol.md`、`hardware.md` 等稳定路径，减少上位机项目与外部引用的迁移成本。
-
-- [摆杆测量失效诊断](pole-diagnostic.md)：停止后读取有效到无效首证据与采样日志边界。

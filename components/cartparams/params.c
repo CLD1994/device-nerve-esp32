@@ -12,7 +12,7 @@
 
 /* 注册表顺序（CONFIG? dump 按此顺序） */
 static fw_params_t s_params = {
-    .vel_max        = 1250,     /* 1 – 2000 mm/s          */
+    .vel_max        = 900,     /* 1 – 2000 mm/s          */
     .acc_max        = 10000,     /* 100 – 30000 mm/s²      */
     .wdt_ms         = 100,      /* 10 – 1000 ms           */
     .x_margin_um    = 10000,    /* 1000 – 50000 µm        */

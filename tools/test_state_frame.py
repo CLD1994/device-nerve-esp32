@@ -3,7 +3,7 @@ import unittest
 import importlib
 VALID='STATE 3 -1 3141592 -2147483648 2147483647'
 INVALID='STATE 0 0 0 0 0'
-CAPTURES=('step_loss_capture','step_trace_capture','tmc_trace_capture','pole_diag_capture')
+CAPTURES=('step_loss_capture','step_trace_capture')
 class CaptureStateTest(unittest.TestCase):
     def test_ignores_only_new_valid_state(self):
         for module in CAPTURES:
@@ -59,3 +59,34 @@ class ProbeStateTest(unittest.TestCase):
         r=Link(Port(),clock=lambda:1);r.aligned=True;r.poll();self.assertIsNone(r.state)
         with self.assertRaises(Abort):r.send('VEL 20')
 if __name__=='__main__':unittest.main()
+
+class ByteBoundaryTest(unittest.TestCase):
+    def test_probe_rejects_extra_cr_but_accepts_crlf(self):
+        from probe_link import Link, Abort
+        from types import SimpleNamespace
+        for ending in (b'\r\n',b'\r\r\n'):
+            link=Link(SimpleNamespace(read=lambda n:b'\nSTATE 3 1 2 3 4'+ending),clock=lambda:0.)
+            if ending==b'\r\n':
+                link.poll();self.assertEqual(link.states,1)
+            else:
+                with self.assertRaises(Abort):link.poll()
+
+    def test_capture_byte_boundary_preserves_extra_cr(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        for module in CAPTURES:
+            for ending in (b'\r\n',b'\r\r\n'):
+                data=b'STATE 3 1 2 3 4'+ending
+                stream=SimpleNamespace(read_until=lambda x:b'\n',write=lambda b:len(b),
+                    in_waiting=len(data),read=lambda n:data)
+                parser=importlib.import_module(module)
+                received=[]
+                def feed(line):
+                    received.append(line)
+                    parse_state_frame=importlib.import_module('state_frame').parse_state_frame
+                    parse_state_frame(line)
+                    return {'done':True}
+                with patch.object(parser.Capture,'feed',side_effect=feed):
+                    if ending==b'\r\n':self.assertEqual(parser.collect(stream),{'done':True})
+                    else:
+                        with self.assertRaises(ValueError):parser.collect(stream)

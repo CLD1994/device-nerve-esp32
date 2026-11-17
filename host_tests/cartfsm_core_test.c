@@ -131,7 +131,7 @@ static void test_step_loss(void)
 static void test_params_ranges(void)
 {
     const fw_params_t *p = fw_params();
-    CHECK(p->vel_max == 1250, "VEL_MAX 默认 1250");
+    CHECK(p->vel_max == 900, "VEL_MAX 默认 900");
     CHECK(p->acc_max == 10000, "ACC_MAX 默认 10000");
     CHECK(p->wdt_ms == 100, "WDT_MS 默认 100");
     CHECK(!fw_params_set("WDT_DEC", 5000), "删除的参数拒绝设置");

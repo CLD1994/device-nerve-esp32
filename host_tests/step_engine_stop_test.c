@@ -188,4 +188,3 @@ int main(void)
     }
     puts("step_engine_stop: public-contract assertions passed");
 }
-

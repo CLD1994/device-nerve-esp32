@@ -14,6 +14,24 @@ class RigStateTest(unittest.TestCase):
         rig, self.port, _, _ = session(host.Rig)
         return rig
 
+    def test_byte_entry_rejects_noncanonical_state_whitespace(self):
+        for line in (' STATE 3 1 2 3 4', 'STATE 3 1 2 3 4 ',
+                     '\tSTATE 3 1 2 3 4\t', 'STATE 3 1 2 3 4\r\r'):
+            with self.subTest(line=line):
+                rig = self.make_rig()
+                receive(rig, self.port, line)
+                self.assertIsNone(rig.last_state)
+                self.assertEqual(rig.state_count, 0)
+                self.assertEqual(rig.unknown_count, 1)
+
+    def test_byte_entry_accepts_lf_crlf_and_empty_lines(self):
+        rig = self.make_rig()
+        self.port.feed(b'\n\r\nSTATE 3 1 2 3 4\r\nSTATE 3 5 6 7 8\n')
+        rig.pump(.005)
+        self.assertEqual(rig.state_count, 2)
+        self.assertEqual(rig.last_state, ['5','6','7','8'])
+        self.assertEqual(rig.unknown_count, 0)
+
     def test_no_initial_state(self):
         rig = self.make_rig()
         self.assertIsNone(rig.last_state)
@@ -41,6 +59,7 @@ class RigStateTest(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertEqual(rig.state_count, 0)
         self.assertNotIn("x_um", output.getvalue())
+        self.assertIn("有效 STATE", output.getvalue())
         self.assertEqual(self.port.writes, [])
 
 

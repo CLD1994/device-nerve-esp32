@@ -10,4 +10,3 @@ cc -Ihost_tests/tmc_uart_stubs "${common[@]}" host_tests/tmc_uart_test.c compone
 cc -std=gnu17 -Wall -Wextra -Werror -Ihost_tests/power_stubs -Icomponents/cartfsm/host_stub -Icomponents/cartcal/host_stub -Ihost_tests/stub $(find components -type d -name include -printf '-I%p ') host_tests/tmc_readonly_test.c components/cartfsm/cartfsm.c components/cartfsm/cartfsm_diagnostics.c components/cartfsm/cartfsm_core.c components/cartparams/params.c components/cartproto/cartproto_parse.c -lm -o "$tmp/readonly"
 "$tmp/readonly"
 python -m unittest discover -s tools -p 'test_tmc_readonly.py'
-

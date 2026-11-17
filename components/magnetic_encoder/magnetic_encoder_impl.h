@@ -65,7 +65,9 @@ typedef struct magnetic_encoder_inst_s {
     /* 以下状态由 lock 保护，仅采样任务写、契约面读 */
     portMUX_TYPE                 lock;
     magnetic_encoder_sampling_stats_t sampling_stats;
+ #ifdef CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS
     me_diag_t diagnostic;
+ #endif
     uint8_t logged_status;
 #ifdef CONFIG_MAGNETIC_ENCODER_SAMPLING_2KHZ
     TaskHandle_t sample_task;

@@ -60,7 +60,7 @@ class Link:
         while b'\n' in self.buffer:
             raw, self.buffer = self.buffer.split(b'\n', 1)
             try:
-                line = raw.decode('ascii').rstrip('\r')
+                line = raw.decode('ascii').removesuffix('\r')
                 p = line.strip().split()
                 if not p:
                     continue

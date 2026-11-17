@@ -17,6 +17,7 @@ int main(void){
  assert(magnetic_encoder_sampler_init(&inst,&ops,0,"pole",clk,0)==ESP_OK);
  magnetic_encoder_handle_t h=(void*)&inst; me_diag_t d; magnetic_encoder_sample_t sample;
  fill(); h->diagnostic_get(h,&d); assert(!d.captured);
+ h->diagnostic_arm(h,1);fill();
  assert(inst.ops.diagnostic_arm && inst.ops.diagnostic_get);
  good=false;step();h->diagnostic_get(h,&d);
  assert(d.captured && d.before.valid && !d.after.valid && (d.after.reason&2));
@@ -24,9 +25,9 @@ int main(void){
  assert(d.first_failure.kind==3 && d.first_failure.frame[5]==123 && d.first_failure.seq==d.after.failure_seq);
  uint64_t seq=d.after.failure_seq;step();h->diagnostic_get(h,&d);assert(d.after.failure_seq==seq);
  h->diagnostic_arm(h,5);fill();now+=20001;assert(magnetic_encoder_get_sample(h,&sample));
- h->diagnostic_get(h,&d);assert(d.run_id==5 && d.captured && (d.after.reason&32));
+ h->diagnostic_get(h,&d);assert(d.run_id==5 && d.captured && (d.after.reason&32) && !d.has_failure);
  h->diagnostic_arm(h,6);fill();rearm=true;good=false;step();
- h->diagnostic_get(h,&d);assert(d.run_id==99 && !d.captured && !d.ready);
+ h->diagnostic_get(h,&d);assert(d.run_id==99 && !d.captured && !d.ready && d.failure.seq==0);
  assert(magnetic_encoder_get_sample(h,&sample));h->diagnostic_get(h,&d);assert(!d.captured);
  fill();good=false;step();h->diagnostic_get(h,&d);assert(d.captured);
  puts("pole diagnostic sampling passed");

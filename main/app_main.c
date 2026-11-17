@@ -13,9 +13,7 @@
 #include "driver/uart.h"
 #include "bsp.h"
 #include "settings.h"
-#ifdef CONFIG_SETTINGS_STARTUP_RUN_CURRENT_OVERRIDE
 #include "settings_startup_current.h"
-#endif
 #include "motor_tmc2209.h"
 #include "motor.h"
 #include "cartaxis.h"

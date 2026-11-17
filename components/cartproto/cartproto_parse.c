@@ -241,4 +241,3 @@ bool cartproto_parse_line(const char *line, cart_req_t *out)
 
     return false;   /* 未知命令 */
 }
-

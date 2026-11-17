@@ -72,7 +72,7 @@ def collect(stream, timeout=10.0):
             raise ValueError('串口行缓冲超限')
         while b'\n' in pending:
             raw, _, pending = pending.partition(b'\n')
-            result = capture.feed(raw.decode('ascii').rstrip('\r'))
+            result = capture.feed(raw.decode('ascii').removesuffix('\r'))
             if result is not None:
                 return result
     raise TimeoutError('STEPTRACE未完整结束，不生成成功报告')

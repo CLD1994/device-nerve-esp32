@@ -4,4 +4,3 @@ idf_component_register(
     PRIV_REQUIRES esp_timer tmc2209
     REQUIRES cartcal settings cartpos poleang cartaxis cartparams cartproto cartpower freertos
 )
-

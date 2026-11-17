@@ -68,7 +68,7 @@ def collect(ser, timeout=3.0):
         while b"\n" in pending:
             line, _, tail = pending.partition(b"\n")
             pending = bytearray(tail)
-            result = capture.feed(line.decode("ascii").rstrip("\r"))
+            result = capture.feed(line.decode("ascii").removesuffix("\r"))
             if result is not None:
                 return result
     raise TimeoutError("未收到完整STEP_LOSS证据，不保存部分结果")

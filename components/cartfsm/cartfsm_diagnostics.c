@@ -216,4 +216,3 @@ void cartfsm_diag_trace_query(void)
     cartproto_send_raw(line,n);
 #endif
 }
-

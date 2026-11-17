@@ -583,4 +583,3 @@ void step_selftest_reset_isr_cycles(void)
 }
 
 #endif /* CONFIG_STEP_ENGINE_TEST_HOOKS */
-

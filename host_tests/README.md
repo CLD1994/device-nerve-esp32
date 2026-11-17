@@ -15,7 +15,6 @@ bash host_tests/test_encoder_2khz.sh
 bash host_tests/test_measurement_validity.sh
 bash host_tests/test_telemetry_timing.sh
 bash host_tests/test_tmc.sh
-bash host_tests/test_tmc_trace.sh
 bash host_tests/test_settings_startup_current.sh
 ```
 
@@ -25,3 +24,11 @@ bash host_tests/test_settings_startup_current.sh
 
 Python 主机工具测试在 [tools](../tools/README.md)，不属于这里的固件 C 测试。
 正式固件不得链接 `host_tests` 替身；测试通过后仍须在目标 SDK 构建与现场独立验收。
+
+## 可选诊断
+
+- `bash host_tests/test_pole_diagnostic.sh`：纯状态、注入读帧与时钟、停止态查询/重新布防；包含跨运行在途读取和无新读取失败的窗口过期。
+- `bash host_tests/test_tmc_trace.sh`：有界记录、跨运行丢弃、串口查询门禁。
+- `python -m unittest discover -s tools -p 'test_*.py'`：包括 POLED2/TMCT2 严格解析与不完整记录拒绝。
+
+目标构建须分别开启和关闭两个诊断开关，主机测试不能替代 ESP-IDF ABI/格式检查。

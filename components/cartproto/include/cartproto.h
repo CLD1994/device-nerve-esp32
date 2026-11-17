@@ -69,13 +69,13 @@ typedef enum {
     CART_CMD_CONFIRM_LEFT,   /* CONFIRM LEFT */
     CART_CMD_CALIB_QUERY,    /* CALIB? */
     CART_CMD_CONFIG_DUMP,    /* CONFIG? */
+    CART_CMD_TMCTRACE_QUERY, /* TMCTRACE?：停机后读取运行期寄存器记录 */
+    CART_CMD_POLEDIAG_QUERY, /* POLEDIAG?：停机后读取摆杆有效性转换 */
     CART_CMD_TMC_QUERY, /* TMC?：仅禁用时只读寄存器 */
     CART_CMD_STEPLOSS_QUERY, /* STEPLOSS?：停稳后只读故障证据 */
     CART_CMD_DISABLE,        /* DISABLE */
     CART_CMD_STEPTRACE_QUERY,
     CART_CMD_RUN_QUERY,
-    CART_CMD_POLEDIAG_QUERY, /* POLEDIAG?：停机读摆杆首失效 */
-    CART_CMD_TMCTRACE_QUERY, /* TMCTRACE?：停稳导出运行期驱动状态 */
     CART_CMD_CONFIG_GET,     /* CONFIG? <NAME>：单项只读 */
 } cart_cmd_t;
 
@@ -109,4 +109,3 @@ void cartproto_register_exec(cartproto_exec_cb_t cb);
 #ifdef __cplusplus
 }
 #endif
-

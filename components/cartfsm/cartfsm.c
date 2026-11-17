@@ -630,7 +630,7 @@ static void pole_diagnostic_point(const char *label, const me_diag_point_t *p)
 {
     char line[512];
     int n=snprintf(line,sizeof(line),
-        "POLED1 %s %lld %lld %lld %u %u %lld %lld %llu %llu %llu %u %u %u %u %u %" PRIu32 " %u\n",
+        "POLED2 %s %lld %lld %lld %u %u %lld %lld %llu %llu %llu %u %u %u %u %u %" PRIu32 " %u\n",
         label,(long long)p->observed_us,(long long)p->sampled_us,(long long)p->age_us,
         p->fill,p->required,(long long)p->span_us,(long long)p->gap_us,
         (unsigned long long)p->seq,(unsigned long long)p->failure_seq,(unsigned long long)p->continuity_seq,
@@ -649,31 +649,35 @@ static void exec_pole_diagnostic_query(void)
     me_diag_t d;
     if(!poleang_diagnostic_get(&d)){cartproto_send_err("POLEDIAG_NONE");return;}
     char line[256];
-    snprintf(line,sizeof(line),"POLED1 BEGIN %" PRIu32 " %u %llu %llu\n",d.run_id,(unsigned)d.captured,
+    snprintf(line,sizeof(line),"POLED2 BEGIN %" PRIu32 " %llu %u %u %llu %llu\n",d.run_id,(unsigned long long)d.generation,(unsigned)d.captured,(unsigned)d.has_failure,
         (unsigned long long)d.transitions,(unsigned long long)d.dropped);
     cartproto_send_raw(line,(int)strlen(line));
     if(d.captured){
         pole_diagnostic_point("BEFORE",&d.before); pole_diagnostic_point("AFTER",&d.after);
+        if(d.has_failure) {
         const me_diag_failure_t *f=&d.first_failure;
-        snprintf(line,sizeof(line),"POLED1 FAIL %u %llu %lld %u %u %u %u %u %u\n",f->kind,
+        snprintf(line,sizeof(line),"POLED2 FAIL %u %llu %lld %u %u %u %u %u %u\n",f->kind,
             (unsigned long long)f->seq,(long long)f->at_us,
             (unsigned)f->frame[0],(unsigned)f->frame[1],(unsigned)f->frame[2],(unsigned)f->frame[3],(unsigned)f->frame[4],(unsigned)f->frame[5]);
         cartproto_send_raw(line,(int)strlen(line));
+        }
     }
-    snprintf(line,sizeof(line),"POLED1 END %" PRIu32 "\n",d.run_id); cartproto_send_raw(line,(int)strlen(line));
+    snprintf(line,sizeof(line),"POLED2 END %" PRIu32 " %llu\n",d.run_id,(unsigned long long)d.generation); cartproto_send_raw(line,(int)strlen(line));
 #else
     cartproto_send_err("POLEDIAG_DISABLED");
 #endif
 }
-
 static void exec_tmc_trace_query(void)
 {
 #ifdef CONFIG_CARTFSM_TMC_TRACE
     xSemaphoreTake(s_output_lock, portMAX_DELAY);
-    bool stopped=s_mode==CM_DISABLED || (s_mode==CM_FAULT && !s_fault_settling);
+    bool stopped = s_mode == CM_DISABLED || (s_mode == CM_FAULT && !s_fault_settling);
     xSemaphoreGive(s_output_lock);
-    if(!stopped){cartproto_send_err("TMCTRACE_BUSY");return;}
-    /* comm_task串行命令；导出不持运动锁且不触发UART寄存器读取。 */
+    if (!stopped) {
+        cartproto_send_err("TMCTRACE_BUSY");
+        return;
+    }
+    /* comm_task 串行执行查询与 ENABLE；只导出冻结缓冲，不读取 UART。 */
     cartfsm_tmc_trace_query();
 #else
     cartproto_send_err("TMCTRACE_DISABLED");
@@ -697,7 +701,7 @@ static void exec_cmd(const cart_req_t *req)
     switch (req->cmd) {
     case CART_CMD_TMC_QUERY: exec_tmc_query(); break;
     case CART_CMD_POLEDIAG_QUERY: exec_pole_diagnostic_query(); break;
-    case CART_CMD_TMCTRACE_QUERY: exec_tmc_trace_query(); break;
+        case CART_CMD_TMCTRACE_QUERY: exec_tmc_trace_query(); break;
     case CART_CMD_QUERY:       exec_query(); break;
     case CART_CMD_STEPLOSS_QUERY: exec_step_diagnostic(false); break;
     case CART_CMD_STEPTRACE_QUERY: exec_step_diagnostic(true); break;
@@ -950,10 +954,9 @@ esp_err_t cartfsm_start(void)
         return ESP_ERR_NO_MEM;
     }
 
-    cartfsm_tmc_trace_start(); /* 失败仅使诊断不可用，不改变运动模式。 */
+    cartfsm_tmc_trace_start();
     s_started = true;
     ESP_LOGI(TAG, "模式机已启动：1 kHz，优先级 %d，CPU%d，上电 DISABLED",
              FSM_TASK_PRIO, FSM_TASK_CORE);
     return ESP_OK;
 }
-

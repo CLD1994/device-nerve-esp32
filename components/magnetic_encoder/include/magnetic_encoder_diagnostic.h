@@ -17,7 +17,7 @@ typedef struct { unsigned kind; int value; me_diag_failure_t failure; } me_diag_
 typedef struct {
     uint32_t run_id;
     uint64_t generation, transitions, dropped;
-    bool ready, captured;
+    bool ready, captured, has_failure;
     me_diag_point_t previous, before, after;
     me_diag_failure_t failure, first_failure;
     me_diag_log_t logs[8];
@@ -26,12 +26,20 @@ typedef struct {
 static inline void me_diag_inc(uint64_t *n) { if (*n != UINT64_MAX) ++*n; }
 static inline void me_diag_arm(me_diag_t *d, uint32_t run) {
     d->run_id=run; ++d->generation; d->ready=false; d->captured=false;
-    d->transitions=0; memset(&d->previous,0,sizeof(d->previous));
+    d->transitions=0; d->has_failure=false;
+    memset(&d->previous,0,sizeof(d->previous));
+    memset(&d->failure,0,sizeof(d->failure));
+    memset(&d->first_failure,0,sizeof(d->first_failure));
+}
+static inline bool me_diag_record_failure(me_diag_t *d, uint64_t generation, me_diag_failure_t failure) {
+    if(generation!=d->generation) return false;
+    d->failure=failure; return true;
 }
 static inline void me_diag_observe(me_diag_t *d, me_diag_point_t p) {
     if (d->previous.valid && !p.valid) {
         me_diag_inc(&d->transitions);
-        if (!d->captured) { d->captured=true; d->before=d->previous; d->after=p; d->first_failure=d->failure; }
+        if (!d->captured) { d->captured=true; d->before=d->previous; d->after=p; d->has_failure=d->failure.seq>d->previous.failure_seq && d->failure.seq<=p.failure_seq;
+            if(d->has_failure) d->first_failure=d->failure; }
     }
     d->previous=p;
 }

@@ -50,6 +50,20 @@ int main(void) {
     reset(1500,1000);
     assert(settings_apply_startup_run_current(true,1000)==SETTINGS_OK);
     assert(hold_ma==1000);
+    /* 连续启动和关闭选项均不撤回已经保存的请求。 */
+    reset(1500,400);
+    assert(settings_apply_startup_run_current(true,1000)==SETTINGS_OK);
+    assert(settings_apply_startup_run_current(true,1000)==SETTINGS_OK);
+    assert(settings_apply_startup_run_current(false,1500)==SETTINGS_OK);
+    assert(writes==1 && run_ma==1000 && hold_ma==400);
+    /* 域上下边界与较大负数，不把非法值转成有效请求。 */
+    reset(1500,0);
+    assert(settings_apply_startup_run_current(true,1)==SETTINGS_OK);
+    assert(run_ma==1);
+    assert(settings_apply_startup_run_current(true,2000)==SETTINGS_OK);
+    assert(run_ma==2000);
+    assert(settings_apply_startup_run_current(true,-1)==SETTINGS_INVALID);
+    assert(writes==2);
     puts("settings startup current: PASS");
     return 0;
 }

@@ -8,7 +8,6 @@
 |---|---|
 | `cartpole_host.py` | 查询、标定、配置、使能及速度命令；不同子命令会改变设备状态，先看 `--help` |
 | `step_loss_capture.py` / `step_trace_capture.py` | SL1 / SLT4 只读证据采集；版本匹配见下文 |
-| `tmc_trace_capture.py` | 只读导出 TMCT2 DRV_STATUS/GSTAT 缓存，兼容旧 TMCT1，见[运行期诊断](../docs/tmc-runtime-diagnostic.md) |
 | `tmc_readonly.py` | TMC 寄存器读回，见 [TMC 指南](../docs/tmc-readonly.md)；不证明真实电流或扭矩 |
 | `velocity_validity.py` | 速度有效性检查，见 [测量有效性](../docs/measurement-validity.md) |
 | `max_accel_run.py` | 加速度试验入口，见 [专用指南](../docs/experiments/acceleration.md) |
@@ -90,7 +89,7 @@ python tools/cartpole_host.py --port COM11 --baud 460800 --step-loss-policy repo
 这些字段不证明事件属于当前运行，工具没有自动核验 RUN 身份，也不会把旧或重复通知
 当作新运行。需要关联时调用方应自行核对运行身份。
 
-`report` 不取消 STATE 独立有效位、未知数据、状态新鲜度或原有模式处理，也不会修改固件的
+`report` 不取消 STATE 有效位、未知数据、状态新鲜度或原有模式处理，也不会修改固件的
 STEP_LOSS 停车/observe-only 配置。报告通过与 MODE/OK 相同的同步输出接口显示，
 输出慢时可能阻塞；该联调工具不是硬实时控制器。`stop` 活动路径不先输出，避免在
 零速请求前新增 stdout 阻塞。其他直接使用 Rig 的调用方须处理异常并请求停止，不能
@@ -104,10 +103,10 @@ STEP_LOSS 停车/observe-only 配置。报告通过与 MODE/OK 相同的同步�
 首先使用只读规划，不发送运动命令：
 
 ```powershell
-& $python $fwtool --port COM11 --baud 460800 vel 600 --plan
+python tools/cartpole_host.py --port COM11 --baud 460800 vel 600 --plan
 ```
 
-当前驱动短路原因尚未查清，此处不安排执行运动。`--plan` 仅发送 `CALIB?`、`CONFIG?`、`QUERY`，不会 ENABLE、RESET 或写配置。
+以下只给离线规划/只读命令，不构成现场运动验收。`--plan` 仅发送 `CALIB?`、`CONFIG?`、`QUERY`，不会 ENABLE、RESET 或写配置。
 正速度向右，负速度向左；`--reserve-mm` 默认20、`--inflight-ms` 默认10、`--max-seconds` 默认30。
 规划读取完整标定状态（2/已保存/存储正常）、长度和实际运动配置，不猜默认值；执行还要求 READY NONE、新鲜有效状态与逐帧停稳证据。
 
@@ -124,7 +123,6 @@ STEP_LOSS 停车/observe-only 配置。报告通过与 MODE/OK 相同的同步�
 
 规划分别报告正常提前制动预算，以及额外加 `V×WDT_MS/1000` 的异常断链条件预算；后者只作风险说明，不作为正常零速触发提前量。
 例如600mm/s、ACC_MAX=10000、观测年龄不超过2ms、默认inflight=10ms时，正常预算25.2mm（7.2+18）；WDT_MS=100时异常断链条件预算85.2mm。断链或主机停顿可能越过目标，固件WDT及主机过期、超速、故障和边界门禁仍保留。
-两次±600现场样本在请求零速后移动20.492mm及20.655mm，只说明这两次结果，不构成最大停车距离或10ms延迟上界证明。
 预留量已扣进目标，不重复加入预算。剩余距离不足就拒绝起步，不自动降速或反向。上述公式与余量都不是物理安全保证。
 当前模式保持连续单程：有效非零行程止于提前制动点，预算较大时不能跑满轨道；不保证恒速区间长度或精确抵达目标。分段低速接近仅是后续可选方案，当前未实现。
 
@@ -172,18 +170,28 @@ WDT_MS不大于20会拒绝，主机续发间隔及写入耗时不得达到min(50
 
 这记录的是主机首先发现的条件，不等于硬件根因。时间不是设备发送/采样时刻；工具没有CRC校验能力，不会据此声称CRC错误。直接调用解析函数而非串口接收路径时也可能没有原始字节证据。上下文有界，只用于定位，不是完整串口日志。
 
-### 摆杆失效首证据
-
-`pole_diag_capture.py --port COM11 --baud 460800 --out <新文件.json>` 只读导出已编入的摆杆测量失效快照，不改变设备状态。须先停机，完整响应才保存，失败不自动重试运行。构建选项、字段和证据边界见[摆杆失效诊断](../docs/pole-diagnostic.md)。
-
 ### `vel` 小车独立调试路径
 
 `vel`（默认单程、显式 `--hold` 定时）仅依赖统一 STATE 内有效、新鲜的小车路。摆杆无效会有界计数并在结束后汇总，不构造虚假的摆角；真实 FAULT、小车无效、损坏/未知帧、接收过期仍停止。`--plan` 仍只读。其它双路运动工具及模型要求两路有效。固件与工具必须一起升级，不再需要独立小车流开关，旧帧不兼容。
 
-正常制动预算：`V × (max(观测年龄, 2 ms) + --inflight-ms) + V²/(2×ACC_MAX)`，其中 `V=max(|请求速度|, |测得小车速度|)`。2 ms 为目标报告周期的相位下限，不保证最大间隔；与已经累计的年龄取最大值而不重复相加。默认在途 10 ms 仍是未经实测的调试假设。1000 mm/s、ACC_MAX=10000、足够新鲜的样本对应 62 mm（2+10+50）；异常断链条件预算另加 WDT_MS 距离。这不是有保证的物理停车上界。
+行程预算、接收年龄与断链限制见[单程规划](#按标定行程规划单向运行)，计时解释见[主机计时](#vel-的主机计时观测)。没有样本身份或设备时钟，不能保证识别重启、旧帧或重复采样。正常 `--hold` 结束不主动请求零速；单程与异常清理请求零速，但收到停稳证据不解除失败锁存。
 
-年龄仅为主机接收后经过时间，不能证明串口排队延迟；没有样本身份，不能识别重复采样。所需路接收年龄超过100ms拒绝。目标 500 Hz 并非实际精确 2 ms，达到 95% 目标速度仍只是编码器接收观测时间。
+### 可选的停止态取证
 
-正常 `--hold` 结束仍遵循停止发送与固件 WDT 行为，未新增正常退出 VEL 0；单程或异常清理请求零速。观测到停稳不解除原失败锁存。
+`pole_diag_capture.py --port COM11 --out pole.json` 导出摆杆第一次有效到无效的 POLED2 证据，需固件开启 `MAGNETIC_ENCODER_POLE_DIAGNOSTICS`。
+`tmc_trace_capture.py --port COM11 --out tmc.json` 导出 STEP_LOSS 周边 TMCT2 寄存器记录，需开启 `CARTFSM_TMC_TRACE`。
+两者只读，不使能或运动。应在下次 ENABLE 前保存；详细语义见 [摆杆诊断](../docs/pole-diagnostics.md) 与 [TMC诊断](../docs/tmc-runtime-diagnostics.md)。
 
-回归：`python -m unittest discover -s tools -p 'test_*.py'`、`bash host_tests/test_telemetry_timing.sh`。正式帧不带身份或时钟，不能保证识别重启、旧帧或重复采样；模式异常和接收超时仍拒绝。线格式与有效性见[协议](../docs/protocol.md)。
+### 自然下垂标定摆杆零点
+
+让摆杆自然下垂并停止摆动，设备处于 `DISABLED NONE`，关闭其他控制或参数修改程序，然后执行：
+
+```powershell
+python tools/cartpole_host.py --port COM11 --baud 460800 calibrate-pole-down
+```
+
+工具读取当前零点和方向，采集约 1 秒摆杆有效数据，以环形均值处理 ±π 跨界，使自然下垂对应 ±π、直立对应 0。要求至少 200 帧、接收间隔不超过 100 ms、角度峰峰值不超过 0.5°、报告角速度不超过 20 mrad/s。任何无效样本或参数变化都会中止，不自动重试。
+
+它只写 `POLE_ZERO_URAD`，不修改 `POLE_INV`，不发送运动或使能命令；写后读回零点和方向。当前固件在接受摆杆零点配置时先保存到 NVS，再更新运行参数；收到匹配 OK 并读回后即完成，无需额外 save。若写入后断线或读回失败，参数可能已经改变，工具不声称成功，也不自动回滚；恢复连接后用 `dump` 查询。
+
+本操作要求独占设备配置。工具清理主机接收缓存，并用串行查询响应建立接收顺序，但 STATE 没有设备采样时间或启动身份，无法证明传输中没有旧帧；固件没有配置比较交换，也不能原子排除其他通道恰在写入前改配置。摆杆是否真的自然下垂仍由操作者确认。
