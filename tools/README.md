@@ -181,3 +181,17 @@ WDT_MS不大于20会拒绝，主机续发间隔及写入耗时不得达到min(50
 `pole_diag_capture.py --port COM11 --out pole.json` 导出摆杆第一次有效到无效的 POLED2 证据，需固件开启 `MAGNETIC_ENCODER_POLE_DIAGNOSTICS`。
 `tmc_trace_capture.py --port COM11 --out tmc.json` 导出 STEP_LOSS 周边 TMCT2 寄存器记录，需开启 `CARTFSM_TMC_TRACE`。
 两者只读，不使能或运动。应在下次 ENABLE 前保存；详细语义见 [摆杆诊断](../docs/pole-diagnostics.md) 与 [TMC诊断](../docs/tmc-runtime-diagnostics.md)。
+
+### 自然下垂标定摆杆零点
+
+让摆杆自然下垂并停止摆动，设备处于 `DISABLED NONE`，关闭其他控制或参数修改程序，然后执行：
+
+```powershell
+python tools/cartpole_host.py --port COM11 --baud 460800 calibrate-pole-down
+```
+
+工具读取当前零点和方向，采集约 1 秒摆杆有效数据，以环形均值处理 ±π 跨界，使自然下垂对应 ±π、直立对应 0。要求至少 200 帧、接收间隔不超过 100 ms、角度峰峰值不超过 0.5°、报告角速度不超过 20 mrad/s。任何无效样本或参数变化都会中止，不自动重试。
+
+它只写 `POLE_ZERO_URAD`，不修改 `POLE_INV`，不发送运动或使能命令；写后读回零点和方向。当前固件在接受摆杆零点配置时先保存到 NVS，再更新运行参数；收到匹配 OK 并读回后即完成，无需额外 save。若写入后断线或读回失败，参数可能已经改变，工具不声称成功，也不自动回滚；恢复连接后用 `dump` 查询。
+
+本操作要求独占设备配置。工具清理主机接收缓存，并用串行查询响应建立接收顺序，但 STATE 没有设备采样时间或启动身份，无法证明传输中没有旧帧；固件没有配置比较交换，也不能原子排除其他通道恰在写入前改配置。摆杆是否真的自然下垂仍由操作者确认。
