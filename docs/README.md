@@ -44,4 +44,4 @@
 - 有独特测量/验证价值的结果注明版本、条件和未验证范围后归档；无独特事实的过程文档删除，保留 Git 历史。
 - 保留顶层 `protocol.md`、`hardware.md` 等稳定路径，减少上位机项目与外部引用的迁移成本。
 
-- [GPIO39 摆杆读帧失败触发](pole-failure-trigger.md)
+- [GPIO39：FAULT MT6835 触发](mt6835-fault-trigger.md)

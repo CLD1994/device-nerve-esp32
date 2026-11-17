@@ -19,21 +19,14 @@
 
 #include "esp_check.h"
 #include "esp_log.h"
-#ifdef CONFIG_MAGNETIC_ENCODER_POLE_FAILURE_TRIGGER
-#include "driver/gpio.h"
-#include "magnetic_encoder_failure_trigger.h"
-#endif
 
 /* ---- 实现实例：骨架实例 + 帧层句柄 + STATUS 告警去重 ---- */
 typedef struct {
     magnetic_encoder_inst_t skel;      /* 骨架实例（首成员，句柄即其地址） */
+    magnetic_encoder_impl_t impl;   /* Per-instance sampling policy. */
     mt6835_hw_handle_t      hw;
     const char             *name;      /* 日志标签（任务名） */
     uint8_t                 last_status;
-#ifdef CONFIG_MAGNETIC_ENCODER_POLE_FAILURE_TRIGGER
-    bool trigger_enabled;
-    me_failure_trigger_t trigger;
-#endif
 } me_mt6835_inst_t;
 
 /* ---- 实现回调（ctx = me_mt6835_inst_t*） ---- */
@@ -99,28 +92,7 @@ static void failure_snapshot(void *ctx, me_diag_failure_t *out)
 }
 
 #endif
-#ifdef CONFIG_MAGNETIC_ENCODER_POLE_FAILURE_TRIGGER
-static void trigger_high(void *context)
-{
-    (void)context;
-    gpio_set_level(GPIO_NUM_39, 1);
-}
-static void read_failed(void *context)
-{
-    me_mt6835_inst_t *me = context;
-    if (me->trigger_enabled) me_failure_trigger_read_done(&me->trigger, false);
-}
-static void measurement_valid(void *context, bool valid)
-{
-    me_mt6835_inst_t *me = context;
-    if (me->trigger_enabled) me_failure_trigger_valid(&me->trigger, valid);
-}
-#endif
 static const magnetic_encoder_impl_t s_impl = {
-#ifdef CONFIG_MAGNETIC_ENCODER_POLE_FAILURE_TRIGGER
-    .read_failed = read_failed,
-    .measurement_valid = measurement_valid,
-#endif
     .read_frame    = read_frame,
     .counts_per_rev = counts_per_rev,
     .fail_desc     = fail_desc,
@@ -180,21 +152,9 @@ esp_err_t magnetic_encoder_mt6835_init(const magnetic_encoder_mt6835_config_t *c
         return err;
     }
 
-#ifdef CONFIG_MAGNETIC_ENCODER_POLE_FAILURE_TRIGGER
-    if (cfg->failure_trigger) {
-        /* Set output latch before enabling output; a failed setup aborts init. */
-        err = gpio_set_level(GPIO_NUM_39, 0);
-        if (err != ESP_OK) { free(me); return err; }
-        gpio_config_t pin = {.pin_bit_mask = UINT64_C(1) << 39, .mode = GPIO_MODE_OUTPUT,
-            .pull_up_en = GPIO_PULLUP_DISABLE, .pull_down_en = GPIO_PULLDOWN_DISABLE,
-            .intr_type = GPIO_INTR_DISABLE};
-        err = gpio_config(&pin);
-        if (err != ESP_OK) { free(me); return err; }
-        me->trigger_enabled = true;
-        me->trigger.raise = trigger_high;
-    }
-#endif
-    err = magnetic_encoder_skeleton_start(&me->skel, &s_impl, me, me->name);
+    me->impl = s_impl;
+    me->impl.retain_velocity_window_on_failure = cfg->retain_velocity_window_on_failure;
+    err = magnetic_encoder_skeleton_start(&me->skel, &me->impl, me, me->name);
     if (err != ESP_OK) {
         free(me);
         return err;

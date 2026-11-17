@@ -33,3 +33,5 @@ void config(const char *name,long value);
 
 extern unsigned halt_calls, diag_snapshot_reads;
 extern long last_accel;
+
+extern bool pole_healthy;

@@ -31,13 +31,4 @@ config MAGNETIC_ENCODER_POLE_DIAGNOSTICS
         Keep bounded run-scoped raw failure evidence for stopped-state POLEDIAG?.
         Adds RAM snapshots and a low-priority log consumer; disabled removes them.
 
-config MAGNETIC_ENCODER_POLE_FAILURE_TRIGGER
-    bool "GPIO39: latch first pole read failure after valid measurement"
-    depends on MAGNETIC_ENCODER_MT6835 && IDF_TARGET_ESP32S3
-    default n
-    help
-        Debug oscilloscope trigger. Boot drives GPIO39 low; after one valid
-        pole measurement, the first failed read drives it high until reboot.
-        GPIO39 must be free and externally accessible. No ENABLE/RESET rearm.
-
 endmenu

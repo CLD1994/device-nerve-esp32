@@ -40,8 +40,7 @@ static void on_driver_settings(int idx, float new_value)
     }
 }
 
-
-#ifdef CONFIG_MAGNETIC_ENCODER_POLE_FAILURE_TRIGGER
+#ifdef CONFIG_CARTFSM_MT6835_FAULT_TRIGGER
 _Static_assert(CONFIG_BSP_PROTO_TX_GPIO != 39, "GPIO39 trigger conflicts with PROTO_TX");
 _Static_assert(CONFIG_BSP_PROTO_RX_GPIO != 39, "GPIO39 trigger conflicts with PROTO_RX");
 _Static_assert(CONFIG_BSP_TMC_UART_TX_GPIO != 39, "GPIO39 trigger conflicts with TMC_UART_TX");
@@ -100,9 +99,7 @@ void app_main(void)
             .clock_speed_hz = CONFIG_BSP_POLE_ENC_SPI_HZ,
             .spics_io_num  = CONFIG_BSP_POLE_ENC_CS_GPIO,
             .task_name     = "me_pole",
-#ifdef CONFIG_MAGNETIC_ENCODER_POLE_FAILURE_TRIGGER
-            .failure_trigger = true,
-#endif
+            .retain_velocity_window_on_failure = true,
         };
         ESP_ERROR_CHECK(magnetic_encoder_mt6835_init(&pcfg, &enc_pole));
         poleang_init(enc_pole);
