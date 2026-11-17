@@ -40,6 +40,35 @@ static void on_driver_settings(int idx, float new_value)
     }
 }
 
+
+#ifdef CONFIG_MAGNETIC_ENCODER_POLE_FAILURE_TRIGGER
+_Static_assert(CONFIG_BSP_PROTO_TX_GPIO != 39, "GPIO39 trigger conflicts with PROTO_TX");
+_Static_assert(CONFIG_BSP_PROTO_RX_GPIO != 39, "GPIO39 trigger conflicts with PROTO_RX");
+_Static_assert(CONFIG_BSP_TMC_UART_TX_GPIO != 39, "GPIO39 trigger conflicts with TMC_UART_TX");
+_Static_assert(CONFIG_BSP_TMC_UART_RX_GPIO != 39, "GPIO39 trigger conflicts with TMC_UART_RX");
+_Static_assert(CONFIG_BSP_STEP_GPIO != 39, "GPIO39 trigger conflicts with STEP");
+_Static_assert(CONFIG_BSP_DIR_GPIO != 39, "GPIO39 trigger conflicts with DIR");
+_Static_assert(CONFIG_BSP_EN_GPIO != 39, "GPIO39 trigger conflicts with EN");
+_Static_assert(CONFIG_BSP_I2C_SDA_GPIO != 39, "GPIO39 trigger conflicts with I2C_SDA");
+_Static_assert(CONFIG_BSP_I2C_SCL_GPIO != 39, "GPIO39 trigger conflicts with I2C_SCL");
+_Static_assert(CONFIG_BSP_CART_ENC_SCK_GPIO != 39, "GPIO39 trigger conflicts with CART_ENC_SCK");
+_Static_assert(CONFIG_BSP_CART_ENC_MOSI_GPIO != 39, "GPIO39 trigger conflicts with CART_ENC_MOSI");
+_Static_assert(CONFIG_BSP_CART_ENC_MISO_GPIO != 39, "GPIO39 trigger conflicts with CART_ENC_MISO");
+_Static_assert(CONFIG_BSP_CART_ENC_CS_GPIO != 39, "GPIO39 trigger conflicts with CART_ENC_CS");
+_Static_assert(CONFIG_BSP_POLE_ENC_SCK_GPIO != 39, "GPIO39 trigger conflicts with POLE_ENC_SCK");
+_Static_assert(CONFIG_BSP_POLE_ENC_MOSI_GPIO != 39, "GPIO39 trigger conflicts with POLE_ENC_MOSI");
+_Static_assert(CONFIG_BSP_POLE_ENC_MISO_GPIO != 39, "GPIO39 trigger conflicts with POLE_ENC_MISO");
+_Static_assert(CONFIG_BSP_POLE_ENC_CS_GPIO != 39, "GPIO39 trigger conflicts with POLE_ENC_CS");
+_Static_assert(CONFIG_BSP_VBUS_ADC_GPIO != 39, "GPIO39 trigger conflicts with VBUS_ADC");
+_Static_assert(CONFIG_BSP_LED_GPIO != 39, "GPIO39 trigger conflicts with LED");
+_Static_assert(CONFIG_BSP_BTN1_GPIO != 39, "GPIO39 trigger conflicts with BTN1");
+_Static_assert(CONFIG_BSP_BTN2_GPIO != 39, "GPIO39 trigger conflicts with BTN2");
+_Static_assert(CONFIG_BSP_BTN3_GPIO != 39, "GPIO39 trigger conflicts with BTN3");
+#if defined(CONFIG_ESP_CONSOLE_UART_CUSTOM)
+_Static_assert(CONFIG_ESP_CONSOLE_UART_TX_GPIO != 39 && CONFIG_ESP_CONSOLE_UART_RX_GPIO != 39, "GPIO39 conflicts with console");
+#endif
+#endif
+
 void app_main(void)
 {
     bsp_early_init();                    /* EN 高 = 电机不使能 */
@@ -71,6 +100,9 @@ void app_main(void)
             .clock_speed_hz = CONFIG_BSP_POLE_ENC_SPI_HZ,
             .spics_io_num  = CONFIG_BSP_POLE_ENC_CS_GPIO,
             .task_name     = "me_pole",
+#ifdef CONFIG_MAGNETIC_ENCODER_POLE_FAILURE_TRIGGER
+            .failure_trigger = true,
+#endif
         };
         ESP_ERROR_CHECK(magnetic_encoder_mt6835_init(&pcfg, &enc_pole));
         poleang_init(enc_pole);

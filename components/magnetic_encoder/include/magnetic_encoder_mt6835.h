@@ -18,6 +18,9 @@ extern "C" {
 #endif
 
 typedef struct {
+#ifdef CONFIG_MAGNETIC_ENCODER_POLE_FAILURE_TRIGGER
+    bool failure_trigger; /* Only the pole assembly enables GPIO39. */
+#endif
     spi_host_device_t host;         /* 已初始化的 SPI 主机（组装点从 bsp 获取） */
     int               clock_speed_hz;
     int               spics_io_num;

@@ -164,6 +164,9 @@ static bool sample_once_timed(magnetic_encoder_inst_t *inst, int64_t *read_end)
     uint32_t raw = 0;
     uint8_t status = 0;
     bool read_ok = inst->impl->read_frame(inst->impl_ctx, &raw, &status);
+#ifdef CONFIG_MAGNETIC_ENCODER_POLE_FAILURE_TRIGGER
+    if (!read_ok && inst->impl->read_failed) inst->impl->read_failed(inst->impl_ctx);
+#endif
     if (read_end) *read_end = inst->now_us(inst->clock_ctx);
     if (read_ok) {
         if (publish_sample(inst, raw, status)) {
@@ -173,6 +176,14 @@ static bool sample_once_timed(magnetic_encoder_inst_t *inst, int64_t *read_end)
             ESP_LOGI(inst->name,"编码器读取恢复");
 #endif
         }
+#ifdef CONFIG_MAGNETIC_ENCODER_POLE_FAILURE_TRIGGER
+        if (inst->impl->measurement_valid) {
+            portENTER_CRITICAL(&inst->lock);
+            bool valid = inst->has_sample && inst->last_attempt_ok && inst->fail.ok && inst->velocity_valid;
+            portEXIT_CRITICAL(&inst->lock);
+            inst->impl->measurement_valid(inst->impl_ctx, valid);
+        }
+#endif
         if (inst->impl->on_sample != NULL)
             inst->impl->on_sample(inst->impl_ctx, status);
 #ifdef CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS

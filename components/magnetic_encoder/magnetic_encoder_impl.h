@@ -33,6 +33,11 @@ typedef struct {
      * @return true = 出参 raw 与 status 有效；false = 读取失败。
      */
     bool (*read_frame)(void *ctx, uint32_t *raw, uint8_t *status);
+#ifdef CONFIG_MAGNETIC_ENCODER_POLE_FAILURE_TRIGGER
+    /* Called immediately after failed read returns; bounded nonblocking sink. */
+    void (*read_failed)(void *ctx);
+    void (*measurement_valid)(void *ctx, bool valid);
+#endif
 
     /** 每转原始计数（如 4096 / 2^21），骨架传给 tracker。 */
     int32_t (*counts_per_rev)(void *ctx);
