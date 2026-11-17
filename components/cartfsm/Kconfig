@@ -67,4 +67,14 @@ config CARTFSM_FOLLOWING_ERROR_WINDOWS
     default 2
 endif
 
+config CARTFSM_TMC_TRACE
+    bool "记录 STEP_LOSS 前后的 TMC 运行状态"
+    default n
+    select CARTFSM_STEP_LOSS_EVENTS
+    help
+        独立低优先级任务每轮尝试读取 DRV_STATUS 和 GSTAT，轮次间隔至少50ms。
+        UART 忙时跳过当前事务，不阻塞监督任务。固定缓冲保存首个 STEP_LOSS
+        前最多2秒与后最多5秒的记录；停机后通过 TMCTRACE? 导出。
+        GSTAT 读取可能影响驱动历史标志；记录不是故障瞬间的同步快照。
+
 endmenu

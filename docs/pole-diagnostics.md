@@ -1,0 +1,32 @@
+# 摆杆测量失效证据
+
+`CONFIG_MAGNETIC_ENCODER_POLE_DIAGNOSTICS` 默认关闭。开启后，固件为每次成功 ENABLE 捕获摆杆测量第一次从有效变成无效的前后快照。它不改变编码器校验、位置连续性、STATE 有效位或故障门槛，也不判断 MT6835 故障根因。
+
+每次 ENABLE 清除上次捕获并递增 generation。上次运行已经开始、但尚未返回的 SPI 读取仍会更新真实测量状态，但不能作为本次首次转换的原始失败证据。诊断日志队列不按运行隔离。测量从未有效时不会捕获转换；因此“没有捕获”不等于“没有失败”。第一次失效也不一定是最终触发 FAULT 的连续失败串。
+
+停止后运行：
+
+```sh
+python tools/pole_diag_capture.py --port COM11 --out pole-evidence.json
+```
+
+工具只发送 `POLEDIAG?`，不使能、不运动、不清除证据。READY 和正在减速的 FAULT 拒绝查询；DISABLED 或已结束减速的 FAULT 可读取。下一次 ENABLE 会覆盖本次证据，应先导出。重启丢失 RAM 数据；run/generation 只在本次启动内有效，不是跨重启唯一标识。
+
+## 输出契约
+
+POLED2 使用 ASCII 单空格分隔，行尾 LF 或 CRLF：
+
+- `BEGIN run generation captured has_failure transitions dropped`
+- 捕获时包含 `BEFORE` 和 `AFTER`，字段依次为：观测时间、最近成功采样时间、样本年龄（均 µs），窗口样本数、要求数、窗口跨度、连续间隔上限（µs），成功序列、失败序列、连续性序列，是否有样本、上次读取是否成功、编码器是否健康、速度是否有效、原因位、原始计数、STATUS。
+- 仅 `has_failure=1` 时包含 `FAIL kind sequence time_us byte0 ... byte5`。
+- `END run generation` 与 BEGIN 身份一致。
+
+所有行均以 `POLED2` 开头。原因位：1 无样本、2 最近读取失败、4 连续失败门槛达到、8 窗口不足、16 窗口过长、32 样本过旧、64 时间异常、128 其他窗口无效。多个原因可同时成立。
+
+FAIL 只关联 BEFORE 与 AFTER 之间新增的最近读取失败；纯粹的窗口过期可以 `has_failure=0`，不会借用旧运行的帧。kind：0 未分类、1 SPI 错误、2 全零帧、3 CRC 错误。全零帧可能是合法零角或线路全低，现有校验仍保守拒绝，不能靠这份快照区分。
+
+## 运行成本
+
+关闭时没有诊断 RAM 快照、原始失败复制或日志队列操作。开启时每个编码器使用固定大小快照和 8 条日志队列；采样路径只做有界复制，日志格式化在低优先级任务进行。队列满则丢日志并累计 dropped，不阻塞采样。POLED2 的 dropped 是累计日志丢弃数，不是丢失采样数。快照读取使用实例锁复制，串口输出在锁外进行。
+
+主机测试和目标构建只能确认软件契约；本开关开启后的现场时序和故障证据仍需真机验证。

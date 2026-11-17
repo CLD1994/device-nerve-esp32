@@ -211,3 +211,10 @@ READY或仍减速时回`ERR STEPLOSS_BUSY`，无记录回`ERR STEPLOSS_NONE`。
 ### 统一加减速度配置
 
 `ACC_MAX` 同时控制正常速度斜坡、`VEL 0`、命令看门狗与受控故障停车。`WDT_MS` 仅控制无有效命令等待时间，故障断电或驱动失效不保证能执行受控减速。配置查询只报告 `ACC_MAX`，不再接受或报告独立的 `WDT_DEC`，旧命令不作兼容。两项原本都是运行时RAM配置，本次不涉及NVS迁移或擦除；FAULT状态仍不允许写配置。
+
+## TMC 运行期记录
+
+`TMCTRACE?` 读取默认关闭的运行期记录，只在禁用或故障停车完成后导出。
+协议、窗口边界与错误码见 [TMC 运行期状态记录](tmc-runtime-diagnostics.md)。
+
+摆杆测量证据见 [摆杆诊断](pole-diagnostics.md)。
